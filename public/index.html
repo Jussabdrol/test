@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Recurring Task Manager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <nav class="sidebar">
+      <div class="logo">
+        <span class="logo-icon">&#x21bb;</span>
+        <h1>TaskCycle</h1>
+      </div>
+      <ul class="nav-links">
+        <li><a href="#" class="nav-link active" data-view="dashboard">Dashboard</a></li>
+        <li><a href="#" class="nav-link" data-view="tasks">All Tasks</a></li>
+        <li><a href="#" class="nav-link" data-view="history">History</a></li>
+      </ul>
+    </nav>
+
+    <main class="content">
+      <!-- Dashboard View -->
+      <section id="view-dashboard" class="view">
+        <div class="view-header">
+          <h2>Dashboard</h2>
+          <button class="btn btn-primary" onclick="openTaskModal()">+ New Task</button>
+        </div>
+        <div class="stats-grid" id="stats-grid"></div>
+        <div class="dashboard-columns">
+          <div class="dash-col">
+            <h3 class="section-title overdue-title">Overdue</h3>
+            <div id="overdue-list" class="task-list"></div>
+          </div>
+          <div class="dash-col">
+            <h3 class="section-title">Upcoming</h3>
+            <div id="upcoming-list" class="task-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tasks View -->
+      <section id="view-tasks" class="view hidden">
+        <div class="view-header">
+          <h2>All Tasks</h2>
+          <button class="btn btn-primary" onclick="openTaskModal()">+ New Task</button>
+        </div>
+        <div class="filters" id="filters-bar"></div>
+        <div class="task-table-wrap">
+          <table class="task-table" id="task-table">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Assignee</th>
+                <th>Category</th>
+                <th>Priority</th>
+                <th>Recurrence</th>
+                <th>Next Due</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="task-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- History View -->
+      <section id="view-history" class="view hidden">
+        <div class="view-header">
+          <h2>Completion History</h2>
+        </div>
+        <div class="history-list" id="history-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Task Modal -->
+  <div id="task-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeTaskModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-title">New Task</h3>
+        <button class="modal-close" onclick="closeTaskModal()">&times;</button>
+      </div>
+      <form id="task-form" onsubmit="saveTask(event)">
+        <input type="hidden" id="task-id">
+        <div class="form-group">
+          <label for="task-title">Title *</label>
+          <input type="text" id="task-title" required>
+        </div>
+        <div class="form-group">
+          <label for="task-desc">Description</label>
+          <textarea id="task-desc" rows="3"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="task-assignee">Assignee</label>
+            <input type="text" id="task-assignee" placeholder="e.g. John Smith">
+          </div>
+          <div class="form-group">
+            <label for="task-category">Category</label>
+            <input type="text" id="task-category" value="General" list="category-list">
+            <datalist id="category-list"></datalist>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="task-priority">Priority</label>
+            <select id="task-priority">
+              <option value="Low">Low</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="High">High</option>
+              <option value="Critical">Critical</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="task-recurrence">Recurrence</label>
+            <select id="task-recurrence" onchange="toggleCustomDays()">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="biweekly">Biweekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="yearly">Yearly</option>
+              <option value="custom">Custom interval</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group hidden" id="custom-days-group">
+          <label for="task-custom-days">Repeat every N days</label>
+          <input type="number" id="task-custom-days" min="1" value="1">
+        </div>
+        <div class="form-group">
+          <label for="task-start">Start Date</label>
+          <input type="date" id="task-start">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeTaskModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Task</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Complete Modal -->
+  <div id="complete-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeCompleteModal()"></div>
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h3>Mark Complete</h3>
+        <button class="modal-close" onclick="closeCompleteModal()">&times;</button>
+      </div>
+      <form id="complete-form" onsubmit="submitComplete(event)">
+        <input type="hidden" id="complete-task-id">
+        <div class="form-group">
+          <label for="complete-by">Completed By</label>
+          <input type="text" id="complete-by" placeholder="Your name">
+        </div>
+        <div class="form-group">
+          <label for="complete-notes">Notes</label>
+          <textarea id="complete-notes" rows="2" placeholder="Optional notes"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeCompleteModal()">Cancel</button>
+          <button type="submit" class="btn btn-success">Complete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "recurring-task-manager",
+  "version": "1.0.0",
+  "description": "Track and manage recurring tasks within a business context",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "express": "^4.21.0"
+  }
+}
