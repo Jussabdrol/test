@@ -4,6 +4,7 @@ let allTasks = [];
 let meta = { assignees: [], categories: [] };
 let filters = { active: 'true', assignee: '', category: '', priority: '' };
 let actionFilters = { status: 'open' };
+let yearlyYear = new Date().getFullYear();
 let lastCompletionContext = null; // { completion_id, task_id }
 
 // --- Navigation ---
@@ -24,6 +25,7 @@ function switchView(view) {
 
   if (view === 'dashboard') loadDashboard();
   else if (view === 'tasks') loadTasks();
+  else if (view === 'yearly') loadYearlyPlan();
   else if (view === 'actions') loadActions();
   else if (view === 'history') loadHistory();
 }
@@ -473,6 +475,179 @@ async function viewCompletionActions(completionId, taskId) {
   document.getElementById('quick-action-due').value = '';
   document.getElementById('post-complete-modal').classList.remove('hidden');
 }
+
+// --- Yearly Plan ---
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DAY_LABELS = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+
+function changeYear(delta) {
+  if (delta === 0) yearlyYear = new Date().getFullYear();
+  else yearlyYear += delta;
+  loadYearlyPlan();
+}
+
+async function loadYearlyPlan() {
+  document.getElementById('yearly-title').textContent = `Yearly Plan ${yearlyYear}`;
+  const data = await api(`/api/yearly?year=${yearlyYear}`);
+  const grid = document.getElementById('yearly-grid');
+  const today = new Date().toISOString().split('T')[0];
+
+  let html = '';
+  for (let m = 0; m < 12; m++) {
+    const firstDay = new Date(yearlyYear, m, 1);
+    const daysInMonth = new Date(yearlyYear, m + 1, 0).getDate();
+    // Monday=0 start
+    let startDay = firstDay.getDay() - 1;
+    if (startDay < 0) startDay = 6;
+
+    // Count tasks this month
+    let monthDueCount = 0;
+    let monthCompletedCount = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${yearlyYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      if (data.dueDates[ds]) monthDueCount += data.dueDates[ds].length;
+      if (data.completedDates[ds]) monthCompletedCount += data.completedDates[ds].length;
+    }
+
+    html += `<div class="month-card">
+      <div class="month-header">
+        ${MONTH_NAMES[m]}
+        <span class="month-count">${monthCompletedCount}/${monthDueCount} done</span>
+      </div>
+      <div class="month-body">
+        <div class="cal-week-header">${DAY_LABELS.map(d => `<span>${d}</span>`).join('')}</div>
+        <div class="cal-grid">`;
+
+    // Empty cells before first day
+    for (let i = 0; i < startDay; i++) {
+      html += '<div class="cal-day empty"></div>';
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${yearlyYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const due = data.dueDates[ds] || [];
+      const completed = data.completedDates[ds] || [];
+      const hasDue = due.length > 0;
+      const hasCompleted = completed.length > 0;
+      const isOverdue = hasDue && ds < today;
+      const isToday = ds === today;
+
+      let cls = 'cal-day';
+      if (isToday) cls += ' today';
+      if (hasCompleted && hasDue) cls += ' has-mixed';
+      else if (isOverdue) cls += ' has-overdue';
+      else if (hasDue) cls += ' has-due';
+      else if (hasCompleted) cls += ' has-completed';
+
+      const clickable = hasDue || hasCompleted;
+      html += `<div class="${cls}"${clickable ? ` onclick="showDayDetail(event,'${ds}')"` : ''}>${d}`;
+      if (hasDue || hasCompleted) {
+        html += '<div class="cal-day-dot">';
+        if (hasCompleted) html += '<span class="dot-completed"></span>';
+        if (hasDue && !isOverdue) html += '<span class="dot-due"></span>';
+        if (isOverdue) html += '<span class="dot-overdue"></span>';
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
+    html += '</div></div></div>';
+  }
+
+  grid.innerHTML = html;
+}
+
+let activePopover = null;
+function showDayDetail(event, dateStr) {
+  closeDayDetail();
+  const data = window._yearlyData;
+  if (!data) { loadYearlyPlanAndShow(event, dateStr); return; }
+  renderDayPopover(event, dateStr, data);
+}
+
+async function loadYearlyPlanAndShow(event, dateStr) {
+  const data = await api(`/api/yearly?year=${yearlyYear}`);
+  window._yearlyData = data;
+  renderDayPopover(event, dateStr, data);
+}
+
+function renderDayPopover(event, dateStr, data) {
+  const due = data.dueDates[dateStr] || [];
+  const completed = data.completedDates[dateStr] || [];
+  const today = new Date().toISOString().split('T')[0];
+
+  const pop = document.createElement('div');
+  pop.className = 'day-popover';
+
+  let items = '';
+  for (const t of completed) {
+    items += `<div class="day-popover-item" style="border-left:3px solid var(--success)">
+      <strong>${esc(t.title)}</strong>
+      <div class="dpi-meta">Completed${t.completed_by ? ' by ' + esc(t.completed_by) : ''} &middot; ${esc(t.recurrence)} &middot; ${esc(t.assignee || 'Unassigned')}</div>
+    </div>`;
+  }
+  for (const t of due) {
+    const isOverdue = dateStr < today;
+    const color = isOverdue ? 'var(--danger)' : 'var(--primary)';
+    const label = isOverdue ? 'Overdue' : 'Scheduled';
+    items += `<div class="day-popover-item" style="border-left:3px solid ${color}">
+      <strong>${esc(t.title)}</strong> <span class="badge badge-${t.priority.toLowerCase()}">${t.priority}</span>
+      <div class="dpi-meta">${label} &middot; ${esc(t.recurrence)} &middot; ${esc(t.assignee || 'Unassigned')}</div>
+    </div>`;
+  }
+
+  if (!items) items = '<div class="empty-state" style="padding:16px">No tasks on this date</div>';
+
+  const formattedDate = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  pop.innerHTML = `
+    <div class="day-popover-header">
+      <h4>${formattedDate}</h4>
+      <button class="modal-close" onclick="closeDayDetail()">&times;</button>
+    </div>
+    ${items}
+  `;
+
+  document.body.appendChild(pop);
+  activePopover = pop;
+
+  // Position near click
+  const rect = event.target.getBoundingClientRect();
+  let left = rect.right + 8;
+  let top = rect.top;
+  if (left + 330 > window.innerWidth) left = rect.left - 330;
+  if (top + 400 > window.innerHeight) top = window.innerHeight - 410;
+  if (top < 10) top = 10;
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('click', closeDayDetailOutside);
+  }, 10);
+}
+
+function closeDayDetail() {
+  if (activePopover) {
+    activePopover.remove();
+    activePopover = null;
+  }
+  document.removeEventListener('click', closeDayDetailOutside);
+}
+
+function closeDayDetailOutside(e) {
+  if (activePopover && !activePopover.contains(e.target)) {
+    closeDayDetail();
+  }
+}
+
+// Cache yearly data when loading
+const _origLoadYearly = loadYearlyPlan;
+loadYearlyPlan = async function() {
+  await _origLoadYearly();
+  const data = await api(`/api/yearly?year=${yearlyYear}`);
+  window._yearlyData = data;
+};
 
 // --- Helpers ---
 function refreshCurrentView() {

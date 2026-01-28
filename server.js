@@ -253,6 +253,69 @@ app.get('/api/meta', (req, res) => {
   res.json({ assignees, categories });
 });
 
+// Get yearly plan data (all due dates + completions for a year)
+app.get('/api/yearly', (req, res) => {
+  const year = parseInt(req.query.year) || new Date().getFullYear();
+  const startDate = `${year}-01-01`;
+  const endDate = `${year}-12-31`;
+
+  // Get all active tasks and project their due dates across the year
+  const tasks = db.prepare('SELECT * FROM tasks WHERE is_active = 1').all();
+  const dueDates = {}; // { "2026-03-15": [{ task_id, title, ... }] }
+
+  for (const task of tasks) {
+    let d = new Date(task.start_date);
+    // If task started before this year, advance to first occurrence in this year
+    const yearStart = new Date(startDate);
+    while (d < yearStart) {
+      d = new Date(computeNextDue(d.toISOString().split('T')[0], task.recurrence, task.custom_days, task.day_of_week, task.day_of_month));
+    }
+    // Generate all occurrences within the year
+    const yearEnd = new Date(endDate);
+    let safety = 0;
+    while (d <= yearEnd && safety < 400) {
+      const ds = d.toISOString().split('T')[0];
+      if (!dueDates[ds]) dueDates[ds] = [];
+      dueDates[ds].push({
+        task_id: task.id,
+        title: task.title,
+        assignee: task.assignee,
+        category: task.category,
+        priority: task.priority,
+        recurrence: task.recurrence,
+        type: 'due',
+      });
+      d = new Date(computeNextDue(ds, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month));
+      safety++;
+    }
+  }
+
+  // Get completions for this year
+  const completions = db.prepare(
+    `SELECT c.*, t.title, t.assignee, t.category, t.priority, t.recurrence
+     FROM completions c JOIN tasks t ON c.task_id = t.id
+     WHERE c.completed_at >= ? AND c.completed_at <= ?`
+  ).all(startDate, endDate + ' 23:59:59');
+
+  const completedDates = {};
+  for (const c of completions) {
+    const ds = c.completed_at.split(' ')[0];
+    if (!completedDates[ds]) completedDates[ds] = [];
+    completedDates[ds].push({
+      task_id: c.task_id,
+      title: c.title,
+      assignee: c.assignee,
+      category: c.category,
+      priority: c.priority,
+      recurrence: c.recurrence,
+      completed_by: c.completed_by,
+      type: 'completed',
+    });
+  }
+
+  res.json({ year, dueDates, completedDates });
+});
+
 // --- Follow-up Actions API ---
 
 // Get all actions with optional filters

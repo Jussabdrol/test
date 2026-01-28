@@ -16,6 +16,7 @@
       <ul class="nav-links">
         <li><a href="#" class="nav-link active" data-view="dashboard">Dashboard</a></li>
         <li><a href="#" class="nav-link" data-view="tasks">All Tasks</a></li>
+        <li><a href="#" class="nav-link" data-view="yearly">Yearly Plan</a></li>
         <li><a href="#" class="nav-link" data-view="actions">Actions</a></li>
         <li><a href="#" class="nav-link" data-view="history">History</a></li>
       </ul>
@@ -65,6 +66,25 @@
             <tbody id="task-table-body"></tbody>
           </table>
         </div>
+      </section>
+
+      <!-- Yearly Plan View -->
+      <section id="view-yearly" class="view hidden">
+        <div class="view-header">
+          <h2 id="yearly-title">Yearly Plan 2026</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-secondary btn-sm" onclick="changeYear(-1)">&larr; Prev</button>
+            <button class="btn btn-secondary btn-sm" onclick="changeYear(0)">Today</button>
+            <button class="btn btn-secondary btn-sm" onclick="changeYear(1)">Next &rarr;</button>
+            <button class="btn btn-primary" onclick="openTaskModal()">+ New Task</button>
+          </div>
+        </div>
+        <div class="yearly-legend">
+          <span class="legend-item"><span class="legend-dot legend-completed"></span> Completed</span>
+          <span class="legend-item"><span class="legend-dot legend-due"></span> Due</span>
+          <span class="legend-item"><span class="legend-dot legend-overdue"></span> Overdue</span>
+        </div>
+        <div class="yearly-grid" id="yearly-grid"></div>
       </section>
 
       <!-- Actions View -->
