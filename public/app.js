@@ -548,43 +548,76 @@ async function loadYearlyPlan() {
   const grid = document.getElementById('yearly-grid');
   const today = new Date().toISOString().split('T')[0];
 
-  let html = '';
+  // Compute per-month stats
+  const monthStats = [];
+  let totalDue = 0, totalCompleted = 0, totalOverdue = 0;
+  for (let m = 0; m < 12; m++) {
+    const daysInMonth = new Date(yearlyYear, m + 1, 0).getDate();
+    let due = 0, completed = 0, overdue = 0;
+    const taskDates = {}; // { task_id: { title, assignee, priority, recurrence, dates: [{date, type}] } }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${yearlyYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      if (data.dueDates[ds]) {
+        due += data.dueDates[ds].length;
+        if (ds < today) overdue += data.dueDates[ds].length;
+        for (const t of data.dueDates[ds]) {
+          if (!taskDates[t.task_id]) taskDates[t.task_id] = { ...t, dates: [] };
+          taskDates[t.task_id].dates.push({ date: ds, type: ds < today ? 'overdue' : 'due' });
+        }
+      }
+      if (data.completedDates[ds]) {
+        completed += data.completedDates[ds].length;
+        for (const t of data.completedDates[ds]) {
+          if (!taskDates[t.task_id]) taskDates[t.task_id] = { ...t, dates: [] };
+          taskDates[t.task_id].dates.push({ date: ds, type: 'completed' });
+        }
+      }
+    }
+    monthStats.push({ due, completed, overdue, taskDates });
+    totalDue += due;
+    totalCompleted += completed;
+    totalOverdue += overdue;
+  }
+
+  // Render yearly summary stats
+  const summaryEl = document.getElementById('yearly-summary');
+  const pct = totalDue > 0 ? Math.round((totalCompleted / totalDue) * 100) : 0;
+  summaryEl.innerHTML = `
+    <div class="stat-card"><div class="stat-value">${totalDue}</div><div class="stat-label">Total Scheduled (${yearlyYear})</div></div>
+    <div class="stat-card done"><div class="stat-value">${totalCompleted}</div><div class="stat-label">Completed</div></div>
+    <div class="stat-card${totalOverdue > 0 ? ' overdue' : ''}"><div class="stat-value">${totalOverdue}</div><div class="stat-label">Overdue</div></div>
+    <div class="stat-card"><div class="stat-value">${pct}%</div><div class="stat-label">Completion Rate</div></div>
+  `;
+
+  // Render calendar grid
+  let calHtml = '';
   for (let m = 0; m < 12; m++) {
     const firstDay = new Date(yearlyYear, m, 1);
     const daysInMonth = new Date(yearlyYear, m + 1, 0).getDate();
-    // Monday=0 start
     let startDay = firstDay.getDay() - 1;
     if (startDay < 0) startDay = 6;
 
-    // Count tasks this month
-    let monthDueCount = 0;
-    let monthCompletedCount = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-      const ds = `${yearlyYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-      if (data.dueDates[ds]) monthDueCount += data.dueDates[ds].length;
-      if (data.completedDates[ds]) monthCompletedCount += data.completedDates[ds].length;
-    }
-
-    html += `<div class="month-card">
+    const ms = monthStats[m];
+    calHtml += `<div class="month-card">
       <div class="month-header">
         ${MONTH_NAMES[m]}
-        <span class="month-count">${monthCompletedCount}/${monthDueCount} done</span>
+        <span class="month-count">${ms.completed}/${ms.due} done</span>
       </div>
       <div class="month-body">
         <div class="cal-week-header">${DAY_LABELS.map(d => `<span>${d}</span>`).join('')}</div>
         <div class="cal-grid">`;
 
-    // Empty cells before first day
     for (let i = 0; i < startDay; i++) {
-      html += '<div class="cal-day empty"></div>';
+      calHtml += '<div class="cal-day empty"></div>';
     }
 
     for (let d = 1; d <= daysInMonth; d++) {
       const ds = `${yearlyYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-      const due = data.dueDates[ds] || [];
-      const completed = data.completedDates[ds] || [];
-      const hasDue = due.length > 0;
-      const hasCompleted = completed.length > 0;
+      const dueTasks = data.dueDates[ds] || [];
+      const completedTasks = data.completedDates[ds] || [];
+      const hasDue = dueTasks.length > 0;
+      const hasCompleted = completedTasks.length > 0;
       const isOverdue = hasDue && ds < today;
       const isToday = ds === today;
 
@@ -596,21 +629,80 @@ async function loadYearlyPlan() {
       else if (hasCompleted) cls += ' has-completed';
 
       const clickable = hasDue || hasCompleted;
-      html += `<div class="${cls}"${clickable ? ` onclick="showDayDetail(event,'${ds}')"` : ''}>${d}`;
+      calHtml += `<div class="${cls}"${clickable ? ` onclick="showDayDetail(event,'${ds}')"` : ''}>${d}`;
       if (hasDue || hasCompleted) {
-        html += '<div class="cal-day-dot">';
-        if (hasCompleted) html += '<span class="dot-completed"></span>';
-        if (hasDue && !isOverdue) html += '<span class="dot-due"></span>';
-        if (isOverdue) html += '<span class="dot-overdue"></span>';
-        html += '</div>';
+        calHtml += '<div class="cal-day-dot">';
+        if (hasCompleted) calHtml += '<span class="dot-completed"></span>';
+        if (hasDue && !isOverdue) calHtml += '<span class="dot-due"></span>';
+        if (isOverdue) calHtml += '<span class="dot-overdue"></span>';
+        calHtml += '</div>';
       }
-      html += '</div>';
+      calHtml += '</div>';
     }
 
-    html += '</div></div></div>';
+    calHtml += '</div></div></div>';
   }
+  grid.innerHTML = calHtml;
 
-  grid.innerHTML = html;
+  // Render monthly breakdown
+  const breakdownEl = document.getElementById('yearly-breakdown');
+  if (totalDue === 0 && totalCompleted === 0) {
+    breakdownEl.innerHTML = '<div class="empty-state">No recurring tasks yet. Create a task to see your yearly plan.</div>';
+    document.getElementById('yearly-breakdown-title').style.display = 'none';
+    return;
+  }
+  document.getElementById('yearly-breakdown-title').style.display = '';
+
+  let breakdownHtml = '';
+  for (let m = 0; m < 12; m++) {
+    const ms = monthStats[m];
+    const tasks = Object.values(ms.taskDates);
+    const isCurrentMonth = yearlyYear === new Date().getFullYear() && m === new Date().getMonth();
+    const collapsed = !isCurrentMonth && tasks.length > 0;
+
+    breakdownHtml += `<div class="yearly-month-section">
+      <div class="yearly-month-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+        <h4>${MONTH_NAMES[m]} ${yearlyYear}</h4>
+        <div class="month-stats">
+          <span>${ms.due} scheduled</span>
+          <span class="badge badge-low">${ms.completed} done</span>
+          ${ms.overdue > 0 ? `<span class="badge badge-high">${ms.overdue} overdue</span>` : ''}
+          <span style="font-size:16px">${collapsed ? '+' : '−'}</span>
+        </div>
+      </div>
+      <div class="yearly-month-body${collapsed ? ' collapsed' : ''}">`;
+
+    if (tasks.length === 0) {
+      breakdownHtml += '<div class="yearly-empty-month">No tasks scheduled this month</div>';
+    } else {
+      // Sort: tasks with overdue dates first, then by title
+      tasks.sort((a, b) => {
+        const aOverdue = a.dates.some(d => d.type === 'overdue');
+        const bOverdue = b.dates.some(d => d.type === 'overdue');
+        if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+        return a.title.localeCompare(b.title);
+      });
+
+      for (const task of tasks) {
+        breakdownHtml += `<div class="yearly-task-row">
+          <div class="yearly-task-info">
+            <strong>${esc(task.title)}</strong>
+            <span class="badge badge-${task.priority.toLowerCase()}">${task.priority}</span>
+            <div class="ytr-meta">${esc(task.assignee || 'Unassigned')} &middot; ${esc(task.recurrence)} &middot; ${task.category ? esc(task.category) : ''}</div>
+          </div>
+          <div class="yearly-task-dates">
+            ${task.dates.map(d => {
+              const day = parseInt(d.date.split('-')[2]);
+              return `<span class="yearly-date-chip ${d.type}">${day}</span>`;
+            }).join('')}
+          </div>
+        </div>`;
+      }
+    }
+
+    breakdownHtml += '</div></div>';
+  }
+  breakdownEl.innerHTML = breakdownHtml;
 }
 
 let activePopover = null;
