@@ -16,6 +16,7 @@
       <ul class="nav-links">
         <li><a href="#" class="nav-link active" data-view="dashboard">Dashboard</a></li>
         <li><a href="#" class="nav-link" data-view="tasks">All Tasks</a></li>
+        <li><a href="#" class="nav-link" data-view="actions">Actions</a></li>
         <li><a href="#" class="nav-link" data-view="history">History</a></li>
       </ul>
     </nav>
@@ -62,6 +63,30 @@
               </tr>
             </thead>
             <tbody id="task-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Actions View -->
+      <section id="view-actions" class="view hidden">
+        <div class="view-header">
+          <h2>Follow-up Actions</h2>
+        </div>
+        <div class="filters" id="action-filters-bar"></div>
+        <div class="task-table-wrap">
+          <table class="task-table" id="action-table">
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Source Task</th>
+                <th>Assignee</th>
+                <th>Priority</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="action-table-body"></tbody>
           </table>
         </div>
       </section>
@@ -167,6 +192,106 @@
           <button type="submit" class="btn btn-success">Complete</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Action Modal (create/edit) -->
+  <div id="action-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeActionModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="action-modal-title">New Follow-up Action</h3>
+        <button class="modal-close" onclick="closeActionModal()">&times;</button>
+      </div>
+      <form id="action-form" onsubmit="saveAction(event)">
+        <input type="hidden" id="action-id">
+        <input type="hidden" id="action-completion-id">
+        <input type="hidden" id="action-task-id">
+        <div class="form-group">
+          <label for="action-title">Action Title *</label>
+          <input type="text" id="action-title" required placeholder="What needs to be done?">
+        </div>
+        <div class="form-group">
+          <label for="action-description">Description</label>
+          <textarea id="action-description" rows="3" placeholder="Details about this follow-up action"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="action-assignee">Assignee</label>
+            <input type="text" id="action-assignee" placeholder="Who should handle this?">
+          </div>
+          <div class="form-group">
+            <label for="action-priority">Priority</label>
+            <select id="action-priority">
+              <option value="Low">Low</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="High">High</option>
+              <option value="Critical">Critical</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="action-due-date">Due Date</label>
+            <input type="date" id="action-due-date">
+          </div>
+          <div class="form-group">
+            <label for="action-status">Status</label>
+            <select id="action-status">
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="resolved">Resolved</option>
+              <option value="closed">Closed</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group hidden" id="action-resolved-by-group">
+          <label for="action-resolved-by">Resolved By</label>
+          <input type="text" id="action-resolved-by" placeholder="Who resolved this?">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeActionModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Action</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Post-completion action prompt -->
+  <div id="post-complete-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closePostCompleteModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Task Completed</h3>
+        <button class="modal-close" onclick="closePostCompleteModal()">&times;</button>
+      </div>
+      <p style="margin-bottom:16px;color:var(--text-muted)">Any follow-up actions needed from this check?</p>
+      <div id="post-complete-actions-list"></div>
+      <div style="border:1px dashed var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px" id="quick-action-form">
+        <div class="form-group">
+          <input type="text" id="quick-action-title" placeholder="Action title *">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <input type="text" id="quick-action-assignee" placeholder="Assignee">
+          </div>
+          <div class="form-group">
+            <select id="quick-action-priority">
+              <option value="Low">Low</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="High">High</option>
+              <option value="Critical">Critical</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <input type="date" id="quick-action-due">
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="addQuickAction()">+ Add Action</button>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="closePostCompleteModal()">Done</button>
+      </div>
     </div>
   </div>
 

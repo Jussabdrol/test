@@ -40,6 +40,23 @@ db.exec(`
     notes TEXT DEFAULT '',
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    completion_id INTEGER NOT NULL,
+    task_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    assignee TEXT DEFAULT '',
+    priority TEXT DEFAULT 'Medium' CHECK(priority IN ('Low','Medium','High','Critical')),
+    status TEXT DEFAULT 'open' CHECK(status IN ('open','in_progress','resolved','closed')),
+    due_date TEXT DEFAULT NULL,
+    resolved_by TEXT DEFAULT '',
+    resolved_at TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (completion_id) REFERENCES completions(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+  );
 `);
 
 // --- Helper: compute next due date ---
@@ -119,6 +136,8 @@ app.get('/api/dashboard', (req, res) => {
     byAssignee: db.prepare("SELECT assignee, COUNT(*) as count FROM tasks WHERE is_active = 1 AND assignee != '' GROUP BY assignee").all(),
     upcomingTasks: db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due >= ? ORDER BY next_due ASC LIMIT 10').all(today),
     overdueTasks: db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due < ? ORDER BY next_due ASC').all(today),
+    openActions: db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress')").get().c,
+    overdueActions: db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress') AND due_date < ? AND due_date IS NOT NULL").get(today).c,
   };
   res.json(stats);
 });
@@ -190,7 +209,7 @@ app.post('/api/tasks/:id/complete', (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
-  db.prepare('INSERT INTO completions (task_id, completed_by, notes) VALUES (?, ?, ?)').run(
+  const completionResult = db.prepare('INSERT INTO completions (task_id, completed_by, notes) VALUES (?, ?, ?)').run(
     task.id,
     req.body.completed_by || '',
     req.body.notes || ''
@@ -200,7 +219,7 @@ app.post('/api/tasks/:id/complete', (req, res) => {
   db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ?").run(nextDue, task.id);
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
-  res.json(updated);
+  res.json({ ...updated, completion_id: completionResult.lastInsertRowid });
 });
 
 // Delete task
@@ -213,7 +232,10 @@ app.delete('/api/tasks/:id', (req, res) => {
 // Get completion history
 app.get('/api/completions', (req, res) => {
   const { task_id, limit } = req.query;
-  let sql = 'SELECT c.*, t.title as task_title FROM completions c JOIN tasks t ON c.task_id = t.id';
+  let sql = `SELECT c.*, t.title as task_title,
+    (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id) as action_count,
+    (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id AND a.status IN ('open','in_progress')) as open_action_count
+    FROM completions c JOIN tasks t ON c.task_id = t.id`;
   const params = [];
   if (task_id) {
     sql += ' WHERE c.task_id = ?';
@@ -229,6 +251,74 @@ app.get('/api/meta', (req, res) => {
   const assignees = db.prepare("SELECT DISTINCT assignee FROM tasks WHERE assignee != '' ORDER BY assignee").all().map(r => r.assignee);
   const categories = db.prepare('SELECT DISTINCT category FROM tasks ORDER BY category').all().map(r => r.category);
   res.json({ assignees, categories });
+});
+
+// --- Follow-up Actions API ---
+
+// Get all actions with optional filters
+app.get('/api/actions', (req, res) => {
+  const { task_id, completion_id, status } = req.query;
+  let sql = `SELECT a.*, t.title as task_title FROM actions a JOIN tasks t ON a.task_id = t.id WHERE 1=1`;
+  const params = [];
+  if (task_id) { sql += ' AND a.task_id = ?'; params.push(task_id); }
+  if (completion_id) { sql += ' AND a.completion_id = ?'; params.push(completion_id); }
+  if (status) { sql += ' AND a.status = ?'; params.push(status); }
+  sql += ' ORDER BY a.created_at DESC';
+  res.json(db.prepare(sql).all(...params));
+});
+
+// Get single action
+app.get('/api/actions/:id', (req, res) => {
+  const action = db.prepare('SELECT a.*, t.title as task_title FROM actions a JOIN tasks t ON a.task_id = t.id WHERE a.id = ?').get(req.params.id);
+  if (!action) return res.status(404).json({ error: 'Action not found' });
+  res.json(action);
+});
+
+// Create action (linked to a completion)
+app.post('/api/actions', (req, res) => {
+  const { completion_id, task_id, title, description, assignee, priority, due_date } = req.body;
+  if (!title || !completion_id || !task_id) return res.status(400).json({ error: 'title, completion_id, and task_id are required' });
+
+  const result = db.prepare(`
+    INSERT INTO actions (completion_id, task_id, title, description, assignee, priority, due_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(completion_id, task_id, title, description || '', assignee || '', priority || 'Medium', due_date || null);
+
+  const action = db.prepare('SELECT * FROM actions WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json(action);
+});
+
+// Update action
+app.put('/api/actions/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM actions WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Action not found' });
+
+  const fields = ['title', 'description', 'assignee', 'priority', 'status', 'due_date', 'resolved_by'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) {
+      updates.push(`${f} = ?`);
+      params.push(req.body[f]);
+    }
+  }
+  // Auto-set resolved_at when status changes to resolved/closed
+  if (req.body.status === 'resolved' || req.body.status === 'closed') {
+    updates.push("resolved_at = datetime('now')");
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  params.push(req.params.id);
+
+  db.prepare(`UPDATE actions SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  const action = db.prepare('SELECT * FROM actions WHERE id = ?').get(req.params.id);
+  res.json(action);
+});
+
+// Delete action
+app.delete('/api/actions/:id', (req, res) => {
+  const result = db.prepare('DELETE FROM actions WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Action not found' });
+  res.json({ success: true });
 });
 
 // SPA fallback

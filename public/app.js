@@ -3,6 +3,8 @@ let currentView = 'dashboard';
 let allTasks = [];
 let meta = { assignees: [], categories: [] };
 let filters = { active: 'true', assignee: '', category: '', priority: '' };
+let actionFilters = { status: 'open' };
+let lastCompletionContext = null; // { completion_id, task_id }
 
 // --- Navigation ---
 document.querySelectorAll('.nav-link').forEach(link => {
@@ -22,6 +24,7 @@ function switchView(view) {
 
   if (view === 'dashboard') loadDashboard();
   else if (view === 'tasks') loadTasks();
+  else if (view === 'actions') loadActions();
   else if (view === 'history') loadHistory();
 }
 
@@ -45,6 +48,7 @@ async function loadDashboard() {
     <div class="stat-card overdue"><div class="stat-value">${stats.overdue}</div><div class="stat-label">Overdue</div></div>
     <div class="stat-card done"><div class="stat-value">${stats.completedThisWeek}</div><div class="stat-label">Done This Week</div></div>
     <div class="stat-card done"><div class="stat-value">${stats.completedThisMonth}</div><div class="stat-label">Done This Month</div></div>
+    <div class="stat-card${stats.openActions > 0 ? ' overdue' : ''}"><div class="stat-value">${stats.openActions}</div><div class="stat-label">Open Actions</div></div>
   `;
 
   const overdueList = document.getElementById('overdue-list');
@@ -157,8 +161,12 @@ async function loadHistory() {
       <div class="hi-info">
         <strong>${esc(c.task_title)}</strong>
         <div class="hi-meta">${c.completed_by ? 'by ' + esc(c.completed_by) : ''}${c.notes ? ' — ' + esc(c.notes) : ''}</div>
+        ${c.action_count > 0 ? `<div class="hi-meta"><span class="badge badge-${c.open_action_count > 0 ? 'high' : 'low'}">${c.open_action_count} open / ${c.action_count} actions</span></div>` : ''}
       </div>
-      <div class="hi-date">${new Date(c.completed_at).toLocaleString()}</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-secondary btn-sm" onclick="viewCompletionActions(${c.id}, ${c.task_id})">Actions</button>
+        <div class="hi-date">${new Date(c.completed_at).toLocaleString()}</div>
+      </div>
     </div>
   `).join('');
 }
@@ -242,7 +250,7 @@ function closeCompleteModal() {
 async function submitComplete(e) {
   e.preventDefault();
   const taskId = document.getElementById('complete-task-id').value;
-  await api(`/api/tasks/${taskId}/complete`, {
+  const result = await api(`/api/tasks/${taskId}/complete`, {
     method: 'POST',
     body: {
       completed_by: document.getElementById('complete-by').value,
@@ -250,7 +258,9 @@ async function submitComplete(e) {
     },
   });
   closeCompleteModal();
-  refreshCurrentView();
+  // Show post-completion action prompt
+  lastCompletionContext = { completion_id: result.completion_id, task_id: parseInt(taskId) };
+  openPostCompleteModal();
 }
 
 // --- Delete ---
@@ -258,6 +268,210 @@ async function deleteTask(id) {
   if (!confirm('Delete this task and all its history?')) return;
   await api(`/api/tasks/${id}`, { method: 'DELETE' });
   refreshCurrentView();
+}
+
+// --- Post-completion Actions ---
+function openPostCompleteModal() {
+  document.getElementById('post-complete-actions-list').innerHTML = '';
+  document.getElementById('quick-action-title').value = '';
+  document.getElementById('quick-action-assignee').value = '';
+  document.getElementById('quick-action-priority').value = 'Medium';
+  document.getElementById('quick-action-due').value = '';
+  document.getElementById('post-complete-modal').classList.remove('hidden');
+}
+
+function closePostCompleteModal() {
+  document.getElementById('post-complete-modal').classList.add('hidden');
+  lastCompletionContext = null;
+  refreshCurrentView();
+}
+
+async function addQuickAction() {
+  const title = document.getElementById('quick-action-title').value.trim();
+  if (!title) return alert('Action title is required');
+
+  const action = await api('/api/actions', {
+    method: 'POST',
+    body: {
+      completion_id: lastCompletionContext.completion_id,
+      task_id: lastCompletionContext.task_id,
+      title,
+      assignee: document.getElementById('quick-action-assignee').value,
+      priority: document.getElementById('quick-action-priority').value,
+      due_date: document.getElementById('quick-action-due').value || null,
+    },
+  });
+
+  // Add to the list
+  const list = document.getElementById('post-complete-actions-list');
+  list.innerHTML += `<div class="task-card" style="margin-bottom:8px">
+    <div class="task-card-info">
+      <h4>${esc(action.title)}</h4>
+      <div class="meta">${esc(action.assignee || 'Unassigned')} &middot; <span class="badge badge-${action.priority.toLowerCase()}">${action.priority}</span>${action.due_date ? ' &middot; Due: ' + action.due_date : ''}</div>
+    </div>
+  </div>`;
+
+  // Reset inputs
+  document.getElementById('quick-action-title').value = '';
+  document.getElementById('quick-action-assignee').value = '';
+  document.getElementById('quick-action-priority').value = 'Medium';
+  document.getElementById('quick-action-due').value = '';
+}
+
+// --- Actions View ---
+async function loadActions() {
+  const params = new URLSearchParams();
+  if (actionFilters.status) params.set('status', actionFilters.status);
+
+  const actions = await api(`/api/actions?${params}`);
+  renderActionFilters();
+  renderActionTable(actions);
+}
+
+function renderActionFilters() {
+  const bar = document.getElementById('action-filters-bar');
+  bar.innerHTML = `
+    <select onchange="actionFilters.status=this.value;loadActions()">
+      <option value="open" ${actionFilters.status==='open'?'selected':''}>Open</option>
+      <option value="in_progress" ${actionFilters.status==='in_progress'?'selected':''}>In Progress</option>
+      <option value="resolved" ${actionFilters.status==='resolved'?'selected':''}>Resolved</option>
+      <option value="closed" ${actionFilters.status==='closed'?'selected':''}>Closed</option>
+      <option value="" ${actionFilters.status===''?'selected':''}>All</option>
+    </select>
+  `;
+}
+
+function renderActionTable(actions) {
+  const tbody = document.getElementById('action-table-body');
+  const today = new Date().toISOString().split('T')[0];
+  if (actions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No actions found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = actions.map(a => {
+    const isOverdue = a.due_date && a.due_date < today && (a.status === 'open' || a.status === 'in_progress');
+    const statusClass = a.status === 'open' ? 'badge-high' : a.status === 'in_progress' ? 'badge-medium' : 'badge-low';
+    const statusLabel = a.status.replace('_', ' ');
+    return `<tr>
+      <td><strong>${esc(a.title)}</strong>${a.description ? '<br><small style="color:var(--text-muted)">' + esc(a.description) + '</small>' : ''}</td>
+      <td>${esc(a.task_title)}</td>
+      <td>${esc(a.assignee || '-')}</td>
+      <td><span class="badge badge-${a.priority.toLowerCase()}">${a.priority}</span></td>
+      <td>${a.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + a.due_date + '</span>' : a.due_date) : '-'}</td>
+      <td><span class="badge ${statusClass}">${statusLabel}</span></td>
+      <td>
+        ${a.status === 'open' ? `<button class="btn btn-primary btn-sm" onclick="updateActionStatus(${a.id},'in_progress')">Start</button>` : ''}
+        ${a.status === 'in_progress' ? `<button class="btn btn-success btn-sm" onclick="resolveAction(${a.id})">Resolve</button>` : ''}
+        <button class="btn btn-secondary btn-sm" onclick="openActionModal(${a.id})">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteAction(${a.id})">Del</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function updateActionStatus(id, status) {
+  await api(`/api/actions/${id}`, { method: 'PUT', body: { status } });
+  loadActions();
+}
+
+async function resolveAction(id) {
+  const resolvedBy = prompt('Resolved by (your name):');
+  if (resolvedBy === null) return;
+  await api(`/api/actions/${id}`, { method: 'PUT', body: { status: 'resolved', resolved_by: resolvedBy } });
+  loadActions();
+}
+
+async function deleteAction(id) {
+  if (!confirm('Delete this action?')) return;
+  await api(`/api/actions/${id}`, { method: 'DELETE' });
+  loadActions();
+}
+
+// --- Action Modal (edit) ---
+async function openActionModal(id) {
+  const modal = document.getElementById('action-modal');
+  const form = document.getElementById('action-form');
+  form.reset();
+  document.getElementById('action-id').value = '';
+  document.getElementById('action-modal-title').textContent = 'New Follow-up Action';
+  document.getElementById('action-resolved-by-group').classList.add('hidden');
+
+  if (id) {
+    const action = await api(`/api/actions/${id}`);
+    document.getElementById('action-modal-title').textContent = 'Edit Action';
+    document.getElementById('action-id').value = action.id;
+    document.getElementById('action-completion-id').value = action.completion_id;
+    document.getElementById('action-task-id').value = action.task_id;
+    document.getElementById('action-title').value = action.title;
+    document.getElementById('action-description').value = action.description;
+    document.getElementById('action-assignee').value = action.assignee;
+    document.getElementById('action-priority').value = action.priority;
+    document.getElementById('action-due-date').value = action.due_date || '';
+    document.getElementById('action-status').value = action.status;
+    document.getElementById('action-resolved-by').value = action.resolved_by || '';
+    if (action.status === 'resolved' || action.status === 'closed') {
+      document.getElementById('action-resolved-by-group').classList.remove('hidden');
+    }
+  }
+
+  document.getElementById('action-status').addEventListener('change', function() {
+    document.getElementById('action-resolved-by-group').classList.toggle('hidden',
+      this.value !== 'resolved' && this.value !== 'closed');
+  });
+
+  modal.classList.remove('hidden');
+}
+
+function closeActionModal() {
+  document.getElementById('action-modal').classList.add('hidden');
+}
+
+async function saveAction(e) {
+  e.preventDefault();
+  const id = document.getElementById('action-id').value;
+  const body = {
+    title: document.getElementById('action-title').value,
+    description: document.getElementById('action-description').value,
+    assignee: document.getElementById('action-assignee').value,
+    priority: document.getElementById('action-priority').value,
+    due_date: document.getElementById('action-due-date').value || null,
+    status: document.getElementById('action-status').value,
+    resolved_by: document.getElementById('action-resolved-by').value,
+  };
+
+  if (id) {
+    await api(`/api/actions/${id}`, { method: 'PUT', body });
+  } else {
+    body.completion_id = document.getElementById('action-completion-id').value;
+    body.task_id = document.getElementById('action-task-id').value;
+    await api('/api/actions', { method: 'POST', body });
+  }
+
+  closeActionModal();
+  refreshCurrentView();
+}
+
+// View actions for a specific completion (from history)
+async function viewCompletionActions(completionId, taskId) {
+  lastCompletionContext = { completion_id: completionId, task_id: taskId };
+  const actions = await api(`/api/actions?completion_id=${completionId}`);
+
+  const list = document.getElementById('post-complete-actions-list');
+  list.innerHTML = actions.map(a => {
+    const statusClass = a.status === 'open' ? 'badge-high' : a.status === 'in_progress' ? 'badge-medium' : 'badge-low';
+    return `<div class="task-card" style="margin-bottom:8px">
+      <div class="task-card-info">
+        <h4>${esc(a.title)}</h4>
+        <div class="meta">${esc(a.assignee || 'Unassigned')} &middot; <span class="badge badge-${a.priority.toLowerCase()}">${a.priority}</span> &middot; <span class="badge ${statusClass}">${a.status.replace('_',' ')}</span>${a.due_date ? ' &middot; Due: ' + a.due_date : ''}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('quick-action-title').value = '';
+  document.getElementById('quick-action-assignee').value = '';
+  document.getElementById('quick-action-priority').value = 'Medium';
+  document.getElementById('quick-action-due').value = '';
+  document.getElementById('post-complete-modal').classList.remove('hidden');
 }
 
 // --- Helpers ---
