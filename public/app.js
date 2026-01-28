@@ -6,18 +6,19 @@ let filters = { active: 'true', assignee: '', category: '', priority: '' };
 let actionFilters = { status: 'open' };
 let yearlyYear = new Date().getFullYear();
 let lastCompletionContext = null; // { completion_id, task_id }
+let yearlyData = null; // cached yearly API data
 
 // --- Navigation ---
 document.querySelectorAll('.nav-link').forEach(link => {
   link.addEventListener('click', e => {
     e.preventDefault();
-    const view = link.dataset.view;
-    switchView(view);
+    switchView(link.dataset.view);
   });
 });
 
 function switchView(view) {
   currentView = view;
+  closeDayDetail();
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
   document.getElementById(`view-${view}`).classList.remove('hidden');
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
@@ -40,35 +41,68 @@ async function api(url, options = {}) {
   return res.json();
 }
 
+async function ensureMeta() {
+  if (meta.assignees.length === 0 && meta.categories.length === 0) {
+    meta = await api('/api/meta');
+  }
+}
+
 // --- Dashboard ---
 async function loadDashboard() {
   const stats = await api('/api/dashboard');
   const grid = document.getElementById('stats-grid');
   grid.innerHTML = `
     <div class="stat-card"><div class="stat-value">${stats.totalActive}</div><div class="stat-label">Active Tasks</div></div>
-    <div class="stat-card today"><div class="stat-value">${stats.dueToday}</div><div class="stat-label">Due Today</div></div>
-    <div class="stat-card overdue"><div class="stat-value">${stats.overdue}</div><div class="stat-label">Overdue</div></div>
+    <div class="stat-card today clickable" onclick="switchView('tasks')"><div class="stat-value">${stats.dueToday}</div><div class="stat-label">Due Today</div></div>
+    <div class="stat-card overdue clickable" onclick="switchView('tasks')"><div class="stat-value">${stats.overdue}</div><div class="stat-label">Overdue</div></div>
     <div class="stat-card done"><div class="stat-value">${stats.completedThisWeek}</div><div class="stat-label">Done This Week</div></div>
-    <div class="stat-card done"><div class="stat-value">${stats.completedThisMonth}</div><div class="stat-label">Done This Month</div></div>
-    <div class="stat-card${stats.openActions > 0 ? ' overdue' : ''}"><div class="stat-value">${stats.openActions}</div><div class="stat-label">Open Actions</div></div>
+    <div class="stat-card done clickable" onclick="switchView('yearly')"><div class="stat-value">${stats.completedThisMonth}</div><div class="stat-label">Done This Month</div></div>
+    <div class="stat-card${stats.openActions > 0 ? ' overdue' : ''} clickable" onclick="switchView('actions')"><div class="stat-value">${stats.openActions}</div><div class="stat-label">Open Actions</div></div>
   `;
 
+  // Overdue tasks
   const overdueList = document.getElementById('overdue-list');
   if (stats.overdueTasks.length === 0) {
     overdueList.innerHTML = '<div class="empty-state">No overdue tasks</div>';
   } else {
-    overdueList.innerHTML = stats.overdueTasks.map(t => taskCard(t, true)).join('');
+    overdueList.innerHTML = stats.overdueTasks.map(t => taskCard(t)).join('');
   }
 
+  // Overdue actions
+  const overdueActionsList = document.getElementById('overdue-actions-list');
+  if (stats.overdueActions > 0) {
+    const actions = await api('/api/actions?status=open');
+    const today = new Date().toISOString().split('T')[0];
+    const overdueActions = actions.filter(a => a.due_date && a.due_date < today);
+    if (overdueActions.length > 0) {
+      overdueActionsList.innerHTML = overdueActions.map(a => `
+        <div class="task-card">
+          <div class="task-card-info">
+            <h4>${esc(a.title)}</h4>
+            <div class="meta">From: ${esc(a.task_title)} &middot; ${esc(a.assignee || 'Unassigned')} &middot; Due: ${a.due_date}</div>
+          </div>
+          <div class="task-card-actions">
+            <button class="btn btn-primary btn-sm" onclick="updateActionStatusAndRefresh(${a.id},'in_progress')">Start</button>
+            <button class="btn btn-secondary btn-sm" onclick="openActionModal(${a.id})">Edit</button>
+          </div>
+        </div>`).join('');
+    } else {
+      overdueActionsList.innerHTML = '<div class="empty-state">No overdue actions</div>';
+    }
+  } else {
+    overdueActionsList.innerHTML = '<div class="empty-state">No overdue actions</div>';
+  }
+
+  // Upcoming tasks
   const upcomingList = document.getElementById('upcoming-list');
   if (stats.upcomingTasks.length === 0) {
     upcomingList.innerHTML = '<div class="empty-state">No upcoming tasks</div>';
   } else {
-    upcomingList.innerHTML = stats.upcomingTasks.map(t => taskCard(t, false)).join('');
+    upcomingList.innerHTML = stats.upcomingTasks.map(t => taskCard(t)).join('');
   }
 }
 
-function taskCard(task, isOverdue) {
+function taskCard(task) {
   return `
     <div class="task-card">
       <div class="task-card-info">
@@ -175,12 +209,14 @@ async function loadHistory() {
 
 // --- Task Modal ---
 async function openTaskModal(id) {
+  await ensureMeta();
   const modal = document.getElementById('task-modal');
   const form = document.getElementById('task-form');
   form.reset();
   document.getElementById('task-id').value = '';
   document.getElementById('task-start').value = new Date().toISOString().split('T')[0];
   document.getElementById('modal-title').textContent = 'New Task';
+  document.getElementById('custom-days-group').classList.add('hidden');
 
   // populate category datalist
   const catList = document.getElementById('category-list');
@@ -234,12 +270,13 @@ async function saveTask(e) {
   }
 
   closeTaskModal();
+  invalidateYearlyCache();
+  meta = await api('/api/meta'); // refresh meta after adding new assignees/categories
   refreshCurrentView();
 }
 
 // --- Complete Modal ---
 function openCompleteModal(taskId) {
-  document.getElementById('complete-task-id').value = taskId;
   document.getElementById('complete-form').reset();
   document.getElementById('complete-task-id').value = taskId;
   document.getElementById('complete-modal').classList.remove('hidden');
@@ -260,6 +297,7 @@ async function submitComplete(e) {
     },
   });
   closeCompleteModal();
+  invalidateYearlyCache();
   // Show post-completion action prompt
   lastCompletionContext = { completion_id: result.completion_id, task_id: parseInt(taskId) };
   openPostCompleteModal();
@@ -269,6 +307,7 @@ async function submitComplete(e) {
 async function deleteTask(id) {
   if (!confirm('Delete this task and all its history?')) return;
   await api(`/api/tasks/${id}`, { method: 'DELETE' });
+  invalidateYearlyCache();
   refreshCurrentView();
 }
 
@@ -304,7 +343,7 @@ async function addQuickAction() {
     },
   });
 
-  // Add to the list
+  // Add to the visible list
   const list = document.getElementById('post-complete-actions-list');
   list.innerHTML += `<div class="task-card" style="margin-bottom:8px">
     <div class="task-card-info">
@@ -373,23 +412,30 @@ function renderActionTable(actions) {
 
 async function updateActionStatus(id, status) {
   await api(`/api/actions/${id}`, { method: 'PUT', body: { status } });
-  loadActions();
+  refreshCurrentView();
+}
+
+async function updateActionStatusAndRefresh(id, status) {
+  await api(`/api/actions/${id}`, { method: 'PUT', body: { status } });
+  loadDashboard();
 }
 
 async function resolveAction(id) {
   const resolvedBy = prompt('Resolved by (your name):');
   if (resolvedBy === null) return;
   await api(`/api/actions/${id}`, { method: 'PUT', body: { status: 'resolved', resolved_by: resolvedBy } });
-  loadActions();
+  refreshCurrentView();
 }
 
 async function deleteAction(id) {
   if (!confirm('Delete this action?')) return;
   await api(`/api/actions/${id}`, { method: 'DELETE' });
-  loadActions();
+  refreshCurrentView();
 }
 
 // --- Action Modal (edit) ---
+let actionStatusHandler = null;
+
 async function openActionModal(id) {
   const modal = document.getElementById('action-modal');
   const form = document.getElementById('action-form');
@@ -416,10 +462,14 @@ async function openActionModal(id) {
     }
   }
 
-  document.getElementById('action-status').addEventListener('change', function() {
+  // Remove old listener before adding new one
+  const statusEl = document.getElementById('action-status');
+  if (actionStatusHandler) statusEl.removeEventListener('change', actionStatusHandler);
+  actionStatusHandler = function() {
     document.getElementById('action-resolved-by-group').classList.toggle('hidden',
       this.value !== 'resolved' && this.value !== 'closed');
-  });
+  };
+  statusEl.addEventListener('change', actionStatusHandler);
 
   modal.classList.remove('hidden');
 }
@@ -483,12 +533,18 @@ const DAY_LABELS = ['Mo','Tu','We','Th','Fr','Sa','Su'];
 function changeYear(delta) {
   if (delta === 0) yearlyYear = new Date().getFullYear();
   else yearlyYear += delta;
+  invalidateYearlyCache();
   loadYearlyPlan();
+}
+
+function invalidateYearlyCache() {
+  yearlyData = null;
 }
 
 async function loadYearlyPlan() {
   document.getElementById('yearly-title').textContent = `Yearly Plan ${yearlyYear}`;
   const data = await api(`/api/yearly?year=${yearlyYear}`);
+  yearlyData = data;
   const grid = document.getElementById('yearly-grid');
   const today = new Date().toISOString().split('T')[0];
 
@@ -558,17 +614,12 @@ async function loadYearlyPlan() {
 }
 
 let activePopover = null;
-function showDayDetail(event, dateStr) {
-  closeDayDetail();
-  const data = window._yearlyData;
-  if (!data) { loadYearlyPlanAndShow(event, dateStr); return; }
-  renderDayPopover(event, dateStr, data);
-}
 
-async function loadYearlyPlanAndShow(event, dateStr) {
-  const data = await api(`/api/yearly?year=${yearlyYear}`);
-  window._yearlyData = data;
-  renderDayPopover(event, dateStr, data);
+function showDayDetail(event, dateStr) {
+  event.stopPropagation();
+  closeDayDetail();
+  if (!yearlyData) return;
+  renderDayPopover(event, dateStr, yearlyData);
 }
 
 function renderDayPopover(event, dateStr, data) {
@@ -591,8 +642,16 @@ function renderDayPopover(event, dateStr, data) {
     const color = isOverdue ? 'var(--danger)' : 'var(--primary)';
     const label = isOverdue ? 'Overdue' : 'Scheduled';
     items += `<div class="day-popover-item" style="border-left:3px solid ${color}">
-      <strong>${esc(t.title)}</strong> <span class="badge badge-${t.priority.toLowerCase()}">${t.priority}</span>
-      <div class="dpi-meta">${label} &middot; ${esc(t.recurrence)} &middot; ${esc(t.assignee || 'Unassigned')}</div>
+      <div style="display:flex;justify-content:space-between;align-items:start">
+        <div>
+          <strong>${esc(t.title)}</strong> <span class="badge badge-${t.priority.toLowerCase()}">${t.priority}</span>
+          <div class="dpi-meta">${label} &middot; ${esc(t.recurrence)} &middot; ${esc(t.assignee || 'Unassigned')}</div>
+        </div>
+        <div style="display:flex;gap:4px;margin-left:8px;flex-shrink:0">
+          <button class="btn btn-success btn-sm" onclick="closeDayDetail();openCompleteModal(${t.task_id})">Done</button>
+          <button class="btn btn-secondary btn-sm" onclick="closeDayDetail();openTaskModal(${t.task_id})">Edit</button>
+        </div>
+      </div>
     </div>`;
   }
 
@@ -640,14 +699,6 @@ function closeDayDetailOutside(e) {
     closeDayDetail();
   }
 }
-
-// Cache yearly data when loading
-const _origLoadYearly = loadYearlyPlan;
-loadYearlyPlan = async function() {
-  await _origLoadYearly();
-  const data = await api(`/api/yearly?year=${yearlyYear}`);
-  window._yearlyData = data;
-};
 
 // --- Helpers ---
 function refreshCurrentView() {
