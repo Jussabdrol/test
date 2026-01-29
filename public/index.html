@@ -271,6 +271,15 @@
             <input type="text" id="audit-team" placeholder="Team members (comma separated)">
           </div>
         </div>
+        <div class="form-group" id="audit-req-picker-group">
+          <label>Requirements to Audit <span style="font-weight:400;color:var(--text-muted)">(select clauses)</span></label>
+          <div class="req-picker-controls" style="display:flex;gap:8px;margin-bottom:8px">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="auditReqSelectAll(true)">Select All</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="auditReqSelectAll(false)">Deselect All</button>
+            <span id="audit-req-count" style="font-size:12px;color:var(--text-muted);align-self:center"></span>
+          </div>
+          <div id="audit-req-checklist" class="req-picker-list"></div>
+        </div>
         <div class="form-group hidden" id="audit-status-group">
           <label for="audit-status-field">Status</label>
           <select id="audit-status-field">

@@ -958,8 +958,74 @@ async function openAuditModal(id) {
     document.getElementById('audit-status-group').classList.remove('hidden');
     document.getElementById('audit-summary-group').classList.remove('hidden');
   }
+
+  // Load requirements picker based on selected standard
+  await populateAuditReqPicker(id);
+
   modal.classList.remove('hidden');
 }
+
+async function populateAuditReqPicker(auditId) {
+  const standard = document.getElementById('audit-standard').value;
+  const reqs = await api(`/api/requirements?standard=${encodeURIComponent(standard)}`);
+  const container = document.getElementById('audit-req-checklist');
+
+  // If editing, find which clauses already have checklist items
+  let existingClauses = [];
+  if (auditId) {
+    const audit = await api(`/api/audits/${auditId}`);
+    existingClauses = audit.checklist.map(c => c.clause);
+  }
+
+  if (reqs.length === 0) {
+    container.innerHTML = '<div class="empty-state" style="padding:12px;font-size:13px">No requirements found for this standard. Import a template in the Requirements view first.</div>';
+    document.getElementById('audit-req-count').textContent = '';
+    return;
+  }
+
+  // Group by category
+  const groups = {};
+  for (const r of reqs) {
+    const cat = r.category || 'Uncategorized';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(r);
+  }
+
+  let html = '';
+  for (const [cat, items] of Object.entries(groups)) {
+    html += `<div class="req-picker-category">${esc(cat)}</div>`;
+    for (const r of items) {
+      const alreadyAdded = existingClauses.includes(r.clause);
+      html += `<label class="req-picker-item${alreadyAdded ? ' already-added' : ''}">
+        <input type="checkbox" name="audit_req_ids" value="${r.id}" ${alreadyAdded ? 'disabled checked' : ''} onchange="updateAuditReqCount()">
+        <span class="req-picker-clause">${esc(r.clause)}</span>
+        <span class="req-picker-title">${esc(r.title)}</span>
+        ${alreadyAdded ? '<span class="badge badge-low" style="font-size:10px;margin-left:auto">already added</span>' : ''}
+      </label>`;
+    }
+  }
+  container.innerHTML = html;
+  updateAuditReqCount();
+}
+
+function updateAuditReqCount() {
+  const checked = document.querySelectorAll('#audit-req-checklist input[name="audit_req_ids"]:checked:not(:disabled)').length;
+  const total = document.querySelectorAll('#audit-req-checklist input[name="audit_req_ids"]:not(:disabled)').length;
+  document.getElementById('audit-req-count').textContent = `${checked} of ${total} selected`;
+}
+
+function auditReqSelectAll(select) {
+  document.querySelectorAll('#audit-req-checklist input[name="audit_req_ids"]:not(:disabled)').forEach(cb => {
+    cb.checked = select;
+  });
+  updateAuditReqCount();
+}
+
+// Re-populate requirements when standard changes
+document.getElementById('audit-standard').addEventListener('change', () => {
+  const auditId = document.getElementById('audit-id').value;
+  populateAuditReqPicker(auditId || null);
+});
 
 function closeAuditModal() {
   document.getElementById('audit-modal').classList.add('hidden');
@@ -976,6 +1042,13 @@ async function saveAudit(e) {
     audit_team: document.getElementById('audit-team').value,
     planned_date: document.getElementById('audit-planned-date').value || null,
   };
+
+  // Collect selected requirement IDs (only non-disabled = new selections)
+  const selectedReqIds = [...document.querySelectorAll('#audit-req-checklist input[name="audit_req_ids"]:checked:not(:disabled)')].map(cb => parseInt(cb.value));
+  if (selectedReqIds.length > 0) {
+    body.requirement_ids = selectedReqIds;
+  }
+
   if (id) {
     body.status = document.getElementById('audit-status-field').value;
     body.summary = document.getElementById('audit-summary').value;
@@ -1387,6 +1460,15 @@ function renderGanttChart(data, monthStats, today) {
 }
 
 // --- Requirements Module ---
+function ratingBadgeClass(rating) {
+  const map = { not_assessed: 'badge-inactive', conforming: 'badge-low', observation: 'badge-medium', minor_nc: 'badge-high', major_nc: 'badge-critical' };
+  return map[rating] || 'badge-inactive';
+}
+function ratingLabel(rating) {
+  const map = { not_assessed: 'Not Assessed', conforming: 'Conforming', observation: 'Observation', minor_nc: 'Minor NC', major_nc: 'Major NC' };
+  return map[rating] || rating;
+}
+
 let reqFilters = { standard: '' };
 
 async function loadRequirements() {
@@ -1433,11 +1515,34 @@ async function loadRequirements() {
     html += `<div class="req-category-group">
       <div class="req-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>`;
     for (const r of items) {
+      // Audit history badges
+      const lastAuditBadge = r.last_audited
+        ? `<span class="req-audit-info" title="Last audited in: ${esc(r.last_audit_title || '')}">${r.last_audited}</span>`
+        : '<span class="req-audit-info none">Never audited</span>';
+
+      const ratingBadge = r.last_rating
+        ? `<span class="badge ${ratingBadgeClass(r.last_rating)}">${ratingLabel(r.last_rating)}</span>`
+        : '';
+
+      let ncBadge = '';
+      if (r.nc_total > 0) {
+        if (r.nc_open > 0) {
+          ncBadge = `<span class="badge badge-high" title="${r.nc_open} open, ${r.nc_closed} treated">${r.nc_open} open NC</span>`;
+        } else {
+          ncBadge = `<span class="badge badge-low" title="All ${r.nc_total} NCs treated">${r.nc_total} NC (all treated)</span>`;
+        }
+      }
+
       html += `<div class="req-item">
         <div class="req-item-main">
           <div class="req-clause">${esc(r.clause)}</div>
           <div class="req-title">${esc(r.title)}</div>
           ${r.description ? `<div class="req-desc">${esc(r.description)}</div>` : ''}
+        </div>
+        <div class="req-item-audit-history">
+          ${lastAuditBadge}
+          ${ratingBadge}
+          ${ncBadge}
         </div>
         <div class="req-item-meta">
           <span class="badge badge-low">${esc(r.standard)}</span>

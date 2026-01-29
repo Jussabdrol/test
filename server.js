@@ -533,12 +533,33 @@ app.get('/api/audits/:id', (req, res) => {
 
 // Create audit
 app.post('/api/audits', (req, res) => {
-  const { title, standard, scope, lead_auditor, audit_team, planned_date } = req.body;
+  const { title, standard, scope, lead_auditor, audit_team, planned_date, requirement_ids } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
-  const result = db.prepare(`INSERT INTO audits (title, standard, scope, lead_auditor, audit_team, planned_date) VALUES (?, ?, ?, ?, ?, ?)`).run(
-    title, standard || 'ISO 9001', scope || '', lead_auditor || '', audit_team || '', planned_date || null
-  );
-  res.status(201).json(db.prepare('SELECT * FROM audits WHERE id = ?').get(result.lastInsertRowid));
+
+  const createAudit = db.transaction(() => {
+    const result = db.prepare(`INSERT INTO audits (title, standard, scope, lead_auditor, audit_team, planned_date) VALUES (?, ?, ?, ?, ?, ?)`).run(
+      title, standard || 'ISO 9001', scope || '', lead_auditor || '', audit_team || '', planned_date || null
+    );
+    const auditId = result.lastInsertRowid;
+
+    // Auto-create checklist items from selected requirements
+    if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
+      const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)');
+      const getReq = db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
+      let order = 1;
+      for (const reqId of requirement_ids) {
+        const req = getReq.get(reqId);
+        if (req) {
+          insertCl.run(auditId, req.clause, req.title, order++);
+        }
+      }
+    }
+
+    return db.prepare('SELECT * FROM audits WHERE id = ?').get(auditId);
+  });
+
+  const audit = createAudit();
+  res.status(201).json(audit);
 });
 
 // Update audit
@@ -555,6 +576,22 @@ app.put('/api/audits/:id', (req, res) => {
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
   db.prepare(`UPDATE audits SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+  // Add checklist items from newly selected requirements (skip existing clauses)
+  if (req.body.requirement_ids && Array.isArray(req.body.requirement_ids)) {
+    const existingClauses = db.prepare('SELECT clause FROM audit_checklist WHERE audit_id = ?').all(req.params.id).map(c => c.clause);
+    const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)');
+    const getReq = db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
+    const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ?').get(req.params.id).m;
+    let order = maxOrder + 1;
+    for (const reqId of req.body.requirement_ids) {
+      const r = getReq.get(reqId);
+      if (r && !existingClauses.includes(r.clause)) {
+        insertCl.run(req.params.id, r.clause, r.title, order++);
+      }
+    }
+  }
+
   res.json(db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id));
 });
 
@@ -658,14 +695,48 @@ app.delete('/api/ncrs/:id', (req, res) => {
 
 // --- Standard Requirements API ---
 
-// List requirements (optionally filter by standard)
+// List requirements (optionally filter by standard), enriched with audit history
 app.get('/api/requirements', (req, res) => {
   const { standard } = req.query;
   let sql = 'SELECT * FROM standard_requirements WHERE 1=1';
   const params = [];
   if (standard) { sql += ' AND standard = ?'; params.push(standard); }
   sql += ' ORDER BY standard, sort_order, clause';
-  res.json(db.prepare(sql).all(...params));
+  const reqs = db.prepare(sql).all(...params);
+
+  // Enrich each requirement with audit history
+  for (const r of reqs) {
+    // Find checklist items matching this requirement's clause and standard
+    const auditHistory = db.prepare(`
+      SELECT a.id as audit_id, a.title as audit_title, a.planned_date, a.completed_date, a.status as audit_status,
+             cl.rating, cl.id as checklist_item_id
+      FROM audit_checklist cl
+      JOIN audits a ON cl.audit_id = a.id
+      WHERE cl.clause = ? AND a.standard = ?
+      ORDER BY COALESCE(a.completed_date, a.planned_date) DESC
+    `).all(r.clause, r.standard);
+
+    // Last audited info
+    const completedAudits = auditHistory.filter(h => h.audit_status === 'completed');
+    r.last_audited = completedAudits.length > 0 ? (completedAudits[0].completed_date || completedAudits[0].planned_date) : null;
+    r.last_audit_title = completedAudits.length > 0 ? completedAudits[0].audit_title : null;
+    r.last_rating = completedAudits.length > 0 ? completedAudits[0].rating : null;
+    r.times_audited = completedAudits.length;
+
+    // NC info for this clause + standard
+    const ncs = db.prepare(`
+      SELECT n.id, n.status, n.severity
+      FROM non_conformities n
+      JOIN audits a ON n.audit_id = a.id
+      WHERE n.clause = ? AND a.standard = ?
+    `).all(r.clause, r.standard);
+
+    r.nc_total = ncs.length;
+    r.nc_open = ncs.filter(n => n.status === 'open' || n.status === 'in_progress').length;
+    r.nc_closed = ncs.filter(n => n.status === 'closed' || n.status === 'verified').length;
+  }
+
+  res.json(reqs);
 });
 
 // Get unique standards list
