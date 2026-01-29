@@ -590,6 +590,9 @@ async function loadYearlyPlan() {
     <div class="stat-card"><div class="stat-value">${pct}%</div><div class="stat-label">Completion Rate</div></div>
   `;
 
+  // Render Gantt chart
+  renderGanttChart(data, monthStats, today);
+
   // Render calendar grid
   let calHtml = '';
   for (let m = 0; m < 12; m++) {
@@ -790,6 +793,68 @@ function closeDayDetailOutside(e) {
   if (activePopover && !activePopover.contains(e.target)) {
     closeDayDetail();
   }
+}
+
+// --- Gantt Chart ---
+function renderGanttChart(data, monthStats, today) {
+  const wrap = document.getElementById('gantt-wrap');
+  // Collect all unique tasks across the year
+  const taskMap = {};
+  for (let m = 0; m < 12; m++) {
+    for (const t of Object.values(monthStats[m].taskDates)) {
+      if (!taskMap[t.task_id]) {
+        taskMap[t.task_id] = { task_id: t.task_id, title: t.title, priority: t.priority, assignee: t.assignee, recurrence: t.recurrence, months: {} };
+      }
+      if (!taskMap[t.task_id].months[m]) taskMap[t.task_id].months[m] = [];
+      for (const d of t.dates) {
+        taskMap[t.task_id].months[m].push(d);
+      }
+    }
+  }
+
+  const tasks = Object.values(taskMap);
+  if (tasks.length === 0) {
+    wrap.innerHTML = '<div class="empty-state" style="padding:20px">No tasks to display in timeline</div>';
+    return;
+  }
+
+  // Sort by title
+  tasks.sort((a, b) => a.title.localeCompare(b.title));
+
+  // Determine today position for the marker
+  const todayDate = new Date(today + 'T12:00:00');
+  const todayMonth = todayDate.getFullYear() === yearlyYear ? todayDate.getMonth() : -1;
+  const todayDayOfMonth = todayDate.getDate();
+
+  // Build table
+  let html = '<table class="gantt-table"><thead><tr><th>Task</th>';
+  const shortMonths = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  for (let m = 0; m < 12; m++) {
+    html += `<th>${shortMonths[m]}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+
+  for (const task of tasks) {
+    html += `<tr><td title="${esc(task.title)}">${esc(task.title)}</td>`;
+    for (let m = 0; m < 12; m++) {
+      const daysInMonth = new Date(yearlyYear, m + 1, 0).getDate();
+      const dates = task.months[m] || [];
+      html += '<td class="gantt-cell"><div class="gantt-bar">';
+      // Today marker
+      if (m === todayMonth) {
+        const pct = ((todayDayOfMonth - 0.5) / daysInMonth) * 100;
+        html += `<div class="gantt-today-line" style="left:${pct}%"></div>`;
+      }
+      for (const d of dates) {
+        html += `<span class="gantt-dot ${d.type}" title="${d.date}"></span>`;
+      }
+      html += '</div></td>';
+    }
+    html += '</tr>';
+  }
+
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
 }
 
 // --- Helpers ---
