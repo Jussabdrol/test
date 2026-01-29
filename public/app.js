@@ -60,6 +60,37 @@ async function loadDashboard() {
     <div class="stat-card${stats.openActions > 0 ? ' overdue' : ''} clickable" onclick="switchView('actions')"><div class="stat-value">${stats.openActions}</div><div class="stat-label">Open Actions</div></div>
   `;
 
+  // KPI cards
+  const kpiGrid = document.getElementById('kpi-grid');
+  const apcTrend = stats.actionsPerCheckLastMonth > 0
+    ? ((stats.actionsPerCheckThisMonth - stats.actionsPerCheckLastMonth) / stats.actionsPerCheckLastMonth * 100).toFixed(0)
+    : null;
+  const apcArrow = apcTrend === null ? '' : (apcTrend > 0 ? `<span class="kpi-trend up">&uarr; ${apcTrend}%</span>` : apcTrend < 0 ? `<span class="kpi-trend down">&darr; ${Math.abs(apcTrend)}%</span>` : `<span class="kpi-trend flat">&rarr; 0%</span>`);
+  // For actions per check: up = more issues = bad, down = fewer issues = good
+  const apcColor = apcTrend === null ? '' : (apcTrend > 0 ? 'trend-bad' : apcTrend < 0 ? 'trend-good' : '');
+
+  const otCurrent = stats.onTimeRateCurrent;
+  const otPrevious = stats.onTimeRatePrevious;
+  const otDelta = (otCurrent !== null && otPrevious !== null) ? otCurrent - otPrevious : null;
+  const otArrow = otDelta === null ? '' : (otDelta > 0 ? `<span class="kpi-trend down">&uarr; ${otDelta}pp</span>` : otDelta < 0 ? `<span class="kpi-trend up">&darr; ${Math.abs(otDelta)}pp</span>` : `<span class="kpi-trend flat">&rarr; 0pp</span>`);
+  // For on-time: up = better = good, down = worse = bad
+  const otColor = otDelta === null ? '' : (otDelta > 0 ? 'trend-good' : otDelta < 0 ? 'trend-bad' : '');
+
+  kpiGrid.innerHTML = `
+    <div class="kpi-card ${apcColor}">
+      <div class="kpi-header">Actions per Check</div>
+      <div class="kpi-value">${stats.actionsPerCheck}</div>
+      <div class="kpi-detail">${stats.totalActionsCount} actions from ${stats.totalCompletions} checks</div>
+      <div class="kpi-footer">This month: ${stats.actionsPerCheckThisMonth} ${apcArrow}</div>
+    </div>
+    <div class="kpi-card ${otColor}">
+      <div class="kpi-header">On-Time Completion</div>
+      <div class="kpi-value">${otCurrent !== null ? otCurrent + '%' : 'N/A'}</div>
+      <div class="kpi-detail">Last 30 days</div>
+      <div class="kpi-footer">Previous 30d: ${otPrevious !== null ? otPrevious + '%' : 'N/A'} ${otArrow}</div>
+    </div>
+  `;
+
   // Overdue tasks
   const overdueList = document.getElementById('overdue-list');
   if (stats.overdueTasks.length === 0) {

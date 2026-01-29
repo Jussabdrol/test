@@ -139,6 +139,64 @@ app.get('/api/dashboard', (req, res) => {
     openActions: db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress')").get().c,
     overdueActions: db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress') AND due_date < ? AND due_date IS NOT NULL").get(today).c,
   };
+
+  // KPI: Actions per check
+  const totalCompletions = db.prepare('SELECT COUNT(*) as c FROM completions').get().c;
+  const totalActionsAll = db.prepare('SELECT COUNT(*) as c FROM actions').get().c;
+  stats.actionsPerCheck = totalCompletions > 0 ? +(totalActionsAll / totalCompletions).toFixed(2) : 0;
+  stats.totalCompletions = totalCompletions;
+  stats.totalActionsCount = totalActionsAll;
+
+  // Actions per check this month vs last month
+  const actionsThisMonth = db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month')").get().c;
+  const completionsThisMonth = db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month')").get().c;
+  const actionsLastMonth = db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month','-1 month') AND created_at < date('now','start of month')").get().c;
+  const completionsLastMonth = db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month','-1 month') AND completed_at < date('now','start of month')").get().c;
+  stats.actionsPerCheckThisMonth = completionsThisMonth > 0 ? +(actionsThisMonth / completionsThisMonth).toFixed(2) : 0;
+  stats.actionsPerCheckLastMonth = completionsLastMonth > 0 ? +(actionsLastMonth / completionsLastMonth).toFixed(2) : 0;
+
+  // KPI: On-time completion trend (last 30 days vs previous 30 days)
+  const allTasks = db.prepare('SELECT id, recurrence, custom_days FROM tasks').all();
+  const taskRecMap = {};
+  for (const t of allTasks) taskRecMap[t.id] = t;
+
+  function getIntervalDays(rec, customDays) {
+    switch(rec) {
+      case 'daily': return 1; case 'weekly': return 7; case 'biweekly': return 14;
+      case 'monthly': return 30; case 'quarterly': return 91; case 'yearly': return 365;
+      case 'custom': return customDays || 1; default: return 30;
+    }
+  }
+
+  const recent30 = db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-30 days') ORDER BY completed_at ASC").all();
+  const prev30 = db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-60 days') AND completed_at < date('now','-30 days') ORDER BY completed_at ASC").all();
+
+  function calcOnTimeRate(completions) {
+    if (completions.length === 0) return null;
+    let onTime = 0, total = 0;
+    const byTask = {};
+    for (const c of completions) {
+      if (!byTask[c.task_id]) byTask[c.task_id] = [];
+      byTask[c.task_id].push(c.completed_at.split(' ')[0]);
+    }
+    for (const [taskId, dates] of Object.entries(byTask)) {
+      const rec = taskRecMap[taskId];
+      if (!rec) continue;
+      const interval = getIntervalDays(rec.recurrence, rec.custom_days);
+      dates.sort();
+      for (let i = 0; i < dates.length; i++) {
+        total++;
+        if (i === 0) { onTime++; continue; }
+        const gap = (new Date(dates[i]) - new Date(dates[i-1])) / (86400000);
+        if (gap <= interval * 1.5) onTime++;
+      }
+    }
+    return total > 0 ? Math.round((onTime / total) * 100) : null;
+  }
+
+  stats.onTimeRateCurrent = calcOnTimeRate(recent30);
+  stats.onTimeRatePrevious = calcOnTimeRate(prev30);
+
   res.json(stats);
 });
 

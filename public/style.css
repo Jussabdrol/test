@@ -178,6 +178,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .day-popover-item strong { font-weight: 600; }
 .day-popover-item .dpi-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
+/* KPI Cards */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.kpi-card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; border-left: 4px solid var(--primary); }
+.kpi-card.trend-good { border-left-color: var(--success); }
+.kpi-card.trend-bad { border-left-color: var(--danger); }
+.kpi-header { font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 8px; }
+.kpi-value { font-size: 32px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.kpi-detail { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+.kpi-footer { font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
+.kpi-trend { font-weight: 600; font-size: 12px; padding: 2px 6px; border-radius: 4px; }
+.kpi-trend.up { background: #fee2e2; color: #dc2626; }
+.kpi-trend.down { background: #dcfce7; color: #16a34a; }
+.kpi-trend.flat { background: #f1f5f9; color: #64748b; }
+.kpi-card.trend-good .kpi-trend { background: #dcfce7; color: #16a34a; }
+.kpi-card.trend-bad .kpi-trend { background: #fee2e2; color: #dc2626; }
+
 /* Gantt Chart */
 .gantt-wrap { overflow-x: auto; background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 24px; margin-top: 8px; }
 .gantt-table { border-collapse: collapse; width: 100%; min-width: 900px; }
