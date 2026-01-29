@@ -9,6 +9,17 @@ let lastCompletionContext = null; // { completion_id, task_id }
 let yearlyData = null; // cached yearly API data
 
 // --- Navigation ---
+// Module toggles (expand/collapse)
+document.querySelectorAll('.module-toggle').forEach(toggle => {
+  toggle.addEventListener('click', e => {
+    e.preventDefault();
+    const submenu = toggle.nextElementSibling;
+    submenu.classList.toggle('open');
+    toggle.classList.toggle('collapsed');
+  });
+});
+
+// Sub-view links
 document.querySelectorAll('.nav-link').forEach(link => {
   link.addEventListener('click', e => {
     e.preventDefault();
@@ -22,7 +33,14 @@ function switchView(view) {
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
   document.getElementById(`view-${view}`).classList.remove('hidden');
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-  document.querySelector(`[data-view="${view}"]`).classList.add('active');
+  const activeLink = document.querySelector(`[data-view="${view}"]`);
+  if (activeLink) activeLink.classList.add('active');
+  // Ensure parent module is expanded
+  const parentSubmenu = activeLink?.closest('.module-submenu');
+  if (parentSubmenu && !parentSubmenu.classList.contains('open')) {
+    parentSubmenu.classList.add('open');
+    parentSubmenu.previousElementSibling?.classList.remove('collapsed');
+  }
 
   if (view === 'dashboard') loadDashboard();
   else if (view === 'tasks') loadTasks();

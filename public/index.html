@@ -14,11 +14,20 @@
         <h1>TaskCycle</h1>
       </div>
       <ul class="nav-links">
-        <li><a href="#" class="nav-link active" data-view="dashboard">Dashboard</a></li>
-        <li><a href="#" class="nav-link" data-view="tasks">All Tasks</a></li>
-        <li><a href="#" class="nav-link" data-view="yearly">Yearly Plan</a></li>
-        <li><a href="#" class="nav-link" data-view="actions">Actions</a></li>
-        <li><a href="#" class="nav-link" data-view="history">History</a></li>
+        <li class="nav-module">
+          <a href="#" class="module-toggle active" data-module="operational-planning">
+            <span class="module-icon">&#9881;</span>
+            Operational Planning
+            <span class="module-arrow">&#9662;</span>
+          </a>
+          <ul class="module-submenu open">
+            <li><a href="#" class="nav-link active" data-view="dashboard">Dashboard</a></li>
+            <li><a href="#" class="nav-link" data-view="tasks">All Tasks</a></li>
+            <li><a href="#" class="nav-link" data-view="yearly">Yearly Plan</a></li>
+            <li><a href="#" class="nav-link" data-view="actions">Actions</a></li>
+            <li><a href="#" class="nav-link" data-view="history">History</a></li>
+          </ul>
+        </li>
       </ul>
     </nav>
 

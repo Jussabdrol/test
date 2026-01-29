@@ -29,9 +29,24 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .logo-icon { font-size: 28px; color: var(--primary); }
 .logo h1 { font-size: 20px; font-weight: 700; color: #fff; }
 .nav-links { list-style: none; display: flex; flex-direction: column; gap: 4px; }
-.nav-link { display: block; padding: 10px 14px; border-radius: var(--radius); color: var(--sidebar-text); text-decoration: none; font-size: 14px; font-weight: 500; transition: background .15s; }
+
+/* Module toggle (parent) */
+.nav-module { list-style: none; }
+.module-toggle { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: var(--radius); color: #fff; text-decoration: none; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; transition: background .15s; cursor: pointer; user-select: none; }
+.module-toggle:hover { background: rgba(255,255,255,.08); }
+.module-toggle.active { color: #fff; }
+.module-icon { font-size: 16px; flex-shrink: 0; }
+.module-arrow { margin-left: auto; font-size: 10px; transition: transform .2s; }
+.module-toggle.collapsed .module-arrow { transform: rotate(-90deg); }
+
+/* Sub-menu */
+.module-submenu { list-style: none; overflow: hidden; max-height: 0; transition: max-height .25s ease; padding-left: 10px; }
+.module-submenu.open { max-height: 300px; }
+
+/* Sub-nav links */
+.nav-link { display: block; padding: 8px 14px 8px 22px; border-radius: var(--radius); color: var(--sidebar-text); text-decoration: none; font-size: 14px; font-weight: 500; transition: background .15s; border-left: 2px solid transparent; }
 .nav-link:hover { background: rgba(255,255,255,.08); }
-.nav-link.active { background: var(--sidebar-active); color: #fff; }
+.nav-link.active { background: var(--sidebar-active); color: #fff; border-left-color: var(--primary); }
 
 /* Content */
 .content { flex: 1; margin-left: 240px; padding: 32px; max-width: 1200px; }
