@@ -35,6 +35,7 @@
             <span class="module-arrow">&#9662;</span>
           </a>
           <ul class="module-submenu">
+            <li><a href="#" class="nav-link" data-view="audit-requirements">Requirements</a></li>
             <li><a href="#" class="nav-link" data-view="audit-plan">Audit Plan</a></li>
             <li><a href="#" class="nav-link" data-view="audit-execute">Execute Audit</a></li>
             <li><a href="#" class="nav-link" data-view="audit-ncrs">Non-Conformities</a></li>
@@ -160,6 +161,20 @@
         </div>
         <div class="history-list" id="history-list"></div>
       </section>
+      <!-- Requirements View -->
+      <section id="view-audit-requirements" class="view hidden">
+        <div class="view-header">
+          <h2>Standard Requirements</h2>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" onclick="openImportRequirementsModal()">Import Template</button>
+            <button class="btn btn-primary" onclick="openRequirementModal()">+ Add Requirement</button>
+          </div>
+        </div>
+        <div class="filters" id="req-filters-bar"></div>
+        <div class="req-stats" id="req-stats"></div>
+        <div id="req-list"></div>
+      </section>
+
       <!-- Audit Plan View -->
       <section id="view-audit-plan" class="view hidden">
         <div class="view-header">
@@ -295,7 +310,8 @@
         <div class="form-row">
           <div class="form-group">
             <label for="ncr-clause">Clause Reference</label>
-            <input type="text" id="ncr-clause" placeholder="e.g. 7.1.5">
+            <input type="text" id="ncr-clause" placeholder="e.g. 7.1.5" list="ncr-clause-list">
+            <datalist id="ncr-clause-list"></datalist>
           </div>
           <div class="form-group">
             <label for="ncr-severity">Severity *</label>
@@ -354,6 +370,70 @@
     </div>
   </div>
 
+  <!-- Requirement Modal -->
+  <div id="requirement-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeRequirementModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="requirement-modal-title">Add Requirement</h3>
+        <button class="modal-close" onclick="closeRequirementModal()">&times;</button>
+      </div>
+      <form id="requirement-form" onsubmit="saveRequirement(event)">
+        <input type="hidden" id="req-id">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="req-standard">Standard *</label>
+            <input type="text" id="req-standard" required value="ISO 9001" list="req-standard-list" placeholder="e.g. ISO 9001">
+            <datalist id="req-standard-list"></datalist>
+          </div>
+          <div class="form-group">
+            <label for="req-clause">Clause *</label>
+            <input type="text" id="req-clause" required placeholder="e.g. 4.1">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="req-title">Title *</label>
+          <input type="text" id="req-title" required placeholder="e.g. Understanding the organization and its context">
+        </div>
+        <div class="form-group">
+          <label for="req-description">Description / Details</label>
+          <textarea id="req-description" rows="4" placeholder="Full requirement text or audit guidance"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="req-category">Category</label>
+          <input type="text" id="req-category" placeholder="e.g. Context, Leadership, Support" list="req-category-list">
+          <datalist id="req-category-list"></datalist>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeRequirementModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Requirement</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Import Requirements Template Modal -->
+  <div id="import-req-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeImportRequirementsModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Import Standard Template</h3>
+        <button class="modal-close" onclick="closeImportRequirementsModal()">&times;</button>
+      </div>
+      <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">Import a pre-defined set of clauses for a standard. This adds all main clauses and their sub-clauses to your requirements library.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px">
+        <button class="btn btn-primary" onclick="importStandardTemplate('ISO 9001')">ISO 9001:2015</button>
+        <button class="btn btn-primary" onclick="importStandardTemplate('ISO 14001')">ISO 14001:2015</button>
+        <button class="btn btn-primary" onclick="importStandardTemplate('ISO 45001')">ISO 45001:2018</button>
+        <button class="btn btn-primary" onclick="importStandardTemplate('ISO 27001')">ISO 27001:2022</button>
+      </div>
+      <div id="import-status"></div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="closeImportRequirementsModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Checklist Item Modal -->
   <div id="checklist-modal" class="modal hidden">
     <div class="modal-overlay" onclick="closeChecklistModal()"></div>
@@ -365,6 +445,12 @@
       <form id="checklist-form" onsubmit="saveChecklistItem(event)">
         <input type="hidden" id="checklist-item-id">
         <input type="hidden" id="checklist-audit-id">
+        <div class="form-group">
+          <label>Pick from Requirements Library</label>
+          <select id="checklist-from-req" onchange="fillChecklistFromReq(this.value)">
+            <option value="">-- Manual entry --</option>
+          </select>
+        </div>
         <div class="form-group">
           <label for="checklist-clause">Clause *</label>
           <input type="text" id="checklist-clause" required placeholder="e.g. 4.1, 7.1.5">

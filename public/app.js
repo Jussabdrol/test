@@ -50,6 +50,7 @@ function switchView(view) {
   else if (view === 'audit-plan') loadAuditPlan();
   else if (view === 'audit-execute') loadAuditExecuteView();
   else if (view === 'audit-ncrs') loadNcrs();
+  else if (view === 'audit-requirements') loadRequirements();
 }
 
 // --- API helpers ---
@@ -941,6 +942,7 @@ async function openAuditModal(id) {
   document.getElementById('audit-modal-title').textContent = 'New Audit';
   document.getElementById('audit-status-group').classList.add('hidden');
   document.getElementById('audit-summary-group').classList.add('hidden');
+
   if (id) {
     const a = await api(`/api/audits/${id}`);
     document.getElementById('audit-modal-title').textContent = 'Edit Audit';
@@ -1135,10 +1137,18 @@ async function completeAudit(auditId) {
   loadAuditExecution(auditId);
 }
 
-function openChecklistModal(auditId) {
+async function openChecklistModal(auditId) {
   document.getElementById('checklist-form').reset();
   document.getElementById('checklist-item-id').value = '';
   document.getElementById('checklist-audit-id').value = auditId;
+
+  // Populate requirements dropdown based on audit's standard
+  const audit = await api(`/api/audits/${auditId}`);
+  const reqs = await api(`/api/requirements?standard=${encodeURIComponent(audit.standard)}`);
+  const sel = document.getElementById('checklist-from-req');
+  sel.innerHTML = '<option value="">-- Manual entry --</option>' +
+    reqs.map(r => `<option value="${r.id}" data-clause="${esc(r.clause)}" data-title="${esc(r.title)}">${esc(r.clause)} - ${esc(r.title)}</option>`).join('');
+
   document.getElementById('checklist-modal').classList.remove('hidden');
 }
 
@@ -1255,6 +1265,12 @@ async function openNcrModal(id) {
     `<option value="${a.id}">${esc(a.title)}</option>`
   ).join('');
 
+  // Populate clause datalist from requirements
+  const allReqs = await api('/api/requirements');
+  document.getElementById('ncr-clause-list').innerHTML = allReqs.map(r =>
+    `<option value="${esc(r.clause)} - ${esc(r.title)}">`
+  ).join('');
+
   if (id) {
     const allNcrs = await api('/api/ncrs');
     const ncrData = allNcrs.find(x => x.id === id);
@@ -1368,6 +1384,270 @@ function renderGanttChart(data, monthStats, today) {
 
   html += '</tbody></table>';
   wrap.innerHTML = html;
+}
+
+// --- Requirements Module ---
+let reqFilters = { standard: '' };
+
+async function loadRequirements() {
+  const params = new URLSearchParams();
+  if (reqFilters.standard) params.set('standard', reqFilters.standard);
+  const reqs = await api(`/api/requirements?${params}`);
+  const standards = await api('/api/requirements/standards');
+
+  // Render filter bar
+  document.getElementById('req-filters-bar').innerHTML = `
+    <select onchange="reqFilters.standard=this.value;loadRequirements()">
+      <option value="">All Standards</option>
+      ${standards.map(s => `<option value="${esc(s)}" ${reqFilters.standard===s?'selected':''}>${esc(s)}</option>`).join('')}
+    </select>
+    <span style="font-size:13px;color:var(--text-muted)">${reqs.length} requirement${reqs.length!==1?'s':''}</span>`;
+
+  // Group by category
+  const groups = {};
+  for (const r of reqs) {
+    const cat = r.category || 'Uncategorized';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(r);
+  }
+
+  // Stats
+  const statsEl = document.getElementById('req-stats');
+  statsEl.innerHTML = `
+    <div class="req-stats-grid">
+      <div class="stat-card"><div class="stat-value">${reqs.length}</div><div class="stat-label">Total Requirements</div></div>
+      <div class="stat-card"><div class="stat-value">${standards.length}</div><div class="stat-label">Standards</div></div>
+      <div class="stat-card"><div class="stat-value">${Object.keys(groups).length}</div><div class="stat-label">Categories</div></div>
+    </div>`;
+
+  // List
+  const list = document.getElementById('req-list');
+  if (reqs.length === 0) {
+    list.innerHTML = '<div class="empty-state">No requirements yet. Add manually or import a standard template.</div>';
+    return;
+  }
+
+  let html = '';
+  for (const [cat, items] of Object.entries(groups)) {
+    items.sort((a, b) => a.clause.localeCompare(b.clause, undefined, { numeric: true }));
+    html += `<div class="req-category-group">
+      <div class="req-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>`;
+    for (const r of items) {
+      html += `<div class="req-item">
+        <div class="req-item-main">
+          <div class="req-clause">${esc(r.clause)}</div>
+          <div class="req-title">${esc(r.title)}</div>
+          ${r.description ? `<div class="req-desc">${esc(r.description)}</div>` : ''}
+        </div>
+        <div class="req-item-meta">
+          <span class="badge badge-low">${esc(r.standard)}</span>
+          <button class="btn btn-secondary btn-sm" onclick="openRequirementModal(${r.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteRequirement(${r.id})">Del</button>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  list.innerHTML = html;
+}
+
+async function openRequirementModal(id) {
+  const modal = document.getElementById('requirement-modal');
+  document.getElementById('requirement-form').reset();
+  document.getElementById('req-id').value = '';
+  document.getElementById('req-modal-title').textContent = 'New Requirement';
+
+  // Populate standard datalist from existing
+  const standards = await api('/api/requirements/standards');
+  document.getElementById('req-standard-list').innerHTML = standards.map(s => `<option value="${esc(s)}">`).join('');
+  // Populate category datalist
+  const reqs = await api('/api/requirements');
+  const cats = [...new Set(reqs.map(r => r.category).filter(Boolean))];
+  document.getElementById('req-category-list').innerHTML = cats.map(c => `<option value="${esc(c)}">`).join('');
+
+  if (id) {
+    const r = reqs.find(x => x.id === id);
+    if (r) {
+      document.getElementById('req-modal-title').textContent = 'Edit Requirement';
+      document.getElementById('req-id').value = r.id;
+      document.getElementById('req-standard').value = r.standard;
+      document.getElementById('req-clause').value = r.clause;
+      document.getElementById('req-title-field').value = r.title;
+      document.getElementById('req-description').value = r.description || '';
+      document.getElementById('req-category-field').value = r.category || '';
+    }
+  }
+  modal.classList.remove('hidden');
+}
+
+function closeRequirementModal() {
+  document.getElementById('requirement-modal').classList.add('hidden');
+}
+
+async function saveRequirement(e) {
+  e.preventDefault();
+  const id = document.getElementById('req-id').value;
+  const body = {
+    standard: document.getElementById('req-standard').value,
+    clause: document.getElementById('req-clause').value,
+    title: document.getElementById('req-title-field').value,
+    description: document.getElementById('req-description').value,
+    category: document.getElementById('req-category-field').value,
+  };
+  if (id) {
+    await api(`/api/requirements/${id}`, { method: 'PUT', body });
+  } else {
+    await api('/api/requirements', { method: 'POST', body });
+  }
+  closeRequirementModal();
+  loadRequirements();
+}
+
+async function deleteRequirement(id) {
+  if (!confirm('Delete this requirement?')) return;
+  await api(`/api/requirements/${id}`, { method: 'DELETE' });
+  loadRequirements();
+}
+
+function openImportRequirementsModal() {
+  document.getElementById('import-req-modal').classList.remove('hidden');
+}
+
+function closeImportRequirementsModal() {
+  document.getElementById('import-req-modal').classList.add('hidden');
+}
+
+async function importStandardTemplate(standard) {
+  const templates = {
+    'ISO 9001': [
+      { clause: '4.1', title: 'Understanding the organization and its context', category: 'Context of the Organization' },
+      { clause: '4.2', title: 'Understanding the needs and expectations of interested parties', category: 'Context of the Organization' },
+      { clause: '4.3', title: 'Determining the scope of the QMS', category: 'Context of the Organization' },
+      { clause: '4.4', title: 'Quality management system and its processes', category: 'Context of the Organization' },
+      { clause: '5.1', title: 'Leadership and commitment', category: 'Leadership' },
+      { clause: '5.2', title: 'Policy', category: 'Leadership' },
+      { clause: '5.3', title: 'Organizational roles, responsibilities and authorities', category: 'Leadership' },
+      { clause: '6.1', title: 'Actions to address risks and opportunities', category: 'Planning' },
+      { clause: '6.2', title: 'Quality objectives and planning to achieve them', category: 'Planning' },
+      { clause: '6.3', title: 'Planning of changes', category: 'Planning' },
+      { clause: '7.1', title: 'Resources', category: 'Support' },
+      { clause: '7.2', title: 'Competence', category: 'Support' },
+      { clause: '7.3', title: 'Awareness', category: 'Support' },
+      { clause: '7.4', title: 'Communication', category: 'Support' },
+      { clause: '7.5', title: 'Documented information', category: 'Support' },
+      { clause: '8.1', title: 'Operational planning and control', category: 'Operation' },
+      { clause: '8.2', title: 'Requirements for products and services', category: 'Operation' },
+      { clause: '8.3', title: 'Design and development of products and services', category: 'Operation' },
+      { clause: '8.4', title: 'Control of externally provided processes, products and services', category: 'Operation' },
+      { clause: '8.5', title: 'Production and service provision', category: 'Operation' },
+      { clause: '8.6', title: 'Release of products and services', category: 'Operation' },
+      { clause: '8.7', title: 'Control of nonconforming outputs', category: 'Operation' },
+      { clause: '9.1', title: 'Monitoring, measurement, analysis and evaluation', category: 'Performance Evaluation' },
+      { clause: '9.2', title: 'Internal audit', category: 'Performance Evaluation' },
+      { clause: '9.3', title: 'Management review', category: 'Performance Evaluation' },
+      { clause: '10.1', title: 'General', category: 'Improvement' },
+      { clause: '10.2', title: 'Nonconformity and corrective action', category: 'Improvement' },
+      { clause: '10.3', title: 'Continual improvement', category: 'Improvement' },
+    ],
+    'ISO 14001': [
+      { clause: '4.1', title: 'Understanding the organization and its context', category: 'Context of the Organization' },
+      { clause: '4.2', title: 'Understanding the needs and expectations of interested parties', category: 'Context of the Organization' },
+      { clause: '4.3', title: 'Determining the scope of the EMS', category: 'Context of the Organization' },
+      { clause: '4.4', title: 'Environmental management system', category: 'Context of the Organization' },
+      { clause: '5.1', title: 'Leadership and commitment', category: 'Leadership' },
+      { clause: '5.2', title: 'Environmental policy', category: 'Leadership' },
+      { clause: '5.3', title: 'Organizational roles, responsibilities and authorities', category: 'Leadership' },
+      { clause: '6.1', title: 'Actions to address risks and opportunities', category: 'Planning' },
+      { clause: '6.2', title: 'Environmental objectives and planning to achieve them', category: 'Planning' },
+      { clause: '7.1', title: 'Resources', category: 'Support' },
+      { clause: '7.2', title: 'Competence', category: 'Support' },
+      { clause: '7.3', title: 'Awareness', category: 'Support' },
+      { clause: '7.4', title: 'Communication', category: 'Support' },
+      { clause: '7.5', title: 'Documented information', category: 'Support' },
+      { clause: '8.1', title: 'Operational planning and control', category: 'Operation' },
+      { clause: '8.2', title: 'Emergency preparedness and response', category: 'Operation' },
+      { clause: '9.1', title: 'Monitoring, measurement, analysis and evaluation', category: 'Performance Evaluation' },
+      { clause: '9.2', title: 'Internal audit', category: 'Performance Evaluation' },
+      { clause: '9.3', title: 'Management review', category: 'Performance Evaluation' },
+      { clause: '10.1', title: 'General', category: 'Improvement' },
+      { clause: '10.2', title: 'Nonconformity and corrective action', category: 'Improvement' },
+      { clause: '10.3', title: 'Continual improvement', category: 'Improvement' },
+    ],
+    'ISO 45001': [
+      { clause: '4.1', title: 'Understanding the organization and its context', category: 'Context of the Organization' },
+      { clause: '4.2', title: 'Understanding the needs and expectations of workers and other interested parties', category: 'Context of the Organization' },
+      { clause: '4.3', title: 'Determining the scope of the OH&S management system', category: 'Context of the Organization' },
+      { clause: '4.4', title: 'OH&S management system', category: 'Context of the Organization' },
+      { clause: '5.1', title: 'Leadership and commitment', category: 'Leadership' },
+      { clause: '5.2', title: 'OH&S policy', category: 'Leadership' },
+      { clause: '5.3', title: 'Organizational roles, responsibilities and authorities', category: 'Leadership' },
+      { clause: '5.4', title: 'Consultation and participation of workers', category: 'Leadership' },
+      { clause: '6.1', title: 'Actions to address risks and opportunities', category: 'Planning' },
+      { clause: '6.2', title: 'OH&S objectives and planning to achieve them', category: 'Planning' },
+      { clause: '7.1', title: 'Resources', category: 'Support' },
+      { clause: '7.2', title: 'Competence', category: 'Support' },
+      { clause: '7.3', title: 'Awareness', category: 'Support' },
+      { clause: '7.4', title: 'Communication', category: 'Support' },
+      { clause: '7.5', title: 'Documented information', category: 'Support' },
+      { clause: '8.1', title: 'Operational planning and control', category: 'Operation' },
+      { clause: '8.2', title: 'Emergency preparedness and response', category: 'Operation' },
+      { clause: '9.1', title: 'Monitoring, measurement, analysis and evaluation', category: 'Performance Evaluation' },
+      { clause: '9.2', title: 'Internal audit', category: 'Performance Evaluation' },
+      { clause: '9.3', title: 'Management review', category: 'Performance Evaluation' },
+      { clause: '10.1', title: 'General', category: 'Improvement' },
+      { clause: '10.2', title: 'Incident, nonconformity and corrective action', category: 'Improvement' },
+      { clause: '10.3', title: 'Continual improvement', category: 'Improvement' },
+    ],
+    'ISO 27001': [
+      { clause: '4.1', title: 'Understanding the organization and its context', category: 'Context of the Organization' },
+      { clause: '4.2', title: 'Understanding the needs and expectations of interested parties', category: 'Context of the Organization' },
+      { clause: '4.3', title: 'Determining the scope of the ISMS', category: 'Context of the Organization' },
+      { clause: '4.4', title: 'Information security management system', category: 'Context of the Organization' },
+      { clause: '5.1', title: 'Leadership and commitment', category: 'Leadership' },
+      { clause: '5.2', title: 'Policy', category: 'Leadership' },
+      { clause: '5.3', title: 'Organizational roles, responsibilities and authorities', category: 'Leadership' },
+      { clause: '6.1', title: 'Actions to address risks and opportunities', category: 'Planning' },
+      { clause: '6.2', title: 'Information security objectives and planning to achieve them', category: 'Planning' },
+      { clause: '6.3', title: 'Planning of changes', category: 'Planning' },
+      { clause: '7.1', title: 'Resources', category: 'Support' },
+      { clause: '7.2', title: 'Competence', category: 'Support' },
+      { clause: '7.3', title: 'Awareness', category: 'Support' },
+      { clause: '7.4', title: 'Communication', category: 'Support' },
+      { clause: '7.5', title: 'Documented information', category: 'Support' },
+      { clause: '8.1', title: 'Operational planning and control', category: 'Operation' },
+      { clause: '8.2', title: 'Information security risk assessment', category: 'Operation' },
+      { clause: '8.3', title: 'Information security risk treatment', category: 'Operation' },
+      { clause: '9.1', title: 'Monitoring, measurement, analysis and evaluation', category: 'Performance Evaluation' },
+      { clause: '9.2', title: 'Internal audit', category: 'Performance Evaluation' },
+      { clause: '9.3', title: 'Management review', category: 'Performance Evaluation' },
+      { clause: '10.1', title: 'Continual improvement', category: 'Improvement' },
+      { clause: '10.2', title: 'Nonconformity and corrective action', category: 'Improvement' },
+    ],
+  };
+
+  const items = templates[standard];
+  if (!items) { alert('Template not found'); return; }
+
+  if (!confirm(`Import ${items.length} clauses for ${standard}? Existing entries for this standard will not be duplicated.`)) return;
+
+  await api('/api/requirements/bulk', {
+    method: 'POST',
+    body: { standard, items }
+  });
+
+  closeImportRequirementsModal();
+  loadRequirements();
+}
+
+// Fill checklist item from requirements library
+function fillChecklistFromReq(reqId) {
+  if (!reqId) return;
+  const sel = document.getElementById('checklist-from-req');
+  const opt = sel.querySelector(`option[value="${reqId}"]`);
+  if (opt) {
+    document.getElementById('checklist-clause').value = opt.dataset.clause || '';
+    document.getElementById('checklist-requirement').value = opt.dataset.title || '';
+  }
 }
 
 // --- Helpers ---

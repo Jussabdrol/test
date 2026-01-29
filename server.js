@@ -106,6 +106,18 @@ db.exec(`
     FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE,
     FOREIGN KEY (checklist_item_id) REFERENCES audit_checklist(id) ON DELETE SET NULL
   );
+
+  CREATE TABLE IF NOT EXISTS standard_requirements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    standard TEXT NOT NULL DEFAULT 'ISO 9001',
+    clause TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    description TEXT DEFAULT '',
+    category TEXT DEFAULT '',
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // --- Helper: compute next due date ---
@@ -641,6 +653,74 @@ app.put('/api/ncrs/:id', (req, res) => {
 app.delete('/api/ncrs/:id', (req, res) => {
   const result = db.prepare('DELETE FROM non_conformities WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'NCR not found' });
+  res.json({ success: true });
+});
+
+// --- Standard Requirements API ---
+
+// List requirements (optionally filter by standard)
+app.get('/api/requirements', (req, res) => {
+  const { standard } = req.query;
+  let sql = 'SELECT * FROM standard_requirements WHERE 1=1';
+  const params = [];
+  if (standard) { sql += ' AND standard = ?'; params.push(standard); }
+  sql += ' ORDER BY standard, sort_order, clause';
+  res.json(db.prepare(sql).all(...params));
+});
+
+// Get unique standards list
+app.get('/api/requirements/standards', (req, res) => {
+  const standards = db.prepare('SELECT DISTINCT standard FROM standard_requirements ORDER BY standard').all().map(r => r.standard);
+  res.json(standards);
+});
+
+// Create requirement
+app.post('/api/requirements', (req, res) => {
+  const { standard, clause, title, description, category, sort_order } = req.body;
+  if (!clause) return res.status(400).json({ error: 'Clause is required' });
+  const result = db.prepare(`INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)`).run(
+    standard || 'ISO 9001', clause, title || '', description || '', category || '', sort_order ?? 0
+  );
+  res.status(201).json(db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(result.lastInsertRowid));
+});
+
+// Bulk import requirements
+app.post('/api/requirements/bulk', (req, res) => {
+  const { items } = req.body;
+  if (!items || !Array.isArray(items)) return res.status(400).json({ error: 'items array is required' });
+  const insert = db.prepare('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)');
+  const results = [];
+  const bulkInsert = db.transaction((items) => {
+    for (const item of items) {
+      const r = insert.run(item.standard || 'ISO 9001', item.clause, item.title || '', item.description || '', item.category || '', item.sort_order ?? 0);
+      results.push(r.lastInsertRowid);
+    }
+  });
+  bulkInsert(items);
+  res.status(201).json({ inserted: results.length });
+});
+
+// Update requirement
+app.put('/api/requirements/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Requirement not found' });
+  const fields = ['standard', 'clause', 'title', 'description', 'category', 'sort_order'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.id);
+  db.prepare(`UPDATE standard_requirements SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id));
+});
+
+// Delete requirement
+app.delete('/api/requirements/:id', (req, res) => {
+  const result = db.prepare('DELETE FROM standard_requirements WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Requirement not found' });
   res.json({ success: true });
 });
 
