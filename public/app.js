@@ -916,12 +916,22 @@ async function deleteAudit(id) {
   loadAuditPlan();
 }
 
-function switchToExecute(id) {
-  switchView('audit-execute');
-  setTimeout(() => {
-    document.getElementById('audit-exec-select').value = String(id);
-    loadAuditExecution(id);
-  }, 100);
+async function switchToExecute(id) {
+  currentView = 'audit-execute';
+  closeDayDetail();
+  document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+  document.getElementById('view-audit-execute').classList.remove('hidden');
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  const activeLink = document.querySelector('[data-view="audit-execute"]');
+  if (activeLink) activeLink.classList.add('active');
+  const parentSubmenu = activeLink?.closest('.module-submenu');
+  if (parentSubmenu && !parentSubmenu.classList.contains('open')) {
+    parentSubmenu.classList.add('open');
+    parentSubmenu.previousElementSibling?.classList.remove('collapsed');
+  }
+  await loadAuditExecuteView();
+  document.getElementById('audit-exec-select').value = String(id);
+  loadAuditExecution(id);
 }
 
 async function openAuditModal(id) {
@@ -1079,7 +1089,7 @@ async function loadAuditExecution(auditId) {
           </div>
         </div>
         <div class="cl-actions">
-          ${(item.rating === 'minor_nc' || item.rating === 'major_nc') ? `<button class="btn btn-danger btn-sm" onclick="raiseNcrFromChecklist(${auditId}, ${item.id}, '${esc(item.clause)}', '${item.rating === 'major_nc' ? 'major' : 'minor'}')">Raise NCR</button>` : ''}
+          ${(item.rating === 'minor_nc' || item.rating === 'major_nc') ? `<button class="btn btn-danger btn-sm" onclick="raiseNcrFromChecklist(${auditId}, ${item.id}, ${JSON.stringify(item.clause)}, '${item.rating === 'major_nc' ? 'major' : 'minor'}')">Raise NCR</button>` : ''}
           <button class="btn btn-secondary btn-sm" onclick="deleteChecklistItem(${item.id}, ${auditId})">Remove</button>
         </div>
       </div>`;
@@ -1113,6 +1123,10 @@ async function loadAuditExecution(auditId) {
 
 async function updateChecklistField(itemId, field, value) {
   await api(`/api/checklist/${itemId}`, { method: 'PUT', body: { [field]: value } });
+  // Re-render on rating change so badge and Raise NCR button update
+  if (field === 'rating' && currentAuditId) {
+    loadAuditExecution(currentAuditId);
+  }
 }
 
 async function completeAudit(auditId) {
@@ -1152,14 +1166,12 @@ async function deleteChecklistItem(itemId, auditId) {
   loadAuditExecution(auditId);
 }
 
-function raiseNcrFromChecklist(auditId, checklistItemId, clause, severity) {
-  openNcrModal();
-  setTimeout(() => {
-    document.getElementById('ncr-audit-id').value = String(auditId);
-    document.getElementById('ncr-checklist-item-id').value = checklistItemId;
-    document.getElementById('ncr-clause').value = clause;
-    document.getElementById('ncr-severity').value = severity;
-  }, 50);
+async function raiseNcrFromChecklist(auditId, checklistItemId, clause, severity) {
+  await openNcrModal();
+  document.getElementById('ncr-audit-id').value = String(auditId);
+  document.getElementById('ncr-checklist-item-id').value = checklistItemId;
+  document.getElementById('ncr-clause').value = clause;
+  document.getElementById('ncr-severity').value = severity;
 }
 
 // --- Non-Conformities View ---
@@ -1244,15 +1256,6 @@ async function openNcrModal(id) {
   ).join('');
 
   if (id) {
-    const n = await api(`/api/ncrs?audit_id=`);
-    const ncr = n.find(x => x.id === id);
-    if (!ncr) {
-      // Fetch all NCRs to find it
-      const all = await api('/api/ncrs');
-      const found = all.find(x => x.id === id);
-      if (found) Object.assign(ncr || {}, found);
-    }
-    // Fetch via list and find
     const allNcrs = await api('/api/ncrs');
     const ncrData = allNcrs.find(x => x.id === id);
     if (ncrData) {
@@ -1303,8 +1306,6 @@ async function saveNcr(e) {
   }
   closeNcrModal();
   refreshCurrentView();
-  // Also refresh execution view if open
-  if (currentAuditId) loadAuditExecution(currentAuditId);
 }
 
 // --- Gantt Chart ---
