@@ -516,7 +516,9 @@ app.get('/api/audits', (req, res) => {
   // Attach counts
   for (const a of audits) {
     a.checklist_count = db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(a.id).c;
-    a.nc_count = db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(a.id).c;
+    a.assessed_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(a.id).c;
+    a.nc_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(a.id).c;
+    a.ncr_count = db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(a.id).c;
     a.open_nc_count = db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(a.id).c;
   }
   res.json(audits);
@@ -628,6 +630,32 @@ app.put('/api/checklist/:id', (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
   db.prepare(`UPDATE audit_checklist SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+  // Auto-create or remove NCR when rating changes
+  if (req.body.rating) {
+    const isNc = req.body.rating === 'minor_nc' || req.body.rating === 'major_nc';
+    const existingNcr = db.prepare('SELECT * FROM non_conformities WHERE checklist_item_id = ?').get(req.params.id);
+
+    if (isNc && !existingNcr) {
+      // Auto-create NCR with populated fields from checklist item
+      const cl = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+      const severity = req.body.rating === 'major_nc' ? 'major' : 'minor';
+      const description = cl.finding || `Non-conformity found for clause ${cl.clause}`;
+      db.prepare(`INSERT INTO non_conformities (audit_id, checklist_item_id, clause, description, severity) VALUES (?, ?, ?, ?, ?)`).run(
+        existing.audit_id, req.params.id, cl.clause, description, severity
+      );
+    } else if (isNc && existingNcr) {
+      // Update severity if it changed (e.g. minor_nc -> major_nc)
+      const severity = req.body.rating === 'major_nc' ? 'major' : 'minor';
+      if (existingNcr.severity !== severity) {
+        db.prepare("UPDATE non_conformities SET severity = ?, updated_at = datetime('now') WHERE id = ?").run(severity, existingNcr.id);
+      }
+    } else if (!isNc && existingNcr && existingNcr.status === 'open') {
+      // Remove auto-created NCR if rating changed away from NC and NCR is still open
+      db.prepare('DELETE FROM non_conformities WHERE id = ?').run(existingNcr.id);
+    }
+  }
+
   res.json(db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
 });
 

@@ -881,8 +881,8 @@ async function loadAuditPlan() {
       ${a.scope ? `<div class="audit-scope">${esc(a.scope)}</div>` : ''}
       <div class="audit-card-footer">
         <div class="audit-stats">
-          <span>${a.checklist_count} checklist items</span>
-          <span>${a.nc_count} NCR${a.nc_count !== 1 ? 's' : ''}${a.open_nc_count > 0 ? ` (${a.open_nc_count} open)` : ''}</span>
+          <span>${a.assessed_count}/${a.checklist_count} assessed</span>
+          <span>${a.nc_count} NC${a.nc_count !== 1 ? 's' : ''}${a.open_nc_count > 0 ? ` (${a.open_nc_count} open)` : ''}</span>
         </div>
         <div style="display:flex;gap:6px">
           ${a.status === 'planned' ? `<button class="btn btn-primary btn-sm" onclick="startAudit(${a.id})">Start</button>` : ''}
@@ -1115,6 +1115,12 @@ async function loadAuditExecution(auditId) {
   if (audit.checklist.length === 0) {
     html += '<div class="empty-state">No checklist items yet. Add clauses to audit against.</div>';
   } else {
+    // Build map of checklist item id -> NCR for linking
+    const ncrByChecklist = {};
+    for (const nc of audit.non_conformities) {
+      if (nc.checklist_item_id) ncrByChecklist[nc.checklist_item_id] = nc;
+    }
+
     html += '<div class="checklist-list">';
     for (const item of audit.checklist) {
       const ratingColors = {
@@ -1131,7 +1137,20 @@ async function loadAuditExecution(auditId) {
         minor_nc: 'Minor NC',
         major_nc: 'Major NC'
       };
-      html += `<div class="checklist-item" id="cl-item-${item.id}">
+      const linkedNcr = ncrByChecklist[item.id];
+      const isNc = item.rating === 'minor_nc' || item.rating === 'major_nc';
+
+      // NCR status indicator for NC-rated items
+      let ncrIndicator = '';
+      if (isNc && linkedNcr) {
+        const ncrStBadge = linkedNcr.status === 'open' ? 'badge-high' : linkedNcr.status === 'in_progress' ? 'badge-medium' : 'badge-low';
+        ncrIndicator = `<div class="cl-ncr-link">
+          <span class="badge ${ncrStBadge}">NCR: ${linkedNcr.status}</span>
+          <button class="btn btn-secondary btn-sm" onclick="openNcrModal(${linkedNcr.id})">Edit NCR</button>
+        </div>`;
+      }
+
+      html += `<div class="checklist-item${isNc ? ' checklist-nc' : ''}" id="cl-item-${item.id}">
         <div class="cl-header">
           <div class="cl-clause"><strong>${esc(item.clause)}</strong></div>
           <span class="badge ${ratingColors[item.rating]}">${ratingLabels[item.rating]}</span>
@@ -1163,8 +1182,8 @@ async function loadAuditExecution(auditId) {
             </div>
           </div>
         </div>
+        ${ncrIndicator}
         <div class="cl-actions">
-          ${(item.rating === 'minor_nc' || item.rating === 'major_nc') ? `<button class="btn btn-danger btn-sm" onclick="raiseNcrFromChecklist(${auditId}, ${item.id}, ${JSON.stringify(item.clause)}, '${item.rating === 'major_nc' ? 'major' : 'minor'}')">Raise NCR</button>` : ''}
           <button class="btn btn-secondary btn-sm" onclick="deleteChecklistItem(${item.id}, ${auditId})">Remove</button>
         </div>
       </div>`;
