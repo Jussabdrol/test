@@ -375,7 +375,7 @@
     <div class="modal-overlay" onclick="closeRequirementModal()"></div>
     <div class="modal-content">
       <div class="modal-header">
-        <h3 id="requirement-modal-title">Add Requirement</h3>
+        <h3 id="req-modal-title">Add Requirement</h3>
         <button class="modal-close" onclick="closeRequirementModal()">&times;</button>
       </div>
       <form id="requirement-form" onsubmit="saveRequirement(event)">
@@ -392,16 +392,16 @@
           </div>
         </div>
         <div class="form-group">
-          <label for="req-title">Title *</label>
-          <input type="text" id="req-title" required placeholder="e.g. Understanding the organization and its context">
+          <label for="req-title-field">Title *</label>
+          <input type="text" id="req-title-field" required placeholder="e.g. Understanding the organization and its context">
         </div>
         <div class="form-group">
           <label for="req-description">Description / Details</label>
           <textarea id="req-description" rows="4" placeholder="Full requirement text or audit guidance"></textarea>
         </div>
         <div class="form-group">
-          <label for="req-category">Category</label>
-          <input type="text" id="req-category" placeholder="e.g. Context, Leadership, Support" list="req-category-list">
+          <label for="req-category-field">Category</label>
+          <input type="text" id="req-category-field" placeholder="e.g. Context, Leadership, Support" list="req-category-list">
           <datalist id="req-category-list"></datalist>
         </div>
         <div class="form-actions">

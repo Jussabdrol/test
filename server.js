@@ -686,18 +686,21 @@ app.post('/api/requirements', (req, res) => {
 
 // Bulk import requirements
 app.post('/api/requirements/bulk', (req, res) => {
-  const { items } = req.body;
+  const { standard, items } = req.body;
   if (!items || !Array.isArray(items)) return res.status(400).json({ error: 'items array is required' });
+  const std = standard || 'ISO 9001';
+  const existing = db.prepare('SELECT clause FROM standard_requirements WHERE standard = ?').all(std).map(r => r.clause);
   const insert = db.prepare('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)');
-  const results = [];
+  let inserted = 0;
   const bulkInsert = db.transaction((items) => {
     for (const item of items) {
-      const r = insert.run(item.standard || 'ISO 9001', item.clause, item.title || '', item.description || '', item.category || '', item.sort_order ?? 0);
-      results.push(r.lastInsertRowid);
+      if (existing.includes(item.clause)) continue;
+      insert.run(std, item.clause, item.title || '', item.description || '', item.category || '', item.sort_order ?? 0);
+      inserted++;
     }
   });
   bulkInsert(items);
-  res.status(201).json({ inserted: results.length });
+  res.status(201).json({ inserted });
 });
 
 // Update requirement
