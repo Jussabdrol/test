@@ -28,6 +28,18 @@
             <li><a href="#" class="nav-link" data-view="history">History</a></li>
           </ul>
         </li>
+        <li class="nav-module">
+          <a href="#" class="module-toggle" data-module="audits">
+            <span class="module-icon">&#9998;</span>
+            Audits
+            <span class="module-arrow">&#9662;</span>
+          </a>
+          <ul class="module-submenu">
+            <li><a href="#" class="nav-link" data-view="audit-plan">Audit Plan</a></li>
+            <li><a href="#" class="nav-link" data-view="audit-execute">Execute Audit</a></li>
+            <li><a href="#" class="nav-link" data-view="audit-ncrs">Non-Conformities</a></li>
+          </ul>
+        </li>
       </ul>
     </nav>
 
@@ -148,7 +160,225 @@
         </div>
         <div class="history-list" id="history-list"></div>
       </section>
+      <!-- Audit Plan View -->
+      <section id="view-audit-plan" class="view hidden">
+        <div class="view-header">
+          <h2>Audit Plan</h2>
+          <button class="btn btn-primary" onclick="openAuditModal()">+ New Audit</button>
+        </div>
+        <div class="filters" id="audit-filters-bar"></div>
+        <div class="audit-list" id="audit-list"></div>
+      </section>
+
+      <!-- Audit Execute View -->
+      <section id="view-audit-execute" class="view hidden">
+        <div class="view-header">
+          <h2>Execute Audit</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="audit-exec-select" onchange="loadAuditExecution(this.value)" style="padding:7px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px">
+              <option value="">Select an audit...</option>
+            </select>
+          </div>
+        </div>
+        <div id="audit-exec-content"></div>
+      </section>
+
+      <!-- Non-Conformities View -->
+      <section id="view-audit-ncrs" class="view hidden">
+        <div class="view-header">
+          <h2>Non-Conformities</h2>
+          <button class="btn btn-primary" onclick="openNcrModal()">+ New NCR</button>
+        </div>
+        <div class="filters" id="ncr-filters-bar"></div>
+        <div class="task-table-wrap">
+          <table class="task-table" id="ncr-table">
+            <thead>
+              <tr>
+                <th>NCR</th>
+                <th>Audit</th>
+                <th>Clause</th>
+                <th>Severity</th>
+                <th>Responsible</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="ncr-table-body"></tbody>
+          </table>
+        </div>
+      </section>
     </main>
+  </div>
+
+  <!-- Audit Modal -->
+  <div id="audit-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeAuditModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="audit-modal-title">New Audit</h3>
+        <button class="modal-close" onclick="closeAuditModal()">&times;</button>
+      </div>
+      <form id="audit-form" onsubmit="saveAudit(event)">
+        <input type="hidden" id="audit-id">
+        <div class="form-group">
+          <label for="audit-title">Audit Title *</label>
+          <input type="text" id="audit-title" required placeholder="e.g. Q1 2026 Internal Audit">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="audit-standard">Standard</label>
+            <select id="audit-standard">
+              <option value="ISO 9001">ISO 9001</option>
+              <option value="ISO 14001">ISO 14001</option>
+              <option value="ISO 45001">ISO 45001</option>
+              <option value="ISO 27001">ISO 27001</option>
+              <option value="ISO 22000">ISO 22000</option>
+              <option value="Custom">Custom</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="audit-planned-date">Planned Date</label>
+            <input type="date" id="audit-planned-date">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="audit-scope">Scope</label>
+          <textarea id="audit-scope" rows="2" placeholder="Departments, processes, or clauses to audit"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="audit-lead">Lead Auditor</label>
+            <input type="text" id="audit-lead" placeholder="Lead auditor name">
+          </div>
+          <div class="form-group">
+            <label for="audit-team">Audit Team</label>
+            <input type="text" id="audit-team" placeholder="Team members (comma separated)">
+          </div>
+        </div>
+        <div class="form-group hidden" id="audit-status-group">
+          <label for="audit-status-field">Status</label>
+          <select id="audit-status-field">
+            <option value="planned">Planned</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div class="form-group hidden" id="audit-summary-group">
+          <label for="audit-summary">Summary / Conclusion</label>
+          <textarea id="audit-summary" rows="3" placeholder="Overall audit findings summary"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeAuditModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Audit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- NCR Modal -->
+  <div id="ncr-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeNcrModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="ncr-modal-title">New Non-Conformity</h3>
+        <button class="modal-close" onclick="closeNcrModal()">&times;</button>
+      </div>
+      <form id="ncr-form" onsubmit="saveNcr(event)">
+        <input type="hidden" id="ncr-id">
+        <input type="hidden" id="ncr-checklist-item-id">
+        <div class="form-group">
+          <label for="ncr-audit-id">Audit *</label>
+          <select id="ncr-audit-id" required></select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="ncr-clause">Clause Reference</label>
+            <input type="text" id="ncr-clause" placeholder="e.g. 7.1.5">
+          </div>
+          <div class="form-group">
+            <label for="ncr-severity">Severity *</label>
+            <select id="ncr-severity">
+              <option value="minor">Minor</option>
+              <option value="major">Major</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="ncr-description">Description of Non-Conformity *</label>
+          <textarea id="ncr-description" rows="3" required placeholder="Describe what was found to be non-conforming"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="ncr-root-cause">Root Cause</label>
+          <textarea id="ncr-root-cause" rows="2" placeholder="Why did the non-conformity occur?"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="ncr-correction">Immediate Correction</label>
+          <textarea id="ncr-correction" rows="2" placeholder="What was done to fix the immediate issue?"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="ncr-corrective-action">Corrective Action</label>
+          <textarea id="ncr-corrective-action" rows="2" placeholder="What will be done to prevent recurrence?"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="ncr-responsible">Responsible Person</label>
+            <input type="text" id="ncr-responsible" placeholder="Who is responsible?">
+          </div>
+          <div class="form-group">
+            <label for="ncr-due-date">Due Date</label>
+            <input type="date" id="ncr-due-date">
+          </div>
+        </div>
+        <div class="form-row hidden" id="ncr-status-row">
+          <div class="form-group">
+            <label for="ncr-status-field">Status</label>
+            <select id="ncr-status-field">
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="closed">Closed</option>
+              <option value="verified">Verified</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="ncr-verification-notes">Verification Notes</label>
+            <input type="text" id="ncr-verification-notes" placeholder="Notes on closure/verification">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeNcrModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save NCR</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Checklist Item Modal -->
+  <div id="checklist-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeChecklistModal()"></div>
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h3 id="checklist-modal-title">Add Checklist Item</h3>
+        <button class="modal-close" onclick="closeChecklistModal()">&times;</button>
+      </div>
+      <form id="checklist-form" onsubmit="saveChecklistItem(event)">
+        <input type="hidden" id="checklist-item-id">
+        <input type="hidden" id="checklist-audit-id">
+        <div class="form-group">
+          <label for="checklist-clause">Clause *</label>
+          <input type="text" id="checklist-clause" required placeholder="e.g. 4.1, 7.1.5">
+        </div>
+        <div class="form-group">
+          <label for="checklist-requirement">Requirement Description</label>
+          <textarea id="checklist-requirement" rows="3" placeholder="What does this clause require?"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeChecklistModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Item</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <!-- Task Modal -->

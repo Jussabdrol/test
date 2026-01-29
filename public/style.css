@@ -227,6 +227,34 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .gantt-today-line { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--warning); z-index: 3; pointer-events: none; }
 .legend-today-marker { background: var(--warning); }
 
+/* Audit Module */
+.audit-card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 14px; padding: 18px; border-left: 4px solid var(--primary); }
+.audit-card-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px; }
+.audit-card-header h3 { font-size: 16px; font-weight: 700; }
+.audit-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.audit-scope { font-size: 13px; color: var(--text-muted); margin-bottom: 10px; padding: 6px 10px; background: #f8fafc; border-radius: 4px; }
+.audit-card-footer { display: flex; justify-content: space-between; align-items: center; }
+.audit-stats { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); }
+
+.audit-exec-info { display: flex; gap: 24px; flex-wrap: wrap; padding: 14px 18px; background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 16px; font-size: 13px; }
+.audit-exec-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.audit-exec-stats .stat-card { padding: 12px; }
+.audit-exec-stats .stat-value { font-size: 22px; }
+
+.checklist-list { display: flex; flex-direction: column; gap: 10px; }
+.checklist-item { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; border-left: 4px solid var(--border); }
+.checklist-item:has(select option[value="conforming"]:checked) { border-left-color: var(--success); }
+.cl-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.cl-clause { font-size: 15px; }
+.cl-requirement { font-size: 13px; color: var(--text-muted); margin-bottom: 10px; padding: 6px 10px; background: #f8fafc; border-radius: 4px; }
+.cl-fields { margin-bottom: 8px; }
+.cl-fields label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; }
+.cl-fields textarea, .cl-fields input, .cl-fields select { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; font-family: inherit; }
+.cl-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+.ncr-card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; margin-bottom: 10px; border-left: 4px solid var(--danger); }
+.ncr-meta { font-size: 12px; color: var(--text-muted); }
+
 .empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-size: 14px; }
 
 /* Responsive */

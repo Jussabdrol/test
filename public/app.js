@@ -47,6 +47,9 @@ function switchView(view) {
   else if (view === 'yearly') loadYearlyPlan();
   else if (view === 'actions') loadActions();
   else if (view === 'history') loadHistory();
+  else if (view === 'audit-plan') loadAuditPlan();
+  else if (view === 'audit-execute') loadAuditExecuteView();
+  else if (view === 'audit-ncrs') loadNcrs();
 }
 
 // --- API helpers ---
@@ -845,6 +848,463 @@ function closeDayDetailOutside(e) {
   if (activePopover && !activePopover.contains(e.target)) {
     closeDayDetail();
   }
+}
+
+// --- Audit Module ---
+let auditFilters = { status: '' };
+let ncrFilters = { status: '', audit_id: '' };
+let currentAuditId = null;
+
+async function loadAuditPlan() {
+  const params = new URLSearchParams();
+  if (auditFilters.status) params.set('status', auditFilters.status);
+  const audits = await api(`/api/audits?${params}`);
+  renderAuditFilters();
+  const list = document.getElementById('audit-list');
+  if (audits.length === 0) {
+    list.innerHTML = '<div class="empty-state">No audits planned yet. Create one to get started.</div>';
+    return;
+  }
+  list.innerHTML = audits.map(a => {
+    const statusCls = a.status === 'completed' ? 'badge-low' : a.status === 'in_progress' ? 'badge-medium' : a.status === 'cancelled' ? 'badge-inactive' : 'badge-upcoming';
+    return `<div class="audit-card">
+      <div class="audit-card-header">
+        <div>
+          <h3>${esc(a.title)}</h3>
+          <div class="audit-meta">${esc(a.standard)} &middot; ${a.planned_date || 'No date'} &middot; Lead: ${esc(a.lead_auditor || 'Unassigned')}</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="badge ${statusCls}">${a.status.replace('_', ' ')}</span>
+        </div>
+      </div>
+      ${a.scope ? `<div class="audit-scope">${esc(a.scope)}</div>` : ''}
+      <div class="audit-card-footer">
+        <div class="audit-stats">
+          <span>${a.checklist_count} checklist items</span>
+          <span>${a.nc_count} NCR${a.nc_count !== 1 ? 's' : ''}${a.open_nc_count > 0 ? ` (${a.open_nc_count} open)` : ''}</span>
+        </div>
+        <div style="display:flex;gap:6px">
+          ${a.status === 'planned' ? `<button class="btn btn-primary btn-sm" onclick="startAudit(${a.id})">Start</button>` : ''}
+          ${a.status === 'in_progress' ? `<button class="btn btn-success btn-sm" onclick="switchToExecute(${a.id})">Execute</button>` : ''}
+          <button class="btn btn-secondary btn-sm" onclick="openAuditModal(${a.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteAudit(${a.id})">Del</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderAuditFilters() {
+  document.getElementById('audit-filters-bar').innerHTML = `
+    <select onchange="auditFilters.status=this.value;loadAuditPlan()">
+      <option value="" ${auditFilters.status===''?'selected':''}>All Status</option>
+      <option value="planned" ${auditFilters.status==='planned'?'selected':''}>Planned</option>
+      <option value="in_progress" ${auditFilters.status==='in_progress'?'selected':''}>In Progress</option>
+      <option value="completed" ${auditFilters.status==='completed'?'selected':''}>Completed</option>
+      <option value="cancelled" ${auditFilters.status==='cancelled'?'selected':''}>Cancelled</option>
+    </select>`;
+}
+
+async function startAudit(id) {
+  await api(`/api/audits/${id}`, { method: 'PUT', body: { status: 'in_progress' } });
+  loadAuditPlan();
+}
+
+async function deleteAudit(id) {
+  if (!confirm('Delete this audit and all its data?')) return;
+  await api(`/api/audits/${id}`, { method: 'DELETE' });
+  loadAuditPlan();
+}
+
+function switchToExecute(id) {
+  switchView('audit-execute');
+  setTimeout(() => {
+    document.getElementById('audit-exec-select').value = String(id);
+    loadAuditExecution(id);
+  }, 100);
+}
+
+async function openAuditModal(id) {
+  const modal = document.getElementById('audit-modal');
+  document.getElementById('audit-form').reset();
+  document.getElementById('audit-id').value = '';
+  document.getElementById('audit-modal-title').textContent = 'New Audit';
+  document.getElementById('audit-status-group').classList.add('hidden');
+  document.getElementById('audit-summary-group').classList.add('hidden');
+  if (id) {
+    const a = await api(`/api/audits/${id}`);
+    document.getElementById('audit-modal-title').textContent = 'Edit Audit';
+    document.getElementById('audit-id').value = a.id;
+    document.getElementById('audit-title').value = a.title;
+    document.getElementById('audit-standard').value = a.standard;
+    document.getElementById('audit-scope').value = a.scope;
+    document.getElementById('audit-lead').value = a.lead_auditor;
+    document.getElementById('audit-team').value = a.audit_team;
+    document.getElementById('audit-planned-date').value = a.planned_date || '';
+    document.getElementById('audit-status-field').value = a.status;
+    document.getElementById('audit-summary').value = a.summary || '';
+    document.getElementById('audit-status-group').classList.remove('hidden');
+    document.getElementById('audit-summary-group').classList.remove('hidden');
+  }
+  modal.classList.remove('hidden');
+}
+
+function closeAuditModal() {
+  document.getElementById('audit-modal').classList.add('hidden');
+}
+
+async function saveAudit(e) {
+  e.preventDefault();
+  const id = document.getElementById('audit-id').value;
+  const body = {
+    title: document.getElementById('audit-title').value,
+    standard: document.getElementById('audit-standard').value,
+    scope: document.getElementById('audit-scope').value,
+    lead_auditor: document.getElementById('audit-lead').value,
+    audit_team: document.getElementById('audit-team').value,
+    planned_date: document.getElementById('audit-planned-date').value || null,
+  };
+  if (id) {
+    body.status = document.getElementById('audit-status-field').value;
+    body.summary = document.getElementById('audit-summary').value;
+    await api(`/api/audits/${id}`, { method: 'PUT', body });
+  } else {
+    await api('/api/audits', { method: 'POST', body });
+  }
+  closeAuditModal();
+  refreshCurrentView();
+}
+
+// --- Audit Execution ---
+async function loadAuditExecuteView() {
+  const audits = await api('/api/audits');
+  const sel = document.getElementById('audit-exec-select');
+  const currentVal = sel.value;
+  sel.innerHTML = '<option value="">Select an audit...</option>' +
+    audits.filter(a => a.status !== 'cancelled').map(a =>
+      `<option value="${a.id}" ${String(a.id) === currentVal ? 'selected' : ''}>${esc(a.title)} (${a.status.replace('_',' ')})</option>`
+    ).join('');
+  if (currentVal) loadAuditExecution(currentVal);
+  else document.getElementById('audit-exec-content').innerHTML = '<div class="empty-state">Select an audit to begin execution.</div>';
+}
+
+async function loadAuditExecution(auditId) {
+  if (!auditId) {
+    document.getElementById('audit-exec-content').innerHTML = '<div class="empty-state">Select an audit to begin execution.</div>';
+    return;
+  }
+  currentAuditId = auditId;
+  const audit = await api(`/api/audits/${auditId}`);
+  const content = document.getElementById('audit-exec-content');
+
+  // Summary bar
+  const totalItems = audit.checklist.length;
+  const assessed = audit.checklist.filter(c => c.rating !== 'not_assessed').length;
+  const conforming = audit.checklist.filter(c => c.rating === 'conforming').length;
+  const observations = audit.checklist.filter(c => c.rating === 'observation').length;
+  const minorNc = audit.checklist.filter(c => c.rating === 'minor_nc').length;
+  const majorNc = audit.checklist.filter(c => c.rating === 'major_nc').length;
+
+  let html = `
+    <div class="audit-exec-info">
+      <div><strong>Standard:</strong> ${esc(audit.standard)}</div>
+      <div><strong>Lead:</strong> ${esc(audit.lead_auditor || 'Unassigned')}</div>
+      <div><strong>Status:</strong> <span class="badge ${audit.status === 'completed' ? 'badge-low' : 'badge-medium'}">${audit.status.replace('_',' ')}</span></div>
+      ${audit.scope ? `<div><strong>Scope:</strong> ${esc(audit.scope)}</div>` : ''}
+    </div>
+    <div class="audit-exec-stats">
+      <div class="stat-card"><div class="stat-value">${totalItems}</div><div class="stat-label">Total Items</div></div>
+      <div class="stat-card done"><div class="stat-value">${assessed}</div><div class="stat-label">Assessed</div></div>
+      <div class="stat-card"><div class="stat-value">${conforming}</div><div class="stat-label">Conforming</div></div>
+      <div class="stat-card today"><div class="stat-value">${observations}</div><div class="stat-label">Observations</div></div>
+      <div class="stat-card overdue"><div class="stat-value">${minorNc + majorNc}</div><div class="stat-label">NC</div></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0">
+      <h3 class="section-title" style="margin:0;border:none;padding:0">Audit Checklist</h3>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-primary btn-sm" onclick="openChecklistModal(${auditId})">+ Add Item</button>
+        ${audit.status === 'in_progress' ? `<button class="btn btn-success btn-sm" onclick="completeAudit(${auditId})">Complete Audit</button>` : ''}
+      </div>
+    </div>`;
+
+  if (audit.checklist.length === 0) {
+    html += '<div class="empty-state">No checklist items yet. Add clauses to audit against.</div>';
+  } else {
+    html += '<div class="checklist-list">';
+    for (const item of audit.checklist) {
+      const ratingColors = {
+        not_assessed: 'badge-inactive',
+        conforming: 'badge-low',
+        observation: 'badge-medium',
+        minor_nc: 'badge-high',
+        major_nc: 'badge-critical'
+      };
+      const ratingLabels = {
+        not_assessed: 'Not Assessed',
+        conforming: 'Conforming',
+        observation: 'Observation',
+        minor_nc: 'Minor NC',
+        major_nc: 'Major NC'
+      };
+      html += `<div class="checklist-item" id="cl-item-${item.id}">
+        <div class="cl-header">
+          <div class="cl-clause"><strong>${esc(item.clause)}</strong></div>
+          <span class="badge ${ratingColors[item.rating]}">${ratingLabels[item.rating]}</span>
+        </div>
+        ${item.requirement ? `<div class="cl-requirement">${esc(item.requirement)}</div>` : ''}
+        <div class="cl-fields">
+          <div class="form-group" style="margin-bottom:8px">
+            <label>Evidence</label>
+            <textarea rows="2" onchange="updateChecklistField(${item.id},'evidence',this.value)" placeholder="Evidence observed">${esc(item.evidence)}</textarea>
+          </div>
+          <div class="form-group" style="margin-bottom:8px">
+            <label>Finding</label>
+            <textarea rows="2" onchange="updateChecklistField(${item.id},'finding',this.value)" placeholder="Audit finding">${esc(item.finding)}</textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="margin-bottom:8px">
+              <label>Rating</label>
+              <select onchange="updateChecklistField(${item.id},'rating',this.value)">
+                <option value="not_assessed" ${item.rating==='not_assessed'?'selected':''}>Not Assessed</option>
+                <option value="conforming" ${item.rating==='conforming'?'selected':''}>Conforming</option>
+                <option value="observation" ${item.rating==='observation'?'selected':''}>Observation</option>
+                <option value="minor_nc" ${item.rating==='minor_nc'?'selected':''}>Minor NC</option>
+                <option value="major_nc" ${item.rating==='major_nc'?'selected':''}>Major NC</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label>Notes</label>
+              <input type="text" onchange="updateChecklistField(${item.id},'notes',this.value)" value="${esc(item.notes)}" placeholder="Additional notes">
+            </div>
+          </div>
+        </div>
+        <div class="cl-actions">
+          ${(item.rating === 'minor_nc' || item.rating === 'major_nc') ? `<button class="btn btn-danger btn-sm" onclick="raiseNcrFromChecklist(${auditId}, ${item.id}, '${esc(item.clause)}', '${item.rating === 'major_nc' ? 'major' : 'minor'}')">Raise NCR</button>` : ''}
+          <button class="btn btn-secondary btn-sm" onclick="deleteChecklistItem(${item.id}, ${auditId})">Remove</button>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  // Show NCs for this audit
+  if (audit.non_conformities.length > 0) {
+    html += '<h3 class="section-title" style="margin-top:20px">Non-Conformities for this Audit</h3>';
+    html += audit.non_conformities.map(n => {
+      const sevBadge = n.severity === 'major' ? 'badge-critical' : 'badge-high';
+      const stBadge = n.status === 'open' ? 'badge-high' : n.status === 'in_progress' ? 'badge-medium' : 'badge-low';
+      return `<div class="ncr-card">
+        <div style="display:flex;justify-content:space-between;align-items:start">
+          <div>
+            <span class="badge ${sevBadge}">${n.severity}</span>
+            ${n.clause ? `<strong>Clause ${esc(n.clause)}</strong>` : ''}
+            <span class="badge ${stBadge}">${n.status}</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="openNcrModal(${n.id})">Edit</button>
+        </div>
+        <p style="margin:8px 0;font-size:13px">${esc(n.description)}</p>
+        ${n.responsible ? `<div class="ncr-meta">Responsible: ${esc(n.responsible)}${n.due_date ? ' | Due: ' + n.due_date : ''}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  content.innerHTML = html;
+}
+
+async function updateChecklistField(itemId, field, value) {
+  await api(`/api/checklist/${itemId}`, { method: 'PUT', body: { [field]: value } });
+}
+
+async function completeAudit(auditId) {
+  if (!confirm('Mark this audit as completed?')) return;
+  await api(`/api/audits/${auditId}`, { method: 'PUT', body: { status: 'completed', completed_date: new Date().toISOString().split('T')[0] } });
+  loadAuditExecution(auditId);
+}
+
+function openChecklistModal(auditId) {
+  document.getElementById('checklist-form').reset();
+  document.getElementById('checklist-item-id').value = '';
+  document.getElementById('checklist-audit-id').value = auditId;
+  document.getElementById('checklist-modal').classList.remove('hidden');
+}
+
+function closeChecklistModal() {
+  document.getElementById('checklist-modal').classList.add('hidden');
+}
+
+async function saveChecklistItem(e) {
+  e.preventDefault();
+  const auditId = document.getElementById('checklist-audit-id').value;
+  await api(`/api/audits/${auditId}/checklist`, {
+    method: 'POST',
+    body: {
+      clause: document.getElementById('checklist-clause').value,
+      requirement: document.getElementById('checklist-requirement').value,
+    }
+  });
+  closeChecklistModal();
+  loadAuditExecution(auditId);
+}
+
+async function deleteChecklistItem(itemId, auditId) {
+  if (!confirm('Remove this checklist item?')) return;
+  await api(`/api/checklist/${itemId}`, { method: 'DELETE' });
+  loadAuditExecution(auditId);
+}
+
+function raiseNcrFromChecklist(auditId, checklistItemId, clause, severity) {
+  openNcrModal();
+  setTimeout(() => {
+    document.getElementById('ncr-audit-id').value = String(auditId);
+    document.getElementById('ncr-checklist-item-id').value = checklistItemId;
+    document.getElementById('ncr-clause').value = clause;
+    document.getElementById('ncr-severity').value = severity;
+  }, 50);
+}
+
+// --- Non-Conformities View ---
+async function loadNcrs() {
+  const params = new URLSearchParams();
+  if (ncrFilters.status) params.set('status', ncrFilters.status);
+  if (ncrFilters.audit_id) params.set('audit_id', ncrFilters.audit_id);
+  const ncrs = await api(`/api/ncrs?${params}`);
+  await renderNcrFilters();
+  renderNcrTable(ncrs);
+}
+
+async function renderNcrFilters() {
+  const audits = await api('/api/audits');
+  document.getElementById('ncr-filters-bar').innerHTML = `
+    <select onchange="ncrFilters.status=this.value;loadNcrs()">
+      <option value="" ${ncrFilters.status===''?'selected':''}>All Status</option>
+      <option value="open" ${ncrFilters.status==='open'?'selected':''}>Open</option>
+      <option value="in_progress" ${ncrFilters.status==='in_progress'?'selected':''}>In Progress</option>
+      <option value="closed" ${ncrFilters.status==='closed'?'selected':''}>Closed</option>
+      <option value="verified" ${ncrFilters.status==='verified'?'selected':''}>Verified</option>
+    </select>
+    <select onchange="ncrFilters.audit_id=this.value;loadNcrs()">
+      <option value="">All Audits</option>
+      ${audits.map(a => `<option value="${a.id}" ${ncrFilters.audit_id==a.id?'selected':''}>${esc(a.title)}</option>`).join('')}
+    </select>`;
+}
+
+function renderNcrTable(ncrs) {
+  const tbody = document.getElementById('ncr-table-body');
+  const today = new Date().toISOString().split('T')[0];
+  if (ncrs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No non-conformities found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = ncrs.map(n => {
+    const sevBadge = n.severity === 'major' ? 'badge-critical' : 'badge-high';
+    const stBadge = n.status === 'open' ? 'badge-high' : n.status === 'in_progress' ? 'badge-medium' : 'badge-low';
+    const isOverdue = n.due_date && n.due_date < today && (n.status === 'open' || n.status === 'in_progress');
+    return `<tr>
+      <td><strong>${esc(n.description.substring(0, 80))}${n.description.length > 80 ? '...' : ''}</strong></td>
+      <td>${esc(n.audit_title)}</td>
+      <td>${esc(n.clause || '-')}</td>
+      <td><span class="badge ${sevBadge}">${n.severity}</span></td>
+      <td>${esc(n.responsible || '-')}</td>
+      <td>${n.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + n.due_date + '</span>' : n.due_date) : '-'}</td>
+      <td><span class="badge ${stBadge}">${n.status}</span></td>
+      <td>
+        ${n.status === 'open' ? `<button class="btn btn-primary btn-sm" onclick="updateNcrStatus(${n.id},'in_progress')">Start</button>` : ''}
+        ${n.status === 'in_progress' ? `<button class="btn btn-success btn-sm" onclick="updateNcrStatus(${n.id},'closed')">Close</button>` : ''}
+        ${n.status === 'closed' ? `<button class="btn btn-success btn-sm" onclick="updateNcrStatus(${n.id},'verified')">Verify</button>` : ''}
+        <button class="btn btn-secondary btn-sm" onclick="openNcrModal(${n.id})">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteNcr(${n.id})">Del</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function updateNcrStatus(id, status) {
+  await api(`/api/ncrs/${id}`, { method: 'PUT', body: { status } });
+  refreshCurrentView();
+}
+
+async function deleteNcr(id) {
+  if (!confirm('Delete this non-conformity?')) return;
+  await api(`/api/ncrs/${id}`, { method: 'DELETE' });
+  refreshCurrentView();
+}
+
+async function openNcrModal(id) {
+  const modal = document.getElementById('ncr-modal');
+  document.getElementById('ncr-form').reset();
+  document.getElementById('ncr-id').value = '';
+  document.getElementById('ncr-checklist-item-id').value = '';
+  document.getElementById('ncr-modal-title').textContent = 'New Non-Conformity';
+  document.getElementById('ncr-status-row').classList.add('hidden');
+
+  // Populate audit dropdown
+  const audits = await api('/api/audits');
+  document.getElementById('ncr-audit-id').innerHTML = audits.map(a =>
+    `<option value="${a.id}">${esc(a.title)}</option>`
+  ).join('');
+
+  if (id) {
+    const n = await api(`/api/ncrs?audit_id=`);
+    const ncr = n.find(x => x.id === id);
+    if (!ncr) {
+      // Fetch all NCRs to find it
+      const all = await api('/api/ncrs');
+      const found = all.find(x => x.id === id);
+      if (found) Object.assign(ncr || {}, found);
+    }
+    // Fetch via list and find
+    const allNcrs = await api('/api/ncrs');
+    const ncrData = allNcrs.find(x => x.id === id);
+    if (ncrData) {
+      document.getElementById('ncr-modal-title').textContent = 'Edit Non-Conformity';
+      document.getElementById('ncr-id').value = ncrData.id;
+      document.getElementById('ncr-audit-id').value = ncrData.audit_id;
+      document.getElementById('ncr-clause').value = ncrData.clause || '';
+      document.getElementById('ncr-severity').value = ncrData.severity;
+      document.getElementById('ncr-description').value = ncrData.description;
+      document.getElementById('ncr-root-cause').value = ncrData.root_cause || '';
+      document.getElementById('ncr-correction').value = ncrData.correction || '';
+      document.getElementById('ncr-corrective-action').value = ncrData.corrective_action || '';
+      document.getElementById('ncr-responsible').value = ncrData.responsible || '';
+      document.getElementById('ncr-due-date').value = ncrData.due_date || '';
+      document.getElementById('ncr-status-field').value = ncrData.status;
+      document.getElementById('ncr-verification-notes').value = ncrData.verification_notes || '';
+      document.getElementById('ncr-status-row').classList.remove('hidden');
+    }
+  }
+  modal.classList.remove('hidden');
+}
+
+function closeNcrModal() {
+  document.getElementById('ncr-modal').classList.add('hidden');
+}
+
+async function saveNcr(e) {
+  e.preventDefault();
+  const id = document.getElementById('ncr-id').value;
+  const body = {
+    audit_id: parseInt(document.getElementById('ncr-audit-id').value),
+    clause: document.getElementById('ncr-clause').value,
+    description: document.getElementById('ncr-description').value,
+    severity: document.getElementById('ncr-severity').value,
+    root_cause: document.getElementById('ncr-root-cause').value,
+    correction: document.getElementById('ncr-correction').value,
+    corrective_action: document.getElementById('ncr-corrective-action').value,
+    responsible: document.getElementById('ncr-responsible').value,
+    due_date: document.getElementById('ncr-due-date').value || null,
+  };
+  if (id) {
+    body.status = document.getElementById('ncr-status-field').value;
+    body.verification_notes = document.getElementById('ncr-verification-notes').value;
+    await api(`/api/ncrs/${id}`, { method: 'PUT', body });
+  } else {
+    body.checklist_item_id = document.getElementById('ncr-checklist-item-id').value || null;
+    await api('/api/ncrs', { method: 'POST', body });
+  }
+  closeNcrModal();
+  refreshCurrentView();
+  // Also refresh execution view if open
+  if (currentAuditId) loadAuditExecution(currentAuditId);
 }
 
 // --- Gantt Chart ---

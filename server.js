@@ -57,6 +57,55 @@ db.exec(`
     FOREIGN KEY (completion_id) REFERENCES completions(id) ON DELETE CASCADE,
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS audits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    standard TEXT DEFAULT 'ISO 9001',
+    scope TEXT DEFAULT '',
+    lead_auditor TEXT DEFAULT '',
+    audit_team TEXT DEFAULT '',
+    status TEXT DEFAULT 'planned' CHECK(status IN ('planned','in_progress','completed','cancelled')),
+    planned_date TEXT DEFAULT NULL,
+    completed_date TEXT DEFAULT NULL,
+    summary TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS audit_checklist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL,
+    clause TEXT NOT NULL,
+    requirement TEXT DEFAULT '',
+    evidence TEXT DEFAULT '',
+    finding TEXT DEFAULT '',
+    rating TEXT DEFAULT 'not_assessed' CHECK(rating IN ('not_assessed','conforming','observation','minor_nc','major_nc')),
+    notes TEXT DEFAULT '',
+    sort_order INTEGER DEFAULT 0,
+    FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS non_conformities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL,
+    checklist_item_id INTEGER DEFAULT NULL,
+    clause TEXT DEFAULT '',
+    description TEXT NOT NULL,
+    severity TEXT DEFAULT 'minor' CHECK(severity IN ('minor','major')),
+    root_cause TEXT DEFAULT '',
+    correction TEXT DEFAULT '',
+    corrective_action TEXT DEFAULT '',
+    responsible TEXT DEFAULT '',
+    due_date TEXT DEFAULT NULL,
+    status TEXT DEFAULT 'open' CHECK(status IN ('open','in_progress','closed','verified')),
+    closed_date TEXT DEFAULT NULL,
+    verification_notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE,
+    FOREIGN KEY (checklist_item_id) REFERENCES audit_checklist(id) ON DELETE SET NULL
+  );
 `);
 
 // --- Helper: compute next due date ---
@@ -439,6 +488,159 @@ app.put('/api/actions/:id', (req, res) => {
 app.delete('/api/actions/:id', (req, res) => {
   const result = db.prepare('DELETE FROM actions WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Action not found' });
+  res.json({ success: true });
+});
+
+// --- Audit API ---
+
+// List audits
+app.get('/api/audits', (req, res) => {
+  const { status } = req.query;
+  let sql = 'SELECT * FROM audits WHERE 1=1';
+  const params = [];
+  if (status) { sql += ' AND status = ?'; params.push(status); }
+  sql += ' ORDER BY planned_date DESC, created_at DESC';
+  const audits = db.prepare(sql).all(...params);
+  // Attach counts
+  for (const a of audits) {
+    a.checklist_count = db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(a.id).c;
+    a.nc_count = db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(a.id).c;
+    a.open_nc_count = db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(a.id).c;
+  }
+  res.json(audits);
+});
+
+// Get single audit with checklist and NCs
+app.get('/api/audits/:id', (req, res) => {
+  const audit = db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
+  if (!audit) return res.status(404).json({ error: 'Audit not found' });
+  audit.checklist = db.prepare('SELECT * FROM audit_checklist WHERE audit_id = ? ORDER BY sort_order, id').all(audit.id);
+  audit.non_conformities = db.prepare('SELECT * FROM non_conformities WHERE audit_id = ? ORDER BY created_at DESC').all(audit.id);
+  res.json(audit);
+});
+
+// Create audit
+app.post('/api/audits', (req, res) => {
+  const { title, standard, scope, lead_auditor, audit_team, planned_date } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title is required' });
+  const result = db.prepare(`INSERT INTO audits (title, standard, scope, lead_auditor, audit_team, planned_date) VALUES (?, ?, ?, ?, ?, ?)`).run(
+    title, standard || 'ISO 9001', scope || '', lead_auditor || '', audit_team || '', planned_date || null
+  );
+  res.status(201).json(db.prepare('SELECT * FROM audits WHERE id = ?').get(result.lastInsertRowid));
+});
+
+// Update audit
+app.put('/api/audits/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Audit not found' });
+  const fields = ['title', 'standard', 'scope', 'lead_auditor', 'audit_team', 'status', 'planned_date', 'completed_date', 'summary'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.id);
+  db.prepare(`UPDATE audits SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id));
+});
+
+// Delete audit
+app.delete('/api/audits/:id', (req, res) => {
+  const result = db.prepare('DELETE FROM audits WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Audit not found' });
+  res.json({ success: true });
+});
+
+// --- Audit Checklist API ---
+
+// Add checklist item
+app.post('/api/audits/:id/checklist', (req, res) => {
+  const { clause, requirement, sort_order } = req.body;
+  if (!clause) return res.status(400).json({ error: 'Clause is required' });
+  const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ?').get(req.params.id).m;
+  const result = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)').run(
+    req.params.id, clause, requirement || '', sort_order ?? maxOrder + 1
+  );
+  res.status(201).json(db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(result.lastInsertRowid));
+});
+
+// Update checklist item (during execution)
+app.put('/api/checklist/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Checklist item not found' });
+  const fields = ['clause', 'requirement', 'evidence', 'finding', 'rating', 'notes', 'sort_order'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  params.push(req.params.id);
+  db.prepare(`UPDATE audit_checklist SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
+});
+
+// Delete checklist item
+app.delete('/api/checklist/:id', (req, res) => {
+  const result = db.prepare('DELETE FROM audit_checklist WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Item not found' });
+  res.json({ success: true });
+});
+
+// --- Non-Conformity API ---
+
+// List NCs (optionally filter by audit)
+app.get('/api/ncrs', (req, res) => {
+  const { audit_id, status } = req.query;
+  let sql = `SELECT n.*, a.title as audit_title FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE 1=1`;
+  const params = [];
+  if (audit_id) { sql += ' AND n.audit_id = ?'; params.push(audit_id); }
+  if (status) { sql += ' AND n.status = ?'; params.push(status); }
+  sql += ' ORDER BY n.created_at DESC';
+  res.json(db.prepare(sql).all(...params));
+});
+
+// Create NC
+app.post('/api/ncrs', (req, res) => {
+  const { audit_id, checklist_item_id, clause, description, severity, root_cause, correction, corrective_action, responsible, due_date } = req.body;
+  if (!audit_id || !description) return res.status(400).json({ error: 'audit_id and description are required' });
+  const result = db.prepare(`INSERT INTO non_conformities (audit_id, checklist_item_id, clause, description, severity, root_cause, correction, corrective_action, responsible, due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    audit_id, checklist_item_id || null, clause || '', description, severity || 'minor', root_cause || '', correction || '', corrective_action || '', responsible || '', due_date || null
+  );
+  // If linked to checklist item, update its rating
+  if (checklist_item_id) {
+    const rating = (severity === 'major') ? 'major_nc' : 'minor_nc';
+    db.prepare('UPDATE audit_checklist SET rating = ? WHERE id = ?').run(rating, checklist_item_id);
+  }
+  res.status(201).json(db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(result.lastInsertRowid));
+});
+
+// Update NC
+app.put('/api/ncrs/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'NCR not found' });
+  const fields = ['clause', 'description', 'severity', 'root_cause', 'correction', 'corrective_action', 'responsible', 'due_date', 'status', 'verification_notes'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (req.body.status === 'closed' || req.body.status === 'verified') {
+    updates.push("closed_date = date('now')");
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.id);
+  db.prepare(`UPDATE non_conformities SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(req.params.id));
+});
+
+// Delete NC
+app.delete('/api/ncrs/:id', (req, res) => {
+  const result = db.prepare('DELETE FROM non_conformities WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'NCR not found' });
   res.json({ success: true });
 });
 
