@@ -115,10 +115,14 @@ db.exec(`
     description TEXT DEFAULT '',
     category TEXT DEFAULT '',
     sort_order INTEGER DEFAULT 0,
+    owner TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   );
 `);
+
+// Migration: add owner column if missing
+try { db.exec("ALTER TABLE standard_requirements ADD COLUMN owner TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
 
 // --- Helper: compute next due date ---
 function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth) {
@@ -775,10 +779,10 @@ app.get('/api/requirements/standards', (req, res) => {
 
 // Create requirement
 app.post('/api/requirements', (req, res) => {
-  const { standard, clause, title, description, category, sort_order } = req.body;
+  const { standard, clause, title, description, category, sort_order, owner } = req.body;
   if (!clause) return res.status(400).json({ error: 'Clause is required' });
-  const result = db.prepare(`INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)`).run(
-    standard || 'ISO 9001', clause, title || '', description || '', category || '', sort_order ?? 0
+  const result = db.prepare(`INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order, owner) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+    standard || 'ISO 9001', clause, title || '', description || '', category || '', sort_order ?? 0, owner || ''
   );
   res.status(201).json(db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -806,7 +810,7 @@ app.post('/api/requirements/bulk', (req, res) => {
 app.put('/api/requirements/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Requirement not found' });
-  const fields = ['standard', 'clause', 'title', 'description', 'category', 'sort_order'];
+  const fields = ['standard', 'clause', 'title', 'description', 'category', 'sort_order', 'owner'];
   const updates = [];
   const params = [];
   for (const f of fields) {
@@ -832,5 +836,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Recurring Task Manager running at http://localhost:${PORT}`);
+  console.log(`Let The Frame Work running at http://localhost:${PORT}`);
 });

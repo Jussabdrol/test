@@ -137,10 +137,10 @@ async function loadDashboard() {
             <h4>${esc(a.title)}</h4>
             <div class="meta">From: ${esc(a.task_title)} &middot; ${esc(a.assignee || 'Unassigned')} &middot; Due: ${a.due_date}</div>
           </div>
-          <div class="task-card-actions">
-            <button class="btn btn-primary btn-sm" onclick="updateActionStatusAndRefresh(${a.id},'in_progress')">Start</button>
-            <button class="btn btn-secondary btn-sm" onclick="openActionModal(${a.id})">Edit</button>
-          </div>
+          ${actionMenu([
+            { label: '&#9654; Start', onclick: `updateActionStatusAndRefresh(${a.id},'in_progress')`, cls: 'primary' },
+            { label: '&#9998; Edit', onclick: `openActionModal(${a.id})` },
+          ])}
         </div>`).join('');
     } else {
       overdueActionsList.innerHTML = '<div class="empty-state">No overdue actions</div>';
@@ -165,10 +165,10 @@ function taskCard(task) {
         <h4>${esc(task.title)}</h4>
         <div class="meta">${esc(task.assignee || 'Unassigned')} &middot; ${task.recurrence} &middot; Due: ${task.next_due}</div>
       </div>
-      <div class="task-card-actions">
-        <button class="btn btn-success btn-sm" onclick="openCompleteModal(${task.id})">Done</button>
-        <button class="btn btn-secondary btn-sm" onclick="openTaskModal(${task.id})">Edit</button>
-      </div>
+      ${actionMenu([
+        { label: '&#10003; Mark Done', onclick: `openCompleteModal(${task.id})`, cls: 'success' },
+        { label: '&#9998; Edit', onclick: `openTaskModal(${task.id})` },
+      ])}
     </div>`;
 }
 
@@ -231,11 +231,12 @@ function renderTaskTable() {
       <td>${t.recurrence}${t.recurrence === 'custom' ? ' (' + t.custom_days + 'd)' : ''}</td>
       <td>${t.next_due}</td>
       <td><span class="badge badge-${status}">${statusLabel}</span></td>
-      <td>
-        <button class="btn btn-success btn-sm" onclick="openCompleteModal(${t.id})">Done</button>
-        <button class="btn btn-secondary btn-sm" onclick="openTaskModal(${t.id})">Edit</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteTask(${t.id})">Del</button>
-      </td>
+      <td>${actionMenu([
+        { label: '&#10003; Mark Done', onclick: `openCompleteModal(${t.id})`, cls: 'success' },
+        { label: '&#9998; Edit', onclick: `openTaskModal(${t.id})` },
+        'sep',
+        { label: '&#128465; Delete', onclick: `deleteTask(${t.id})`, cls: 'danger' },
+      ])}</td>
     </tr>`;
   }).join('');
 }
@@ -256,8 +257,10 @@ async function loadHistory() {
         ${c.action_count > 0 ? `<div class="hi-meta"><span class="badge badge-${c.open_action_count > 0 ? 'high' : 'low'}">${c.open_action_count} open / ${c.action_count} actions</span></div>` : ''}
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-secondary btn-sm" onclick="viewCompletionActions(${c.id}, ${c.task_id})">Actions</button>
         <div class="hi-date">${new Date(c.completed_at).toLocaleString()}</div>
+        ${actionMenu([
+          { label: '&#128203; View Actions', onclick: `viewCompletionActions(${c.id}, ${c.task_id})` },
+        ])}
       </div>
     </div>
   `).join('');
@@ -456,12 +459,13 @@ function renderActionTable(actions) {
       <td><span class="badge badge-${a.priority.toLowerCase()}">${a.priority}</span></td>
       <td>${a.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + a.due_date + '</span>' : a.due_date) : '-'}</td>
       <td><span class="badge ${statusClass}">${statusLabel}</span></td>
-      <td>
-        ${a.status === 'open' ? `<button class="btn btn-primary btn-sm" onclick="updateActionStatus(${a.id},'in_progress')">Start</button>` : ''}
-        ${a.status === 'in_progress' ? `<button class="btn btn-success btn-sm" onclick="resolveAction(${a.id})">Resolve</button>` : ''}
-        <button class="btn btn-secondary btn-sm" onclick="openActionModal(${a.id})">Edit</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteAction(${a.id})">Del</button>
-      </td>
+      <td>${actionMenu([
+        ...(a.status === 'open' ? [{ label: '&#9654; Start', onclick: `updateActionStatus(${a.id},'in_progress')`, cls: 'primary' }] : []),
+        ...(a.status === 'in_progress' ? [{ label: '&#10003; Resolve', onclick: `resolveAction(${a.id})`, cls: 'success' }] : []),
+        { label: '&#9998; Edit', onclick: `openActionModal(${a.id})` },
+        'sep',
+        { label: '&#128465; Delete', onclick: `deleteAction(${a.id})`, cls: 'danger' },
+      ])}</td>
     </tr>`;
   }).join('');
 }
@@ -649,60 +653,6 @@ async function loadYearlyPlan() {
   // Render Gantt chart
   renderGanttChart(data, monthStats, today);
 
-  // Render calendar grid
-  let calHtml = '';
-  for (let m = 0; m < 12; m++) {
-    const firstDay = new Date(yearlyYear, m, 1);
-    const daysInMonth = new Date(yearlyYear, m + 1, 0).getDate();
-    let startDay = firstDay.getDay() - 1;
-    if (startDay < 0) startDay = 6;
-
-    const ms = monthStats[m];
-    calHtml += `<div class="month-card">
-      <div class="month-header">
-        ${MONTH_NAMES[m]}
-        <span class="month-count">${ms.completed}/${ms.due} done</span>
-      </div>
-      <div class="month-body">
-        <div class="cal-week-header">${DAY_LABELS.map(d => `<span>${d}</span>`).join('')}</div>
-        <div class="cal-grid">`;
-
-    for (let i = 0; i < startDay; i++) {
-      calHtml += '<div class="cal-day empty"></div>';
-    }
-
-    for (let d = 1; d <= daysInMonth; d++) {
-      const ds = `${yearlyYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-      const dueTasks = data.dueDates[ds] || [];
-      const completedTasks = data.completedDates[ds] || [];
-      const hasDue = dueTasks.length > 0;
-      const hasCompleted = completedTasks.length > 0;
-      const isOverdue = hasDue && ds < today;
-      const isToday = ds === today;
-
-      let cls = 'cal-day';
-      if (isToday) cls += ' today';
-      if (hasCompleted && hasDue) cls += ' has-mixed';
-      else if (isOverdue) cls += ' has-overdue';
-      else if (hasDue) cls += ' has-due';
-      else if (hasCompleted) cls += ' has-completed';
-
-      const clickable = hasDue || hasCompleted;
-      calHtml += `<div class="${cls}"${clickable ? ` onclick="showDayDetail(event,'${ds}')"` : ''}>${d}`;
-      if (hasDue || hasCompleted) {
-        calHtml += '<div class="cal-day-dot">';
-        if (hasCompleted) calHtml += '<span class="dot-completed"></span>';
-        if (hasDue && !isOverdue) calHtml += '<span class="dot-due"></span>';
-        if (isOverdue) calHtml += '<span class="dot-overdue"></span>';
-        calHtml += '</div>';
-      }
-      calHtml += '</div>';
-    }
-
-    calHtml += '</div></div></div>';
-  }
-  grid.innerHTML = calHtml;
-
   // Render monthly breakdown
   const breakdownEl = document.getElementById('yearly-breakdown');
   if (totalDue === 0 && totalCompleted === 0) {
@@ -798,9 +748,11 @@ function renderDayPopover(event, dateStr, data) {
           <strong>${esc(t.title)}</strong> <span class="badge badge-${t.priority.toLowerCase()}">${t.priority}</span>
           <div class="dpi-meta">${label} &middot; ${esc(t.recurrence)} &middot; ${esc(t.assignee || 'Unassigned')}</div>
         </div>
-        <div style="display:flex;gap:4px;margin-left:8px;flex-shrink:0">
-          <button class="btn btn-success btn-sm" onclick="closeDayDetail();openCompleteModal(${t.task_id})">Done</button>
-          <button class="btn btn-secondary btn-sm" onclick="closeDayDetail();openTaskModal(${t.task_id})">Edit</button>
+        <div style="margin-left:8px;flex-shrink:0">
+          ${actionMenu([
+            { label: '&#10003; Mark Done', onclick: `closeDayDetail();openCompleteModal(${t.task_id})`, cls: 'success' },
+            { label: '&#9998; Edit', onclick: `closeDayDetail();openTaskModal(${t.task_id})` },
+          ])}
         </div>
       </div>
     </div>`;
@@ -853,6 +805,13 @@ function closeDayDetailOutside(e) {
 
 // --- Audit Module ---
 let auditFilters = { status: '' };
+let auditYear = new Date().getFullYear();
+
+function changeAuditYear(delta) {
+  if (delta === 0) auditYear = new Date().getFullYear();
+  else auditYear += delta;
+  loadAuditPlan();
+}
 let ncrFilters = { status: '', audit_id: '' };
 let currentAuditId = null;
 
@@ -866,6 +825,9 @@ async function loadAuditPlan() {
     list.innerHTML = '<div class="empty-state">No audits planned yet. Create one to get started.</div>';
     return;
   }
+  // Render audit timeline Gantt
+  renderAuditGantt(audits);
+
   list.innerHTML = audits.map(a => {
     const statusCls = a.status === 'completed' ? 'badge-low' : a.status === 'in_progress' ? 'badge-medium' : a.status === 'cancelled' ? 'badge-inactive' : 'badge-upcoming';
     return `<div class="audit-card">
@@ -884,15 +846,71 @@ async function loadAuditPlan() {
           <span>${a.assessed_count}/${a.checklist_count} assessed</span>
           <span>${a.nc_count} NC${a.nc_count !== 1 ? 's' : ''}${a.open_nc_count > 0 ? ` (${a.open_nc_count} open)` : ''}</span>
         </div>
-        <div style="display:flex;gap:6px">
-          ${a.status === 'planned' ? `<button class="btn btn-primary btn-sm" onclick="startAudit(${a.id})">Start</button>` : ''}
-          ${a.status === 'in_progress' ? `<button class="btn btn-success btn-sm" onclick="switchToExecute(${a.id})">Execute</button>` : ''}
-          <button class="btn btn-secondary btn-sm" onclick="openAuditModal(${a.id})">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteAudit(${a.id})">Del</button>
-        </div>
+        ${actionMenu([
+          ...(a.status === 'planned' ? [{ label: '&#9654; Start Audit', onclick: `startAudit(${a.id})`, cls: 'primary' }] : []),
+          ...(a.status === 'in_progress' ? [{ label: '&#9654; Execute', onclick: `switchToExecute(${a.id})`, cls: 'success' }] : []),
+          { label: '&#9998; Edit', onclick: `openAuditModal(${a.id})` },
+          'sep',
+          { label: '&#128465; Delete', onclick: `deleteAudit(${a.id})`, cls: 'danger' },
+        ])}
       </div>
     </div>`;
   }).join('');
+}
+
+function renderAuditGantt(audits) {
+  const wrap = document.getElementById('audit-gantt-wrap');
+  const today = new Date().toISOString().split('T')[0];
+  const todayDate = new Date(today + 'T12:00:00');
+  const todayMonth = todayDate.getFullYear() === auditYear ? todayDate.getMonth() : -1;
+  const todayDayOfMonth = todayDate.getDate();
+  const shortMonths = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // Filter audits that fall within the selected year
+  const yearAudits = audits.filter(a => {
+    const d = a.planned_date || a.created_at?.split(' ')[0];
+    if (!d) return false;
+    return d.startsWith(String(auditYear));
+  });
+
+  if (yearAudits.length === 0) {
+    wrap.innerHTML = `<div class="empty-state" style="padding:20px">No audits planned for ${auditYear}</div>`;
+    return;
+  }
+
+  let html = '<table class="gantt-table"><thead><tr><th>Audit</th>';
+  for (let m = 0; m < 12; m++) html += `<th>${shortMonths[m]}</th>`;
+  html += '</tr></thead><tbody>';
+
+  for (const a of yearAudits) {
+    const plannedDate = a.planned_date || a.created_at?.split(' ')[0];
+    const plannedMonth = plannedDate ? parseInt(plannedDate.split('-')[1]) - 1 : -1;
+    const completedDate = a.completed_date;
+    const completedMonth = completedDate ? parseInt(completedDate.split('-')[1]) - 1 : -1;
+
+    const statusColor = a.status === 'completed' ? 'completed' : a.status === 'in_progress' ? 'due' : a.status === 'cancelled' ? '' : (plannedDate && plannedDate < today ? 'overdue' : 'due');
+
+    html += `<tr><td title="${esc(a.title)}">${esc(a.title)}</td>`;
+    for (let m = 0; m < 12; m++) {
+      const daysInMonth = new Date(auditYear, m + 1, 0).getDate();
+      html += '<td class="gantt-cell"><div class="gantt-bar">';
+      if (m === todayMonth) {
+        const pct = ((todayDayOfMonth - 0.5) / daysInMonth) * 100;
+        html += `<div class="gantt-today-line" style="left:${pct}%"></div>`;
+      }
+      if (m === plannedMonth) {
+        html += `<span class="gantt-dot ${statusColor}" title="Planned: ${plannedDate}"></span>`;
+      }
+      if (m === completedMonth && completedMonth !== plannedMonth) {
+        html += `<span class="gantt-dot completed" title="Completed: ${completedDate}"></span>`;
+      }
+      html += '</div></td>';
+    }
+    html += '</tr>';
+  }
+
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
 }
 
 function renderAuditFilters() {
@@ -1000,7 +1018,8 @@ async function populateAuditReqPicker(auditId) {
         <input type="checkbox" name="audit_req_ids" value="${r.id}" ${alreadyAdded ? 'disabled checked' : ''} onchange="updateAuditReqCount()">
         <span class="req-picker-clause">${esc(r.clause)}</span>
         <span class="req-picker-title">${esc(r.title)}</span>
-        ${alreadyAdded ? '<span class="badge badge-low" style="font-size:10px;margin-left:auto">already added</span>' : ''}
+        ${r.owner ? `<span style="font-size:11px;color:var(--text-muted);flex-shrink:0">${esc(r.owner)}</span>` : ''}
+        ${alreadyAdded ? '<span class="badge badge-low" style="font-size:10px;flex-shrink:0">already added</span>' : ''}
       </label>`;
     }
   }
@@ -1146,7 +1165,7 @@ async function loadAuditExecution(auditId) {
         const ncrStBadge = linkedNcr.status === 'open' ? 'badge-high' : linkedNcr.status === 'in_progress' ? 'badge-medium' : 'badge-low';
         ncrIndicator = `<div class="cl-ncr-link">
           <span class="badge ${ncrStBadge}">NCR: ${linkedNcr.status}</span>
-          <button class="btn btn-secondary btn-sm" onclick="openNcrModal(${linkedNcr.id})">Edit NCR</button>
+          <span style="cursor:pointer;color:var(--primary);font-weight:500;font-size:12px" onclick="openNcrModal(${linkedNcr.id})">Edit NCR &rarr;</span>
         </div>`;
       }
 
@@ -1184,7 +1203,9 @@ async function loadAuditExecution(auditId) {
         </div>
         ${ncrIndicator}
         <div class="cl-actions">
-          <button class="btn btn-secondary btn-sm" onclick="deleteChecklistItem(${item.id}, ${auditId})">Remove</button>
+          ${actionMenu([
+            { label: '&#128465; Remove Item', onclick: `deleteChecklistItem(${item.id}, ${auditId})`, cls: 'danger' },
+          ])}
         </div>
       </div>`;
     }
@@ -1204,7 +1225,9 @@ async function loadAuditExecution(auditId) {
             ${n.clause ? `<strong>Clause ${esc(n.clause)}</strong>` : ''}
             <span class="badge ${stBadge}">${n.status}</span>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="openNcrModal(${n.id})">Edit</button>
+          ${actionMenu([
+            { label: '&#9998; Edit NCR', onclick: `openNcrModal(${n.id})` },
+          ])}
         </div>
         <p style="margin:8px 0;font-size:13px">${esc(n.description)}</p>
         ${n.responsible ? `<div class="ncr-meta">Responsible: ${esc(n.responsible)}${n.due_date ? ' | Due: ' + n.due_date : ''}</div>` : ''}
@@ -1321,13 +1344,14 @@ function renderNcrTable(ncrs) {
       <td>${esc(n.responsible || '-')}</td>
       <td>${n.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + n.due_date + '</span>' : n.due_date) : '-'}</td>
       <td><span class="badge ${stBadge}">${n.status}</span></td>
-      <td>
-        ${n.status === 'open' ? `<button class="btn btn-primary btn-sm" onclick="updateNcrStatus(${n.id},'in_progress')">Start</button>` : ''}
-        ${n.status === 'in_progress' ? `<button class="btn btn-success btn-sm" onclick="updateNcrStatus(${n.id},'closed')">Close</button>` : ''}
-        ${n.status === 'closed' ? `<button class="btn btn-success btn-sm" onclick="updateNcrStatus(${n.id},'verified')">Verify</button>` : ''}
-        <button class="btn btn-secondary btn-sm" onclick="openNcrModal(${n.id})">Edit</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteNcr(${n.id})">Del</button>
-      </td>
+      <td>${actionMenu([
+        ...(n.status === 'open' ? [{ label: '&#9654; Start', onclick: `updateNcrStatus(${n.id},'in_progress')`, cls: 'primary' }] : []),
+        ...(n.status === 'in_progress' ? [{ label: '&#10003; Close', onclick: `updateNcrStatus(${n.id},'closed')`, cls: 'success' }] : []),
+        ...(n.status === 'closed' ? [{ label: '&#10003; Verify', onclick: `updateNcrStatus(${n.id},'verified')`, cls: 'success' }] : []),
+        { label: '&#9998; Edit', onclick: `openNcrModal(${n.id})` },
+        'sep',
+        { label: '&#128465; Delete', onclick: `deleteNcr(${n.id})`, cls: 'danger' },
+      ])}</td>
     </tr>`;
   }).join('');
 }
@@ -1565,8 +1589,12 @@ async function loadRequirements() {
         </div>
         <div class="req-item-meta">
           <span class="badge badge-low">${esc(r.standard)}</span>
-          <button class="btn btn-secondary btn-sm" onclick="openRequirementModal(${r.id})">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteRequirement(${r.id})">Del</button>
+          ${r.owner ? `<span class="req-audit-info">${esc(r.owner)}</span>` : ''}
+          ${actionMenu([
+            { label: '&#9998; Edit', onclick: `openRequirementModal(${r.id})` },
+            'sep',
+            { label: '&#128465; Delete', onclick: `deleteRequirement(${r.id})`, cls: 'danger' },
+          ])}
         </div>
       </div>`;
     }
@@ -1584,10 +1612,12 @@ async function openRequirementModal(id) {
   // Populate standard datalist from existing
   const standards = await api('/api/requirements/standards');
   document.getElementById('req-standard-list').innerHTML = standards.map(s => `<option value="${esc(s)}">`).join('');
-  // Populate category datalist
+  // Populate category and owner datalists
   const reqs = await api('/api/requirements');
   const cats = [...new Set(reqs.map(r => r.category).filter(Boolean))];
   document.getElementById('req-category-list').innerHTML = cats.map(c => `<option value="${esc(c)}">`).join('');
+  const owners = [...new Set(reqs.map(r => r.owner).filter(Boolean))];
+  document.getElementById('req-owner-list').innerHTML = owners.map(o => `<option value="${esc(o)}">`).join('');
 
   if (id) {
     const r = reqs.find(x => x.id === id);
@@ -1599,6 +1629,7 @@ async function openRequirementModal(id) {
       document.getElementById('req-title-field').value = r.title;
       document.getElementById('req-description').value = r.description || '';
       document.getElementById('req-category-field').value = r.category || '';
+      document.getElementById('req-owner').value = r.owner || '';
     }
   }
   modal.classList.remove('hidden');
@@ -1617,6 +1648,7 @@ async function saveRequirement(e) {
     title: document.getElementById('req-title-field').value,
     description: document.getElementById('req-description').value,
     category: document.getElementById('req-category-field').value,
+    owner: document.getElementById('req-owner').value,
   };
   if (id) {
     await api(`/api/requirements/${id}`, { method: 'PUT', body });
@@ -1773,6 +1805,34 @@ function fillChecklistFromReq(reqId) {
     document.getElementById('checklist-requirement').value = opt.dataset.title || '';
   }
 }
+
+// --- Action Menu Helper ---
+function actionMenu(items) {
+  // items: array of { label, onclick, cls? } or 'sep' for separator
+  let dd = '';
+  for (const item of items) {
+    if (item === 'sep') { dd += '<div class="action-menu-sep"></div>'; continue; }
+    dd += `<button class="action-menu-item${item.cls ? ' ' + item.cls : ''}" onclick="closeAllMenus();${item.onclick}">${item.label}</button>`;
+  }
+  return `<div class="action-menu">
+    <button class="action-menu-toggle" onclick="event.stopPropagation();toggleMenu(this)">&#9881;</button>
+    <div class="action-menu-dropdown">${dd}</div>
+  </div>`;
+}
+
+function toggleMenu(btn) {
+  const menu = btn.closest('.action-menu');
+  const wasOpen = menu.classList.contains('open');
+  closeAllMenus();
+  if (!wasOpen) menu.classList.add('open');
+}
+
+function closeAllMenus() {
+  document.querySelectorAll('.action-menu.open').forEach(m => m.classList.remove('open'));
+}
+
+// Close menus on any outside click
+document.addEventListener('click', () => closeAllMenus());
 
 // --- Helpers ---
 function refreshCurrentView() {

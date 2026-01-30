@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Recurring Task Manager</title>
+  <title>Let The Frame Work</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
     <nav class="sidebar">
       <div class="logo">
         <span class="logo-icon">&#x21bb;</span>
-        <h1>TaskCycle</h1>
+        <h1>Let The Frame Work</h1>
       </div>
       <ul class="nav-links">
         <li class="nav-module">
@@ -121,10 +121,6 @@
         <h3 class="section-title" style="margin-bottom:0">Task Timeline</h3>
         <div class="gantt-wrap" id="gantt-wrap"></div>
 
-        <!-- Calendar grid -->
-        <h3 class="section-title" style="margin-top:28px">Calendar Overview</h3>
-        <div class="yearly-grid" id="yearly-grid"></div>
-
         <!-- Monthly task breakdown -->
         <h3 class="section-title" style="margin-top:28px" id="yearly-breakdown-title">Monthly Breakdown</h3>
         <div id="yearly-breakdown"></div>
@@ -179,9 +175,17 @@
       <section id="view-audit-plan" class="view hidden">
         <div class="view-header">
           <h2>Audit Plan</h2>
-          <button class="btn btn-primary" onclick="openAuditModal()">+ New Audit</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-secondary btn-sm" onclick="changeAuditYear(-1)">&larr; Prev</button>
+            <button class="btn btn-secondary btn-sm" onclick="changeAuditYear(0)">Today</button>
+            <button class="btn btn-secondary btn-sm" onclick="changeAuditYear(1)">Next &rarr;</button>
+            <button class="btn btn-primary" onclick="openAuditModal()">+ New Audit</button>
+          </div>
         </div>
         <div class="filters" id="audit-filters-bar"></div>
+        <h3 class="section-title" style="margin-bottom:0">Audit Timeline</h3>
+        <div class="gantt-wrap" id="audit-gantt-wrap"></div>
+        <h3 class="section-title" style="margin-top:20px">Audit Details</h3>
         <div class="audit-list" id="audit-list"></div>
       </section>
 
@@ -408,10 +412,17 @@
           <label for="req-description">Description / Details</label>
           <textarea id="req-description" rows="4" placeholder="Full requirement text or audit guidance"></textarea>
         </div>
-        <div class="form-group">
-          <label for="req-category-field">Category</label>
-          <input type="text" id="req-category-field" placeholder="e.g. Context, Leadership, Support" list="req-category-list">
-          <datalist id="req-category-list"></datalist>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="req-category-field">Category</label>
+            <input type="text" id="req-category-field" placeholder="e.g. Context, Leadership, Support" list="req-category-list">
+            <datalist id="req-category-list"></datalist>
+          </div>
+          <div class="form-group">
+            <label for="req-owner">Owner / Department</label>
+            <input type="text" id="req-owner" placeholder="e.g. Quality, IT, Operations" list="req-owner-list">
+            <datalist id="req-owner-list"></datalist>
+          </div>
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeRequirementModal()">Cancel</button>
