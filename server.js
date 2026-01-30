@@ -119,10 +119,107 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS risks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    category TEXT DEFAULT 'Information Security',
+    source TEXT DEFAULT '',
+    asset TEXT DEFAULT '',
+    threat TEXT DEFAULT '',
+    vulnerability TEXT DEFAULT '',
+    likelihood INTEGER DEFAULT 3 CHECK(likelihood BETWEEN 1 AND 5),
+    impact INTEGER DEFAULT 3 CHECK(impact BETWEEN 1 AND 5),
+    inherent_score INTEGER GENERATED ALWAYS AS (likelihood * impact) STORED,
+    risk_owner TEXT DEFAULT '',
+    status TEXT DEFAULT 'identified' CHECK(status IN ('identified','analyzing','treating','accepted','closed')),
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS risk_treatments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    risk_id INTEGER NOT NULL,
+    treatment_type TEXT DEFAULT 'mitigate' CHECK(treatment_type IN ('mitigate','accept','transfer','avoid')),
+    description TEXT DEFAULT '',
+    control_reference TEXT DEFAULT '',
+    requirement_id INTEGER DEFAULT NULL,
+    responsible TEXT DEFAULT '',
+    due_date TEXT DEFAULT NULL,
+    status TEXT DEFAULT 'planned' CHECK(status IN ('planned','in_progress','implemented','verified')),
+    residual_likelihood INTEGER DEFAULT NULL,
+    residual_impact INTEGER DEFAULT NULL,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (risk_id) REFERENCES risks(id) ON DELETE CASCADE,
+    FOREIGN KEY (requirement_id) REFERENCES standard_requirements(id) ON DELETE SET NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS soa_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    requirement_id INTEGER NOT NULL,
+    applicable INTEGER DEFAULT 1,
+    justification TEXT DEFAULT '',
+    implementation_status TEXT DEFAULT 'not_implemented' CHECK(implementation_status IN ('not_implemented','partial','implemented')),
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (requirement_id) REFERENCES standard_requirements(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS org_mission (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT DEFAULT '',
+    vision TEXT DEFAULT '',
+    values_text TEXT DEFAULT '',
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS org_kpis (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    module TEXT DEFAULT 'custom',
+    target_value REAL DEFAULT NULL,
+    unit TEXT DEFAULT '',
+    frequency TEXT DEFAULT 'monthly',
+    is_auto INTEGER DEFAULT 0,
+    auto_source TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS org_kpi_values (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kpi_id INTEGER NOT NULL,
+    value REAL NOT NULL,
+    period TEXT NOT NULL,
+    recorded_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (kpi_id) REFERENCES org_kpis(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS org_architecture (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    arch_type TEXT NOT NULL CHECK(arch_type IN ('role','process','system','asset','facility')),
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    parent_id INTEGER DEFAULT NULL,
+    owner TEXT DEFAULT '',
+    status TEXT DEFAULT 'active',
+    metadata TEXT DEFAULT '{}',
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // Migration: add owner column if missing
 try { db.exec("ALTER TABLE standard_requirements ADD COLUMN owner TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
+
+// Ensure org_mission has at least one row
+const missionRow = db.prepare('SELECT COUNT(*) as c FROM org_mission').get();
+if (missionRow.c === 0) { db.prepare("INSERT INTO org_mission (content) VALUES ('')").run(); }
 
 // --- Helper: compute next due date ---
 function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth) {
@@ -827,6 +924,264 @@ app.put('/api/requirements/:id', (req, res) => {
 app.delete('/api/requirements/:id', (req, res) => {
   const result = db.prepare('DELETE FROM standard_requirements WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Requirement not found' });
+  res.json({ success: true });
+});
+
+// --- Risk Management API ---
+
+// List risks
+app.get('/api/risks', (req, res) => {
+  const { status, category } = req.query;
+  let sql = 'SELECT * FROM risks WHERE 1=1';
+  const params = [];
+  if (status) { sql += ' AND status = ?'; params.push(status); }
+  if (category) { sql += ' AND category = ?'; params.push(category); }
+  sql += ' ORDER BY inherent_score DESC, created_at DESC';
+  const risks = db.prepare(sql).all(...params);
+  // Attach treatment count
+  for (const r of risks) {
+    r.treatment_count = db.prepare('SELECT COUNT(*) as c FROM risk_treatments WHERE risk_id = ?').get(r.id).c;
+    r.open_treatments = db.prepare("SELECT COUNT(*) as c FROM risk_treatments WHERE risk_id = ? AND status IN ('planned','in_progress')").get(r.id).c;
+  }
+  res.json(risks);
+});
+
+// Get single risk with treatments
+app.get('/api/risks/:id', (req, res) => {
+  const risk = db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id);
+  if (!risk) return res.status(404).json({ error: 'Risk not found' });
+  risk.treatments = db.prepare(`SELECT rt.*, sr.clause, sr.title as requirement_title FROM risk_treatments rt LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE rt.risk_id = ? ORDER BY rt.created_at`).all(risk.id);
+  res.json(risk);
+});
+
+// Create risk
+app.post('/api/risks', (req, res) => {
+  const { title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title is required' });
+  const result = db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', likelihood || 3, impact || 3, risk_owner || '', status || 'identified'
+  );
+  res.status(201).json(db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid));
+});
+
+// Update risk
+app.put('/api/risks/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Risk not found' });
+  const fields = ['title', 'description', 'category', 'source', 'asset', 'threat', 'vulnerability', 'likelihood', 'impact', 'risk_owner', 'status'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.id);
+  db.prepare(`UPDATE risks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id));
+});
+
+// Delete risk
+app.delete('/api/risks/:id', (req, res) => {
+  const result = db.prepare('DELETE FROM risks WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Risk not found' });
+  res.json({ success: true });
+});
+
+// --- Risk Treatments API ---
+
+app.get('/api/treatments', (req, res) => {
+  const { risk_id, status } = req.query;
+  let sql = `SELECT rt.*, r.title as risk_title, sr.clause, sr.title as requirement_title FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE 1=1`;
+  const params = [];
+  if (risk_id) { sql += ' AND rt.risk_id = ?'; params.push(risk_id); }
+  if (status) { sql += ' AND rt.status = ?'; params.push(status); }
+  sql += ' ORDER BY rt.created_at DESC';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/treatments', (req, res) => {
+  const { risk_id, treatment_type, description, control_reference, requirement_id, responsible, due_date, residual_likelihood, residual_impact, notes } = req.body;
+  if (!risk_id) return res.status(400).json({ error: 'risk_id is required' });
+  const result = db.prepare(`INSERT INTO risk_treatments (risk_id, treatment_type, description, control_reference, requirement_id, responsible, due_date, residual_likelihood, residual_impact, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    risk_id, treatment_type || 'mitigate', description || '', control_reference || '', requirement_id || null, responsible || '', due_date || null, residual_likelihood || null, residual_impact || null, notes || ''
+  );
+  res.status(201).json(db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.put('/api/treatments/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Treatment not found' });
+  const fields = ['treatment_type', 'description', 'control_reference', 'requirement_id', 'responsible', 'due_date', 'status', 'residual_likelihood', 'residual_impact', 'notes'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.id);
+  db.prepare(`UPDATE risk_treatments SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/treatments/:id', (req, res) => {
+  const result = db.prepare('DELETE FROM risk_treatments WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Treatment not found' });
+  res.json({ success: true });
+});
+
+// --- Statement of Applicability API ---
+
+app.get('/api/soa', (req, res) => {
+  // Get all Annex A requirements with their SoA status
+  const reqs = db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes
+    FROM standard_requirements sr LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
+    WHERE sr.standard = 'ISO 27001 Annex A'
+    ORDER BY sr.sort_order, sr.clause`).all();
+  // Attach linked risk treatments
+  for (const r of reqs) {
+    r.linked_treatments = db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ?`).all(r.id);
+  }
+  res.json(reqs);
+});
+
+app.put('/api/soa/:requirementId', (req, res) => {
+  const reqId = req.params.requirementId;
+  const { applicable, justification, implementation_status, notes } = req.body;
+  const existing = db.prepare('SELECT * FROM soa_entries WHERE requirement_id = ?').get(reqId);
+  if (existing) {
+    const fields = [];
+    const params = [];
+    if (applicable !== undefined) { fields.push('applicable = ?'); params.push(applicable ? 1 : 0); }
+    if (justification !== undefined) { fields.push('justification = ?'); params.push(justification); }
+    if (implementation_status !== undefined) { fields.push('implementation_status = ?'); params.push(implementation_status); }
+    if (notes !== undefined) { fields.push('notes = ?'); params.push(notes); }
+    fields.push("updated_at = datetime('now')");
+    params.push(existing.id);
+    db.prepare(`UPDATE soa_entries SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+  } else {
+    db.prepare('INSERT INTO soa_entries (requirement_id, applicable, justification, implementation_status, notes) VALUES (?, ?, ?, ?, ?)').run(
+      reqId, applicable !== undefined ? (applicable ? 1 : 0) : 1, justification || '', implementation_status || 'not_implemented', notes || ''
+    );
+  }
+  res.json({ success: true });
+});
+
+// --- Organizational Planning API ---
+
+// Mission
+app.get('/api/mission', (req, res) => {
+  res.json(db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
+});
+
+app.put('/api/mission', (req, res) => {
+  const { content, vision, values_text } = req.body;
+  db.prepare("UPDATE org_mission SET content = ?, vision = ?, values_text = ?, updated_at = datetime('now') WHERE id = 1").run(content || '', vision || '', values_text || '');
+  res.json(db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
+});
+
+// KPIs
+app.get('/api/kpis', (req, res) => {
+  const kpis = db.prepare('SELECT * FROM org_kpis ORDER BY module, name').all();
+  for (const k of kpis) {
+    k.values = db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? ORDER BY period DESC LIMIT 12').all(k.id);
+  }
+  res.json(kpis);
+});
+
+// Auto-KPI data
+app.get('/api/kpis/auto', (req, res) => {
+  const today = new Date().toISOString().split('T')[0];
+  const auto = {
+    tasks_active: db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1').get().v,
+    tasks_overdue: db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1 AND next_due < ?').get(today).v,
+    completions_this_month: db.prepare("SELECT COUNT(*) as v FROM completions WHERE completed_at >= date('now','start of month')").get().v,
+    open_actions: db.prepare("SELECT COUNT(*) as v FROM actions WHERE status IN ('open','in_progress')").get().v,
+    audits_completed: db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'completed'").get().v,
+    open_ncrs: db.prepare("SELECT COUNT(*) as v FROM non_conformities WHERE status IN ('open','in_progress')").get().v,
+    total_risks: db.prepare('SELECT COUNT(*) as v FROM risks').get().v,
+    high_risks: db.prepare('SELECT COUNT(*) as v FROM risks WHERE inherent_score >= 15').get().v,
+    open_treatments: db.prepare("SELECT COUNT(*) as v FROM risk_treatments WHERE status IN ('planned','in_progress')").get().v,
+  };
+  res.json(auto);
+});
+
+app.post('/api/kpis', (req, res) => {
+  const { name, description, module, target_value, unit, frequency } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  const result = db.prepare('INSERT INTO org_kpis (name, description, module, target_value, unit, frequency) VALUES (?, ?, ?, ?, ?, ?)').run(
+    name, description || '', module || 'custom', target_value || null, unit || '', frequency || 'monthly'
+  );
+  res.status(201).json(db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.put('/api/kpis/:id', (req, res) => {
+  const fields = ['name', 'description', 'module', 'target_value', 'unit', 'frequency'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  params.push(req.params.id);
+  db.prepare(`UPDATE org_kpis SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/kpis/:id', (req, res) => {
+  db.prepare('DELETE FROM org_kpis WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
+});
+
+app.post('/api/kpis/:id/values', (req, res) => {
+  const { value, period } = req.body;
+  if (value === undefined || !period) return res.status(400).json({ error: 'value and period are required' });
+  // Upsert
+  const existing = db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? AND period = ?').get(req.params.id, period);
+  if (existing) {
+    db.prepare("UPDATE org_kpi_values SET value = ?, recorded_at = datetime('now') WHERE id = ?").run(value, existing.id);
+  } else {
+    db.prepare('INSERT INTO org_kpi_values (kpi_id, value, period) VALUES (?, ?, ?)').run(req.params.id, value, period);
+  }
+  res.json({ success: true });
+});
+
+// Architecture
+app.get('/api/architecture', (req, res) => {
+  const { arch_type } = req.query;
+  let sql = 'SELECT * FROM org_architecture WHERE 1=1';
+  const params = [];
+  if (arch_type) { sql += ' AND arch_type = ?'; params.push(arch_type); }
+  sql += ' ORDER BY arch_type, sort_order, name';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/architecture', (req, res) => {
+  const { arch_type, name, description, parent_id, owner, status, metadata } = req.body;
+  if (!arch_type || !name) return res.status(400).json({ error: 'arch_type and name are required' });
+  const result = db.prepare('INSERT INTO org_architecture (arch_type, name, description, parent_id, owner, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+    arch_type, name, description || '', parent_id || null, owner || '', status || 'active', metadata || '{}'
+  );
+  res.status(201).json(db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.put('/api/architecture/:id', (req, res) => {
+  const fields = ['name', 'description', 'parent_id', 'owner', 'status', 'metadata', 'sort_order'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.id);
+  db.prepare(`UPDATE org_architecture SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/architecture/:id', (req, res) => {
+  db.prepare('DELETE FROM org_architecture WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 

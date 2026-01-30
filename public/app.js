@@ -51,6 +51,11 @@ function switchView(view) {
   else if (view === 'audit-execute') loadAuditExecuteView();
   else if (view === 'audit-ncrs') loadNcrs();
   else if (view === 'audit-requirements') loadRequirements();
+  else if (view === 'risk-identification') loadRiskIdentification();
+  else if (view === 'risk-treatment') loadRiskTreatmentView();
+  else if (view === 'risk-soa') loadSoA();
+  else if (view === 'mission-control') loadMissionControl();
+  else if (view === 'architecture') loadArchitecture();
 }
 
 // --- API helpers ---
@@ -1779,6 +1784,101 @@ async function importStandardTemplate(standard) {
       { clause: '10.1', title: 'Continual improvement', category: 'Improvement' },
       { clause: '10.2', title: 'Nonconformity and corrective action', category: 'Improvement' },
     ],
+    'ISO 27001 Annex A': [
+      { clause: 'A.5.1', title: 'Policies for information security', category: 'Organizational Controls' },
+      { clause: 'A.5.2', title: 'Information security roles and responsibilities', category: 'Organizational Controls' },
+      { clause: 'A.5.3', title: 'Segregation of duties', category: 'Organizational Controls' },
+      { clause: 'A.5.4', title: 'Management responsibilities', category: 'Organizational Controls' },
+      { clause: 'A.5.5', title: 'Contact with authorities', category: 'Organizational Controls' },
+      { clause: 'A.5.6', title: 'Contact with special interest groups', category: 'Organizational Controls' },
+      { clause: 'A.5.7', title: 'Threat intelligence', category: 'Organizational Controls' },
+      { clause: 'A.5.8', title: 'Information security in project management', category: 'Organizational Controls' },
+      { clause: 'A.5.9', title: 'Inventory of information and other associated assets', category: 'Organizational Controls' },
+      { clause: 'A.5.10', title: 'Acceptable use of information and other associated assets', category: 'Organizational Controls' },
+      { clause: 'A.5.11', title: 'Return of assets', category: 'Organizational Controls' },
+      { clause: 'A.5.12', title: 'Classification of information', category: 'Organizational Controls' },
+      { clause: 'A.5.13', title: 'Labelling of information', category: 'Organizational Controls' },
+      { clause: 'A.5.14', title: 'Information transfer', category: 'Organizational Controls' },
+      { clause: 'A.5.15', title: 'Access control', category: 'Organizational Controls' },
+      { clause: 'A.5.16', title: 'Identity management', category: 'Organizational Controls' },
+      { clause: 'A.5.17', title: 'Authentication information', category: 'Organizational Controls' },
+      { clause: 'A.5.18', title: 'Access rights', category: 'Organizational Controls' },
+      { clause: 'A.5.19', title: 'Information security in supplier relationships', category: 'Organizational Controls' },
+      { clause: 'A.5.20', title: 'Addressing information security within supplier agreements', category: 'Organizational Controls' },
+      { clause: 'A.5.21', title: 'Managing information security in the ICT supply chain', category: 'Organizational Controls' },
+      { clause: 'A.5.22', title: 'Monitoring, review and change management of supplier services', category: 'Organizational Controls' },
+      { clause: 'A.5.23', title: 'Information security for use of cloud services', category: 'Organizational Controls' },
+      { clause: 'A.5.24', title: 'Information security incident management planning and preparation', category: 'Organizational Controls' },
+      { clause: 'A.5.25', title: 'Assessment and decision on information security events', category: 'Organizational Controls' },
+      { clause: 'A.5.26', title: 'Response to information security incidents', category: 'Organizational Controls' },
+      { clause: 'A.5.27', title: 'Learning from information security incidents', category: 'Organizational Controls' },
+      { clause: 'A.5.28', title: 'Collection of evidence', category: 'Organizational Controls' },
+      { clause: 'A.5.29', title: 'Information security during disruption', category: 'Organizational Controls' },
+      { clause: 'A.5.30', title: 'ICT readiness for business continuity', category: 'Organizational Controls' },
+      { clause: 'A.5.31', title: 'Legal, statutory, regulatory and contractual requirements', category: 'Organizational Controls' },
+      { clause: 'A.5.32', title: 'Intellectual property rights', category: 'Organizational Controls' },
+      { clause: 'A.5.33', title: 'Protection of records', category: 'Organizational Controls' },
+      { clause: 'A.5.34', title: 'Privacy and protection of PII', category: 'Organizational Controls' },
+      { clause: 'A.5.35', title: 'Independent review of information security', category: 'Organizational Controls' },
+      { clause: 'A.5.36', title: 'Compliance with policies, rules and standards for information security', category: 'Organizational Controls' },
+      { clause: 'A.5.37', title: 'Documented operating procedures', category: 'Organizational Controls' },
+      { clause: 'A.6.1', title: 'Screening', category: 'People Controls' },
+      { clause: 'A.6.2', title: 'Terms and conditions of employment', category: 'People Controls' },
+      { clause: 'A.6.3', title: 'Information security awareness, education and training', category: 'People Controls' },
+      { clause: 'A.6.4', title: 'Disciplinary process', category: 'People Controls' },
+      { clause: 'A.6.5', title: 'Responsibilities after termination or change of employment', category: 'People Controls' },
+      { clause: 'A.6.6', title: 'Confidentiality or non-disclosure agreements', category: 'People Controls' },
+      { clause: 'A.6.7', title: 'Remote working', category: 'People Controls' },
+      { clause: 'A.6.8', title: 'Information security event reporting', category: 'People Controls' },
+      { clause: 'A.7.1', title: 'Physical security perimeters', category: 'Physical Controls' },
+      { clause: 'A.7.2', title: 'Physical entry', category: 'Physical Controls' },
+      { clause: 'A.7.3', title: 'Securing offices, rooms and facilities', category: 'Physical Controls' },
+      { clause: 'A.7.4', title: 'Physical security monitoring', category: 'Physical Controls' },
+      { clause: 'A.7.5', title: 'Protecting against physical and environmental threats', category: 'Physical Controls' },
+      { clause: 'A.7.6', title: 'Working in secure areas', category: 'Physical Controls' },
+      { clause: 'A.7.7', title: 'Clear desk and clear screen', category: 'Physical Controls' },
+      { clause: 'A.7.8', title: 'Equipment siting and protection', category: 'Physical Controls' },
+      { clause: 'A.7.9', title: 'Security of assets off-premises', category: 'Physical Controls' },
+      { clause: 'A.7.10', title: 'Storage media', category: 'Physical Controls' },
+      { clause: 'A.7.11', title: 'Supporting utilities', category: 'Physical Controls' },
+      { clause: 'A.7.12', title: 'Cabling security', category: 'Physical Controls' },
+      { clause: 'A.7.13', title: 'Equipment maintenance', category: 'Physical Controls' },
+      { clause: 'A.7.14', title: 'Secure disposal or re-use of equipment', category: 'Physical Controls' },
+      { clause: 'A.8.1', title: 'User endpoint devices', category: 'Technological Controls' },
+      { clause: 'A.8.2', title: 'Privileged access rights', category: 'Technological Controls' },
+      { clause: 'A.8.3', title: 'Information access restriction', category: 'Technological Controls' },
+      { clause: 'A.8.4', title: 'Access to source code', category: 'Technological Controls' },
+      { clause: 'A.8.5', title: 'Secure authentication', category: 'Technological Controls' },
+      { clause: 'A.8.6', title: 'Capacity management', category: 'Technological Controls' },
+      { clause: 'A.8.7', title: 'Protection against malware', category: 'Technological Controls' },
+      { clause: 'A.8.8', title: 'Management of technical vulnerabilities', category: 'Technological Controls' },
+      { clause: 'A.8.9', title: 'Configuration management', category: 'Technological Controls' },
+      { clause: 'A.8.10', title: 'Information deletion', category: 'Technological Controls' },
+      { clause: 'A.8.11', title: 'Data masking', category: 'Technological Controls' },
+      { clause: 'A.8.12', title: 'Data leakage prevention', category: 'Technological Controls' },
+      { clause: 'A.8.13', title: 'Information backup', category: 'Technological Controls' },
+      { clause: 'A.8.14', title: 'Redundancy of information processing facilities', category: 'Technological Controls' },
+      { clause: 'A.8.15', title: 'Logging', category: 'Technological Controls' },
+      { clause: 'A.8.16', title: 'Monitoring activities', category: 'Technological Controls' },
+      { clause: 'A.8.17', title: 'Clock synchronization', category: 'Technological Controls' },
+      { clause: 'A.8.18', title: 'Use of privileged utility programs', category: 'Technological Controls' },
+      { clause: 'A.8.19', title: 'Installation of software on operational systems', category: 'Technological Controls' },
+      { clause: 'A.8.20', title: 'Networks security', category: 'Technological Controls' },
+      { clause: 'A.8.21', title: 'Security of network services', category: 'Technological Controls' },
+      { clause: 'A.8.22', title: 'Segregation of networks', category: 'Technological Controls' },
+      { clause: 'A.8.23', title: 'Web filtering', category: 'Technological Controls' },
+      { clause: 'A.8.24', title: 'Use of cryptography', category: 'Technological Controls' },
+      { clause: 'A.8.25', title: 'Secure development life cycle', category: 'Technological Controls' },
+      { clause: 'A.8.26', title: 'Application security requirements', category: 'Technological Controls' },
+      { clause: 'A.8.27', title: 'Secure system architecture and engineering principles', category: 'Technological Controls' },
+      { clause: 'A.8.28', title: 'Secure coding', category: 'Technological Controls' },
+      { clause: 'A.8.29', title: 'Security testing in development and acceptance', category: 'Technological Controls' },
+      { clause: 'A.8.30', title: 'Outsourced development', category: 'Technological Controls' },
+      { clause: 'A.8.31', title: 'Separation of development, test and production environments', category: 'Technological Controls' },
+      { clause: 'A.8.32', title: 'Change management', category: 'Technological Controls' },
+      { clause: 'A.8.33', title: 'Test information', category: 'Technological Controls' },
+      { clause: 'A.8.34', title: 'Protection of information systems during audit testing', category: 'Technological Controls' },
+    ],
   };
 
   const items = templates[standard];
@@ -1833,6 +1933,642 @@ function closeAllMenus() {
 
 // Close menus on any outside click
 document.addEventListener('click', () => closeAllMenus());
+
+// --- Risk Management Module ---
+let riskFilters = { status: '', category: '' };
+
+function riskScoreClass(score) {
+  if (score >= 20) return 'risk-critical';
+  if (score >= 15) return 'risk-high';
+  if (score >= 8) return 'risk-medium';
+  return 'risk-low';
+}
+function riskScoreLabel(score) {
+  if (score >= 20) return 'Critical';
+  if (score >= 15) return 'High';
+  if (score >= 8) return 'Medium';
+  return 'Low';
+}
+
+async function loadRiskIdentification() {
+  const params = new URLSearchParams();
+  if (riskFilters.status) params.set('status', riskFilters.status);
+  if (riskFilters.category) params.set('category', riskFilters.category);
+  const risks = await api(`/api/risks?${params}`);
+
+  // Filters
+  document.getElementById('risk-filters-bar').innerHTML = `
+    <select onchange="riskFilters.status=this.value;loadRiskIdentification()">
+      <option value="">All Status</option>
+      <option value="identified" ${riskFilters.status==='identified'?'selected':''}>Identified</option>
+      <option value="analyzing" ${riskFilters.status==='analyzing'?'selected':''}>Analyzing</option>
+      <option value="treating" ${riskFilters.status==='treating'?'selected':''}>Treating</option>
+      <option value="accepted" ${riskFilters.status==='accepted'?'selected':''}>Accepted</option>
+      <option value="closed" ${riskFilters.status==='closed'?'selected':''}>Closed</option>
+    </select>
+    <span style="font-size:13px;color:var(--text-muted)">${risks.length} risk${risks.length!==1?'s':''}</span>`;
+
+  // Risk matrix (5x5 heat map)
+  let matrix = '<h3 class="section-title" style="margin-bottom:8px">Risk Heat Map</h3>';
+  matrix += '<table class="risk-matrix"><thead><tr><th></th>';
+  for (let i = 1; i <= 5; i++) matrix += `<th>Impact ${i}</th>`;
+  matrix += '</tr></thead><tbody>';
+  for (let l = 5; l >= 1; l--) {
+    matrix += `<tr><td class="rm-label">Likelihood ${l}</td>`;
+    for (let i = 1; i <= 5; i++) {
+      const score = l * i;
+      const cls = riskScoreClass(score);
+      const count = risks.filter(r => r.likelihood === l && r.impact === i).length;
+      matrix += `<td class="rm-cell ${cls}">${count > 0 ? count : ''}</td>`;
+    }
+    matrix += '</tr>';
+  }
+  matrix += '</tbody></table>';
+  document.getElementById('risk-matrix-wrap').innerHTML = matrix;
+
+  // Risk list
+  const list = document.getElementById('risk-list');
+  if (risks.length === 0) {
+    list.innerHTML = '<div class="empty-state">No risks identified yet. Add one to get started.</div>';
+    return;
+  }
+  list.innerHTML = '<h3 class="section-title" style="margin-top:20px">Risk Register</h3>' + risks.map(r => {
+    const cls = riskScoreClass(r.inherent_score);
+    const stBadge = r.status === 'closed' ? 'badge-low' : r.status === 'accepted' ? 'badge-medium' : r.status === 'treating' ? 'badge-medium' : 'badge-high';
+    return `<div class="risk-card ${cls}">
+      <div class="risk-card-header">
+        <div>
+          <h4>${esc(r.title)}</h4>
+          <div class="risk-meta">${esc(r.category)} &middot; Owner: ${esc(r.risk_owner || 'Unassigned')}${r.asset ? ' &middot; Asset: ' + esc(r.asset) : ''}</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="badge risk-score-badge ${cls}">${r.inherent_score} (${riskScoreLabel(r.inherent_score)})</span>
+          <span class="badge ${stBadge}">${r.status}</span>
+        </div>
+      </div>
+      ${r.description ? `<p style="font-size:13px;color:var(--text-muted);margin:6px 0">${esc(r.description)}</p>` : ''}
+      <div class="risk-card-footer">
+        <div class="risk-detail">
+          <span>L:${r.likelihood} x I:${r.impact} = ${r.inherent_score}</span>
+          ${r.treatment_count > 0 ? `<span>&middot; ${r.treatment_count} treatment${r.treatment_count !== 1 ? 's' : ''}${r.open_treatments > 0 ? ` (${r.open_treatments} open)` : ''}</span>` : ''}
+        </div>
+        ${actionMenu([
+          { label: '&#128736; Add Treatment', onclick: `openTreatmentModalForRisk(${r.id})`, cls: 'primary' },
+          { label: '&#9998; Edit', onclick: `openRiskModal(${r.id})` },
+          'sep',
+          { label: '&#128465; Delete', onclick: `deleteRisk(${r.id})`, cls: 'danger' },
+        ])}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function openRiskModal(id) {
+  const modal = document.getElementById('risk-modal');
+  document.getElementById('risk-form').reset();
+  document.getElementById('risk-id').value = '';
+  document.getElementById('risk-modal-title').textContent = 'New Risk';
+  document.getElementById('risk-status-group').classList.add('hidden');
+
+  if (id) {
+    const r = await api(`/api/risks/${id}`);
+    document.getElementById('risk-modal-title').textContent = 'Edit Risk';
+    document.getElementById('risk-id').value = r.id;
+    document.getElementById('risk-title').value = r.title;
+    document.getElementById('risk-description').value = r.description;
+    document.getElementById('risk-category').value = r.category;
+    document.getElementById('risk-owner').value = r.risk_owner;
+    document.getElementById('risk-asset').value = r.asset;
+    document.getElementById('risk-source').value = r.source;
+    document.getElementById('risk-threat').value = r.threat;
+    document.getElementById('risk-vulnerability').value = r.vulnerability;
+    document.getElementById('risk-likelihood').value = r.likelihood;
+    document.getElementById('risk-impact').value = r.impact;
+    document.getElementById('risk-status-field').value = r.status;
+    document.getElementById('risk-status-group').classList.remove('hidden');
+  }
+  modal.classList.remove('hidden');
+}
+
+function closeRiskModal() { document.getElementById('risk-modal').classList.add('hidden'); }
+
+async function saveRisk(e) {
+  e.preventDefault();
+  const id = document.getElementById('risk-id').value;
+  const body = {
+    title: document.getElementById('risk-title').value,
+    description: document.getElementById('risk-description').value,
+    category: document.getElementById('risk-category').value,
+    risk_owner: document.getElementById('risk-owner').value,
+    asset: document.getElementById('risk-asset').value,
+    source: document.getElementById('risk-source').value,
+    threat: document.getElementById('risk-threat').value,
+    vulnerability: document.getElementById('risk-vulnerability').value,
+    likelihood: parseInt(document.getElementById('risk-likelihood').value),
+    impact: parseInt(document.getElementById('risk-impact').value),
+  };
+  if (id) {
+    body.status = document.getElementById('risk-status-field').value;
+    await api(`/api/risks/${id}`, { method: 'PUT', body });
+  } else {
+    await api('/api/risks', { method: 'POST', body });
+  }
+  closeRiskModal();
+  refreshCurrentView();
+}
+
+async function deleteRisk(id) {
+  if (!confirm('Delete this risk and all its treatments?')) return;
+  await api(`/api/risks/${id}`, { method: 'DELETE' });
+  refreshCurrentView();
+}
+
+// --- Risk Treatment View ---
+async function loadRiskTreatmentView() {
+  const risks = await api('/api/risks');
+  let html = '';
+
+  document.getElementById('treatment-filters-bar').innerHTML = `<span style="font-size:13px;color:var(--text-muted)">${risks.length} risk${risks.length !== 1 ? 's' : ''} in register</span>`;
+
+  if (risks.length === 0) {
+    document.getElementById('treatment-list').innerHTML = '<div class="empty-state">No risks identified yet. Go to Risk Identification first.</div>';
+    return;
+  }
+
+  for (const r of risks) {
+    const detail = await api(`/api/risks/${r.id}`);
+    const cls = riskScoreClass(r.inherent_score);
+    const treatments = detail.treatments || [];
+
+    // Compute residual score
+    let residualScore = r.inherent_score;
+    const implemented = treatments.filter(t => t.status === 'implemented' || t.status === 'verified');
+    if (implemented.length > 0) {
+      const last = implemented[implemented.length - 1];
+      if (last.residual_likelihood && last.residual_impact) {
+        residualScore = last.residual_likelihood * last.residual_impact;
+      }
+    }
+
+    html += `<div class="treatment-risk-group">
+      <div class="treatment-risk-header ${cls}">
+        <div>
+          <strong>${esc(r.title)}</strong>
+          <span class="badge risk-score-badge ${cls}">${r.inherent_score}</span>
+          ${residualScore !== r.inherent_score ? `<span>&rarr;</span><span class="badge risk-score-badge ${riskScoreClass(residualScore)}">${residualScore} residual</span>` : ''}
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openTreatmentModalForRisk(${r.id})">+ Add Treatment</button>
+      </div>`;
+
+    if (treatments.length === 0) {
+      html += '<div class="empty-state" style="padding:16px;font-size:13px">No treatments planned yet.</div>';
+    } else {
+      html += '<div class="treatment-items">';
+      for (const t of treatments) {
+        const stBadge = t.status === 'verified' ? 'badge-low' : t.status === 'implemented' ? 'badge-low' : t.status === 'in_progress' ? 'badge-medium' : 'badge-high';
+        html += `<div class="treatment-item">
+          <div class="treatment-item-main">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <span class="badge badge-inactive">${t.treatment_type}</span>
+              <span class="badge ${stBadge}">${t.status}</span>
+              ${t.control_reference ? `<span style="font-size:12px;color:var(--primary);font-weight:600">${esc(t.control_reference)}</span>` : ''}
+              ${t.requirement_title ? `<span style="font-size:11px;color:var(--text-muted)">Linked: ${esc(t.clause)} - ${esc(t.requirement_title)}</span>` : ''}
+            </div>
+            <p style="font-size:13px;margin:4px 0">${esc(t.description)}</p>
+            <div style="font-size:12px;color:var(--text-muted)">${t.responsible ? 'Responsible: ' + esc(t.responsible) : ''}${t.due_date ? ' | Due: ' + t.due_date : ''}</div>
+          </div>
+          ${actionMenu([
+            ...(t.status === 'planned' ? [{ label: '&#9654; Start', onclick: `updateTreatmentStatus(${t.id},'in_progress')`, cls: 'primary' }] : []),
+            ...(t.status === 'in_progress' ? [{ label: '&#10003; Implement', onclick: `updateTreatmentStatus(${t.id},'implemented')`, cls: 'success' }] : []),
+            ...(t.status === 'implemented' ? [{ label: '&#10003; Verify', onclick: `updateTreatmentStatus(${t.id},'verified')`, cls: 'success' }] : []),
+            { label: '&#9998; Edit', onclick: `openTreatmentModal(${t.id})` },
+            'sep',
+            { label: '&#128465; Delete', onclick: `deleteTreatment(${t.id})`, cls: 'danger' },
+          ])}
+        </div>`;
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  document.getElementById('treatment-list').innerHTML = html;
+}
+
+async function openTreatmentModalForRisk(riskId) {
+  document.getElementById('treatment-form').reset();
+  document.getElementById('treatment-id').value = '';
+  document.getElementById('treatment-risk-id').value = riskId;
+  document.getElementById('treatment-modal-title').textContent = 'New Treatment';
+  document.getElementById('treatment-status-group').classList.add('hidden');
+  await populateTreatmentReqDropdown();
+  document.getElementById('treatment-modal').classList.remove('hidden');
+}
+
+async function openTreatmentModal(id) {
+  const treatments = await api('/api/treatments');
+  const t = treatments.find(x => x.id === id);
+  if (!t) return;
+  document.getElementById('treatment-form').reset();
+  document.getElementById('treatment-id').value = t.id;
+  document.getElementById('treatment-risk-id').value = t.risk_id;
+  document.getElementById('treatment-modal-title').textContent = 'Edit Treatment';
+  document.getElementById('treatment-type').value = t.treatment_type;
+  document.getElementById('treatment-description').value = t.description;
+  document.getElementById('treatment-control-ref').value = t.control_reference || '';
+  document.getElementById('treatment-responsible').value = t.responsible || '';
+  document.getElementById('treatment-due-date').value = t.due_date || '';
+  document.getElementById('treatment-res-likelihood').value = t.residual_likelihood || '';
+  document.getElementById('treatment-res-impact').value = t.residual_impact || '';
+  document.getElementById('treatment-notes').value = t.notes || '';
+  document.getElementById('treatment-status-field').value = t.status;
+  document.getElementById('treatment-status-group').classList.remove('hidden');
+  await populateTreatmentReqDropdown();
+  document.getElementById('treatment-requirement').value = t.requirement_id || '';
+  document.getElementById('treatment-modal').classList.remove('hidden');
+}
+
+async function populateTreatmentReqDropdown() {
+  const reqs = await api('/api/requirements');
+  const sel = document.getElementById('treatment-requirement');
+  sel.innerHTML = '<option value="">-- None --</option>' + reqs.map(r => `<option value="${r.id}">${esc(r.clause)} - ${esc(r.title)} (${esc(r.standard)})</option>`).join('');
+}
+
+function closeTreatmentModal() { document.getElementById('treatment-modal').classList.add('hidden'); }
+
+async function saveTreatment(e) {
+  e.preventDefault();
+  const id = document.getElementById('treatment-id').value;
+  const body = {
+    risk_id: parseInt(document.getElementById('treatment-risk-id').value),
+    treatment_type: document.getElementById('treatment-type').value,
+    description: document.getElementById('treatment-description').value,
+    control_reference: document.getElementById('treatment-control-ref').value,
+    requirement_id: document.getElementById('treatment-requirement').value || null,
+    responsible: document.getElementById('treatment-responsible').value,
+    due_date: document.getElementById('treatment-due-date').value || null,
+    residual_likelihood: document.getElementById('treatment-res-likelihood').value ? parseInt(document.getElementById('treatment-res-likelihood').value) : null,
+    residual_impact: document.getElementById('treatment-res-impact').value ? parseInt(document.getElementById('treatment-res-impact').value) : null,
+    notes: document.getElementById('treatment-notes').value,
+  };
+  if (id) {
+    body.status = document.getElementById('treatment-status-field').value;
+    await api(`/api/treatments/${id}`, { method: 'PUT', body });
+  } else {
+    await api('/api/treatments', { method: 'POST', body });
+  }
+  closeTreatmentModal();
+  refreshCurrentView();
+}
+
+async function updateTreatmentStatus(id, status) {
+  await api(`/api/treatments/${id}`, { method: 'PUT', body: { status } });
+  refreshCurrentView();
+}
+
+async function deleteTreatment(id) {
+  if (!confirm('Delete this treatment?')) return;
+  await api(`/api/treatments/${id}`, { method: 'DELETE' });
+  refreshCurrentView();
+}
+
+// --- Statement of Applicability ---
+async function loadSoA() {
+  const data = await api('/api/soa');
+  const summary = document.getElementById('soa-summary');
+  const list = document.getElementById('soa-list');
+
+  if (data.length === 0) {
+    summary.innerHTML = '';
+    list.innerHTML = '<div class="empty-state">No Annex A controls found. Import the ISO 27001 Annex A template in the Requirements view first.</div>';
+    return;
+  }
+
+  const applicable = data.filter(d => d.applicable !== 0);
+  const notApplicable = data.filter(d => d.applicable === 0);
+  const implemented = data.filter(d => d.implementation_status === 'implemented');
+  const partial = data.filter(d => d.implementation_status === 'partial');
+
+  summary.innerHTML = `
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card"><div class="stat-value">${data.length}</div><div class="stat-label">Total Controls</div></div>
+      <div class="stat-card done"><div class="stat-value">${applicable.length}</div><div class="stat-label">Applicable</div></div>
+      <div class="stat-card"><div class="stat-value">${notApplicable.length}</div><div class="stat-label">Not Applicable</div></div>
+      <div class="stat-card done"><div class="stat-value">${implemented.length}</div><div class="stat-label">Implemented</div></div>
+      <div class="stat-card today"><div class="stat-value">${partial.length}</div><div class="stat-label">Partial</div></div>
+    </div>`;
+
+  // Group by category
+  const groups = {};
+  for (const d of data) {
+    const cat = d.category || 'Uncategorized';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(d);
+  }
+
+  let html = '';
+  for (const [cat, items] of Object.entries(groups)) {
+    html += `<div class="soa-category">
+      <div class="soa-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>`;
+    for (const item of items) {
+      const isApplicable = item.applicable !== 0;
+      const implStatus = item.implementation_status || 'not_implemented';
+      const implBadge = implStatus === 'implemented' ? 'badge-low' : implStatus === 'partial' ? 'badge-medium' : 'badge-high';
+      html += `<div class="soa-item${!isApplicable ? ' soa-na' : ''}">
+        <div class="soa-item-main">
+          <span class="req-clause">${esc(item.clause)}</span>
+          <span class="soa-title">${esc(item.title)}</span>
+        </div>
+        <div class="soa-item-controls">
+          <label class="soa-toggle">
+            <input type="checkbox" ${isApplicable ? 'checked' : ''} onchange="updateSoA(${item.id}, 'applicable', this.checked)">
+            <span class="soa-toggle-label">${isApplicable ? 'Applicable' : 'N/A'}</span>
+          </label>
+          ${isApplicable ? `<select class="soa-impl-select" onchange="updateSoA(${item.id}, 'implementation_status', this.value)">
+            <option value="not_implemented" ${implStatus==='not_implemented'?'selected':''}>Not Implemented</option>
+            <option value="partial" ${implStatus==='partial'?'selected':''}>Partial</option>
+            <option value="implemented" ${implStatus==='implemented'?'selected':''}>Implemented</option>
+          </select>` : ''}
+          ${item.linked_treatments.length > 0 ? `<span class="badge badge-low" style="font-size:10px">${item.linked_treatments.length} treatment${item.linked_treatments.length !== 1 ? 's' : ''}</span>` : ''}
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  list.innerHTML = html;
+}
+
+async function updateSoA(requirementId, field, value) {
+  const body = {};
+  body[field] = value;
+  await api(`/api/soa/${requirementId}`, { method: 'PUT', body });
+  loadSoA();
+}
+
+// --- Organizational Planning: Mission Control ---
+async function loadMissionControl() {
+  const mission = await api('/api/mission');
+  const missionSection = document.getElementById('mission-section');
+
+  missionSection.innerHTML = `
+    <div class="mission-card">
+      <div class="mission-card-header">
+        <h3>Organization Mission</h3>
+        <button class="btn btn-secondary btn-sm" onclick="toggleMissionEdit()">Edit</button>
+      </div>
+      <div id="mission-display">
+        <div class="mission-block">
+          <h4>Mission</h4>
+          <p>${mission.content ? esc(mission.content) : '<span style="color:var(--text-muted);font-style:italic">No mission statement defined yet.</span>'}</p>
+        </div>
+        <div class="mission-block">
+          <h4>Vision</h4>
+          <p>${mission.vision ? esc(mission.vision) : '<span style="color:var(--text-muted);font-style:italic">No vision defined yet.</span>'}</p>
+        </div>
+        <div class="mission-block">
+          <h4>Values</h4>
+          <p>${mission.values_text ? esc(mission.values_text) : '<span style="color:var(--text-muted);font-style:italic">No values defined yet.</span>'}</p>
+        </div>
+      </div>
+      <div id="mission-edit" class="hidden">
+        <div class="form-group">
+          <label>Mission Statement</label>
+          <textarea id="mission-content" rows="3" placeholder="What is your organization's mission?">${esc(mission.content || '')}</textarea>
+        </div>
+        <div class="form-group">
+          <label>Vision</label>
+          <textarea id="mission-vision" rows="3" placeholder="What is your organization's vision?">${esc(mission.vision || '')}</textarea>
+        </div>
+        <div class="form-group">
+          <label>Values</label>
+          <textarea id="mission-values" rows="3" placeholder="What are your organization's core values?">${esc(mission.values_text || '')}</textarea>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-secondary" onclick="toggleMissionEdit()">Cancel</button>
+          <button class="btn btn-primary" onclick="saveMission()">Save</button>
+        </div>
+      </div>
+    </div>`;
+
+  // Auto KPIs
+  const autoData = await api('/api/kpis/auto');
+  document.getElementById('auto-kpi-grid').innerHTML = `
+    <div class="stats-grid" style="margin-bottom:0">
+      <div class="stat-card"><div class="stat-value">${autoData.tasks_active}</div><div class="stat-label">Active Tasks</div></div>
+      <div class="stat-card${autoData.tasks_overdue > 0 ? ' overdue' : ''}"><div class="stat-value">${autoData.tasks_overdue}</div><div class="stat-label">Overdue Tasks</div></div>
+      <div class="stat-card done"><div class="stat-value">${autoData.completions_this_month}</div><div class="stat-label">Completions (Month)</div></div>
+      <div class="stat-card${autoData.open_actions > 0 ? ' overdue' : ''}"><div class="stat-value">${autoData.open_actions}</div><div class="stat-label">Open Actions</div></div>
+      <div class="stat-card done"><div class="stat-value">${autoData.audits_completed}</div><div class="stat-label">Audits Completed</div></div>
+      <div class="stat-card${autoData.open_ncrs > 0 ? ' overdue' : ''}"><div class="stat-value">${autoData.open_ncrs}</div><div class="stat-label">Open NCRs</div></div>
+      <div class="stat-card"><div class="stat-value">${autoData.total_risks}</div><div class="stat-label">Total Risks</div></div>
+      <div class="stat-card${autoData.high_risks > 0 ? ' overdue' : ''}"><div class="stat-value">${autoData.high_risks}</div><div class="stat-label">High Risks</div></div>
+      <div class="stat-card"><div class="stat-value">${autoData.open_treatments}</div><div class="stat-label">Open Treatments</div></div>
+    </div>`;
+
+  // Custom KPIs
+  const kpis = await api('/api/kpis');
+  const customList = document.getElementById('custom-kpi-list');
+  if (kpis.length === 0) {
+    customList.innerHTML = '<div class="empty-state" style="padding:20px">No custom KPIs yet. Create one to track organizational metrics.</div>';
+    return;
+  }
+  customList.innerHTML = kpis.map(k => {
+    const vals = k.values || [];
+    const latest = vals.length > 0 ? vals[0].value : null;
+    const prev = vals.length > 1 ? vals[1].value : null;
+    const trend = (latest !== null && prev !== null) ? latest - prev : null;
+    const trendHtml = trend !== null ? `<span class="kpi-trend ${trend > 0 ? 'down' : trend < 0 ? 'up' : 'flat'}">${trend > 0 ? '+' : ''}${Number(trend.toFixed(2))}${k.unit}</span>` : '';
+    const targetHtml = k.target_value !== null ? `<div style="font-size:12px;color:var(--text-muted)">Target: ${k.target_value}${k.unit}</div>` : '';
+    // Mini sparkline using bars
+    const sparkVals = vals.slice(0, 6).reverse();
+    const max = sparkVals.length > 0 ? Math.max(...sparkVals.map(v => v.value), 1) : 1;
+    const sparkHtml = sparkVals.length > 0 ? `<div class="kpi-spark">${sparkVals.map(v => {
+      const h = Math.max(4, (v.value / max) * 28);
+      return `<div class="kpi-spark-bar" style="height:${h}px" title="${v.period}: ${v.value}${k.unit}"></div>`;
+    }).join('')}</div>` : '';
+    return `<div class="kpi-card-custom">
+      <div class="kpi-card-custom-header">
+        <div>
+          <div class="kpi-header">${esc(k.name)}</div>
+          ${k.description ? `<div style="font-size:12px;color:var(--text-muted)">${esc(k.description)}</div>` : ''}
+        </div>
+        ${actionMenu([
+          { label: '&#128200; Record Value', onclick: `openKpiValueModal(${k.id})`, cls: 'primary' },
+          { label: '&#9998; Edit', onclick: `openKpiModal(${k.id})` },
+          'sep',
+          { label: '&#128465; Delete', onclick: `deleteKpi(${k.id})`, cls: 'danger' },
+        ])}
+      </div>
+      <div style="display:flex;align-items:end;gap:16px">
+        <div>
+          <div class="kpi-value">${latest !== null ? latest + (k.unit || '') : 'N/A'}</div>
+          ${targetHtml}
+          <div style="display:flex;gap:6px;align-items:center">${trendHtml}</div>
+        </div>
+        ${sparkHtml}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleMissionEdit() {
+  document.getElementById('mission-display').classList.toggle('hidden');
+  document.getElementById('mission-edit').classList.toggle('hidden');
+}
+
+async function saveMission() {
+  await api('/api/mission', { method: 'PUT', body: {
+    content: document.getElementById('mission-content').value,
+    vision: document.getElementById('mission-vision').value,
+    values_text: document.getElementById('mission-values').value,
+  }});
+  loadMissionControl();
+}
+
+async function openKpiModal(id) {
+  document.getElementById('kpi-form').reset();
+  document.getElementById('kpi-id').value = '';
+  document.getElementById('kpi-modal-title').textContent = 'New KPI';
+  if (id) {
+    const kpis = await api('/api/kpis');
+    const k = kpis.find(x => x.id === id);
+    if (k) {
+      document.getElementById('kpi-modal-title').textContent = 'Edit KPI';
+      document.getElementById('kpi-id').value = k.id;
+      document.getElementById('kpi-name').value = k.name;
+      document.getElementById('kpi-description').value = k.description;
+      document.getElementById('kpi-target').value = k.target_value || '';
+      document.getElementById('kpi-unit').value = k.unit;
+      document.getElementById('kpi-frequency').value = k.frequency;
+    }
+  }
+  document.getElementById('kpi-modal').classList.remove('hidden');
+}
+function closeKpiModal() { document.getElementById('kpi-modal').classList.add('hidden'); }
+
+async function saveKpi(e) {
+  e.preventDefault();
+  const id = document.getElementById('kpi-id').value;
+  const body = {
+    name: document.getElementById('kpi-name').value,
+    description: document.getElementById('kpi-description').value,
+    target_value: document.getElementById('kpi-target').value ? parseFloat(document.getElementById('kpi-target').value) : null,
+    unit: document.getElementById('kpi-unit').value,
+    frequency: document.getElementById('kpi-frequency').value,
+  };
+  if (id) await api(`/api/kpis/${id}`, { method: 'PUT', body });
+  else await api('/api/kpis', { method: 'POST', body });
+  closeKpiModal();
+  loadMissionControl();
+}
+
+async function deleteKpi(id) {
+  if (!confirm('Delete this KPI and all its values?')) return;
+  await api(`/api/kpis/${id}`, { method: 'DELETE' });
+  loadMissionControl();
+}
+
+function openKpiValueModal(kpiId) {
+  document.getElementById('kpi-value-form').reset();
+  document.getElementById('kpi-value-kpi-id').value = kpiId;
+  document.getElementById('kpi-value-period').value = new Date().toISOString().slice(0, 7);
+  document.getElementById('kpi-value-modal').classList.remove('hidden');
+}
+function closeKpiValueModal() { document.getElementById('kpi-value-modal').classList.add('hidden'); }
+
+async function saveKpiValue(e) {
+  e.preventDefault();
+  const kpiId = document.getElementById('kpi-value-kpi-id').value;
+  await api(`/api/kpis/${kpiId}/values`, { method: 'POST', body: {
+    value: parseFloat(document.getElementById('kpi-value-val').value),
+    period: document.getElementById('kpi-value-period').value,
+  }});
+  closeKpiValueModal();
+  loadMissionControl();
+}
+
+// --- Organizational Planning: Architecture ---
+let currentArchTab = 'role';
+const archTypeLabels = { role: 'Roles & Responsibilities', process: 'Processes', system: 'Systems / Data', asset: 'Assets', facility: 'Facilities' };
+
+function switchArchTab(type) {
+  currentArchTab = type;
+  document.querySelectorAll('.arch-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.arch-tab[onclick="switchArchTab('${type}')"]`).classList.add('active');
+  loadArchitecture();
+}
+
+async function loadArchitecture() {
+  const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
+  const list = document.getElementById('arch-list');
+  if (items.length === 0) {
+    list.innerHTML = `<div class="empty-state">No ${archTypeLabels[currentArchTab].toLowerCase()} defined yet.</div>`;
+    return;
+  }
+  list.innerHTML = `<div class="arch-items">${items.map(item => {
+    const stBadge = item.status === 'active' ? 'badge-low' : item.status === 'planned' ? 'badge-medium' : 'badge-inactive';
+    return `<div class="arch-item">
+      <div class="arch-item-main">
+        <h4>${esc(item.name)}</h4>
+        ${item.description ? `<p style="font-size:13px;color:var(--text-muted);margin:4px 0">${esc(item.description)}</p>` : ''}
+        <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text-muted)">
+          ${item.owner ? `<span>Owner: ${esc(item.owner)}</span>` : ''}
+          <span class="badge ${stBadge}">${item.status}</span>
+        </div>
+      </div>
+      ${actionMenu([
+        { label: '&#9998; Edit', onclick: `openArchModal(${item.id})` },
+        'sep',
+        { label: '&#128465; Delete', onclick: `deleteArch(${item.id})`, cls: 'danger' },
+      ])}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+async function openArchModal(id) {
+  document.getElementById('arch-form').reset();
+  document.getElementById('arch-id').value = '';
+  document.getElementById('arch-modal-title').textContent = 'New Item';
+  document.getElementById('arch-type').value = currentArchTab;
+
+  if (id) {
+    const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
+    const item = items.find(x => x.id === id);
+    if (item) {
+      document.getElementById('arch-modal-title').textContent = 'Edit Item';
+      document.getElementById('arch-id').value = item.id;
+      document.getElementById('arch-type').value = item.arch_type;
+      document.getElementById('arch-name').value = item.name;
+      document.getElementById('arch-description').value = item.description;
+      document.getElementById('arch-owner').value = item.owner;
+      document.getElementById('arch-status').value = item.status;
+    }
+  }
+  document.getElementById('arch-modal').classList.remove('hidden');
+}
+function closeArchModal() { document.getElementById('arch-modal').classList.add('hidden'); }
+
+async function saveArch(e) {
+  e.preventDefault();
+  const id = document.getElementById('arch-id').value;
+  const body = {
+    arch_type: document.getElementById('arch-type').value,
+    name: document.getElementById('arch-name').value,
+    description: document.getElementById('arch-description').value,
+    owner: document.getElementById('arch-owner').value,
+    status: document.getElementById('arch-status').value,
+  };
+  if (id) await api(`/api/architecture/${id}`, { method: 'PUT', body });
+  else await api('/api/architecture', { method: 'POST', body });
+  closeArchModal();
+  currentArchTab = body.arch_type;
+  loadArchitecture();
+}
+
+async function deleteArch(id) {
+  if (!confirm('Delete this item?')) return;
+  await api(`/api/architecture/${id}`, { method: 'DELETE' });
+  loadArchitecture();
+}
 
 // --- Helpers ---
 function refreshCurrentView() {

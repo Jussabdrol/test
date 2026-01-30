@@ -301,6 +301,82 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .action-menu-item.primary:hover { background: #eff6ff; }
 .action-menu-sep { height: 1px; background: var(--border); margin: 2px 0; }
 
+/* Risk Management */
+.risk-matrix { border-collapse: collapse; margin-bottom: 20px; }
+.risk-matrix th, .risk-matrix td { padding: 8px 12px; text-align: center; border: 1px solid var(--border); font-size: 12px; }
+.risk-matrix th { background: #f8fafc; font-weight: 600; }
+.rm-label { font-weight: 600; text-align: right !important; background: #f8fafc; min-width: 100px; }
+.rm-cell { min-width: 60px; font-weight: 700; font-size: 14px; }
+.rm-cell.risk-low { background: #d1fae5; color: #065f46; }
+.rm-cell.risk-medium { background: #fef3c7; color: #92400e; }
+.rm-cell.risk-high { background: #fee2e2; color: #991b1b; }
+.rm-cell.risk-critical { background: #ede9fe; color: #5b21b6; }
+
+.risk-card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 12px; padding: 16px; border-left: 4px solid var(--border); }
+.risk-card.risk-low { border-left-color: var(--success); }
+.risk-card.risk-medium { border-left-color: var(--warning); }
+.risk-card.risk-high { border-left-color: var(--danger); }
+.risk-card.risk-critical { border-left-color: var(--critical); }
+.risk-card-header { display: flex; justify-content: space-between; align-items: start; }
+.risk-card-header h4 { font-size: 15px; font-weight: 700; }
+.risk-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.risk-card-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.risk-detail { font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; }
+.risk-score-badge { font-weight: 700; }
+.risk-score-badge.risk-low { background: #d1fae5; color: #065f46; }
+.risk-score-badge.risk-medium { background: #fef3c7; color: #92400e; }
+.risk-score-badge.risk-high { background: #fee2e2; color: #991b1b; }
+.risk-score-badge.risk-critical { background: #ede9fe; color: #5b21b6; }
+
+/* Treatment */
+.treatment-risk-group { margin-bottom: 16px; background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.treatment-risk-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 2px solid var(--border); border-left: 4px solid var(--border); }
+.treatment-risk-header.risk-low { border-left-color: var(--success); }
+.treatment-risk-header.risk-medium { border-left-color: var(--warning); }
+.treatment-risk-header.risk-high { border-left-color: var(--danger); }
+.treatment-risk-header.risk-critical { border-left-color: var(--critical); }
+.treatment-items { }
+.treatment-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.treatment-item:last-child { border-bottom: none; }
+.treatment-item-main { flex: 1; min-width: 0; }
+
+/* Statement of Applicability */
+.soa-category { margin-bottom: 16px; }
+.soa-category-header { font-size: 14px; font-weight: 700; padding: 10px 16px; background: #f8fafc; border-radius: var(--radius) var(--radius) 0 0; border-bottom: 2px solid var(--border); }
+.soa-item { display: flex; align-items: center; padding: 10px 16px; background: var(--card-bg); border-bottom: 1px solid var(--border); box-shadow: var(--shadow); gap: 12px; }
+.soa-item:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+.soa-item.soa-na { opacity: 0.5; }
+.soa-item-main { flex: 1; display: flex; gap: 8px; align-items: center; min-width: 0; }
+.soa-title { font-size: 13px; }
+.soa-item-controls { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.soa-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
+.soa-toggle-label { font-size: 11px; color: var(--text-muted); }
+.soa-impl-select { padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
+
+/* Mission Control */
+.mission-card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 24px; }
+.mission-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.mission-card-header h3 { font-size: 18px; font-weight: 700; }
+.mission-block { margin-bottom: 16px; }
+.mission-block h4 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+.mission-block p { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+
+/* Custom KPI cards */
+.kpi-card-custom { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; margin-bottom: 12px; border-left: 4px solid var(--primary); }
+.kpi-card-custom-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; }
+.kpi-spark { display: flex; align-items: flex-end; gap: 3px; height: 32px; }
+.kpi-spark-bar { width: 8px; background: var(--primary); border-radius: 2px 2px 0 0; opacity: .7; }
+
+/* Architecture */
+.arch-tabs { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
+.arch-tab { padding: 8px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card-bg); font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s; }
+.arch-tab:hover { background: #f1f5f9; }
+.arch-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.arch-items { display: flex; flex-direction: column; gap: 8px; }
+.arch-item { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid var(--primary); }
+.arch-item-main { flex: 1; min-width: 0; }
+.arch-item-main h4 { font-size: 15px; font-weight: 700; }
+
 .empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-size: 14px; }
 
 /* Responsive */
