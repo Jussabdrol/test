@@ -15,13 +15,37 @@
       </div>
       <ul class="nav-links">
         <li class="nav-module">
-          <a href="#" class="module-toggle active" data-module="operational-planning">
+          <a href="#" class="module-toggle active" data-module="org-planning">
+            <span class="module-icon">&#127970;</span>
+            Organizational Planning
+            <span class="module-arrow">&#9662;</span>
+          </a>
+          <ul class="module-submenu open">
+            <li><a href="#" class="nav-link active" data-view="mission-control">Mission Control</a></li>
+            <li><a href="#" class="nav-link" data-view="architecture">Architecture</a></li>
+            <li><a href="#" class="nav-link" data-view="document-control">Document Control</a></li>
+          </ul>
+        </li>
+        <li class="nav-module">
+          <a href="#" class="module-toggle" data-module="risk-management">
+            <span class="module-icon">&#9888;</span>
+            Risk Management
+            <span class="module-arrow">&#9662;</span>
+          </a>
+          <ul class="module-submenu">
+            <li><a href="#" class="nav-link" data-view="risk-identification">Risk Identification</a></li>
+            <li><a href="#" class="nav-link" data-view="risk-treatment">Risk Treatment</a></li>
+            <li><a href="#" class="nav-link" data-view="risk-soa">Statement of Applicability</a></li>
+          </ul>
+        </li>
+        <li class="nav-module">
+          <a href="#" class="module-toggle" data-module="operational-planning">
             <span class="module-icon">&#9881;</span>
             Operational Planning
             <span class="module-arrow">&#9662;</span>
           </a>
-          <ul class="module-submenu open">
-            <li><a href="#" class="nav-link active" data-view="dashboard">Dashboard</a></li>
+          <ul class="module-submenu">
+            <li><a href="#" class="nav-link" data-view="dashboard">Dashboard</a></li>
             <li><a href="#" class="nav-link" data-view="tasks">All Tasks</a></li>
             <li><a href="#" class="nav-link" data-view="yearly">Yearly Plan</a></li>
             <li><a href="#" class="nav-link" data-view="actions">Actions</a></li>
@@ -41,35 +65,12 @@
             <li><a href="#" class="nav-link" data-view="audit-ncrs">Non-Conformities</a></li>
           </ul>
         </li>
-        <li class="nav-module">
-          <a href="#" class="module-toggle" data-module="risk-management">
-            <span class="module-icon">&#9888;</span>
-            Risk Management
-            <span class="module-arrow">&#9662;</span>
-          </a>
-          <ul class="module-submenu">
-            <li><a href="#" class="nav-link" data-view="risk-identification">Risk Identification</a></li>
-            <li><a href="#" class="nav-link" data-view="risk-treatment">Risk Treatment</a></li>
-            <li><a href="#" class="nav-link" data-view="risk-soa">Statement of Applicability</a></li>
-          </ul>
-        </li>
-        <li class="nav-module">
-          <a href="#" class="module-toggle" data-module="org-planning">
-            <span class="module-icon">&#127970;</span>
-            Organizational Planning
-            <span class="module-arrow">&#9662;</span>
-          </a>
-          <ul class="module-submenu">
-            <li><a href="#" class="nav-link" data-view="mission-control">Mission Control</a></li>
-            <li><a href="#" class="nav-link" data-view="architecture">Architecture</a></li>
-          </ul>
-        </li>
       </ul>
     </nav>
 
     <main class="content">
       <!-- Dashboard View -->
-      <section id="view-dashboard" class="view">
+      <section id="view-dashboard" class="view hidden">
         <div class="view-header">
           <h2>Dashboard</h2>
           <button class="btn btn-primary" onclick="openTaskModal()">+ New Task</button>
@@ -281,7 +282,7 @@
       </section>
 
       <!-- Mission Control View -->
-      <section id="view-mission-control" class="view hidden">
+      <section id="view-mission-control" class="view">
         <div class="view-header">
           <h2>Mission Control</h2>
         </div>
@@ -309,6 +310,17 @@
           <button class="arch-tab" onclick="switchArchTab('facility')">Facilities</button>
         </div>
         <div id="arch-list"></div>
+      </section>
+
+      <!-- Document Control View -->
+      <section id="view-document-control" class="view hidden">
+        <div class="view-header">
+          <h2>Document Control</h2>
+          <button class="btn btn-primary" onclick="openDocModal()">+ Upload Document</button>
+        </div>
+        <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">Manage policies, procedures, and documented information per ISO 7.5 requirements. Upload files and cross-link them to relevant modules.</p>
+        <div class="filters" id="doc-filters-bar"></div>
+        <div id="doc-list"></div>
       </section>
     </main>
   </div>
@@ -530,6 +542,7 @@
         <button class="btn btn-primary" onclick="importStandardTemplate('ISO 45001')">ISO 45001:2018</button>
         <button class="btn btn-primary" onclick="importStandardTemplate('ISO 27001')">ISO 27001:2022</button>
         <button class="btn btn-primary" onclick="importStandardTemplate('ISO 27001 Annex A')">ISO 27001:2022 Annex A</button>
+        <button class="btn btn-primary" onclick="importStandardTemplate('ISO 42001:2023')">ISO 42001:2023</button>
       </div>
       <div id="import-status"></div>
       <div class="form-actions">
@@ -1063,6 +1076,89 @@
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeArchModal()">Cancel</button>
           <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Document Modal -->
+  <div id="doc-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeDocModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="doc-modal-title">Upload Document</h3>
+        <button class="modal-close" onclick="closeDocModal()">&times;</button>
+      </div>
+      <form id="doc-form" onsubmit="saveDocument(event)">
+        <input type="hidden" id="doc-id">
+        <div class="form-group">
+          <label for="doc-title">Document Title *</label>
+          <input type="text" id="doc-title" required placeholder="e.g. Information Security Policy">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="doc-type">Document Type</label>
+            <select id="doc-type">
+              <option value="policy">Policy</option>
+              <option value="procedure">Procedure</option>
+              <option value="work_instruction">Work Instruction</option>
+              <option value="record">Record</option>
+              <option value="form">Form / Template</option>
+              <option value="report">Report</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="doc-version">Version</label>
+            <input type="text" id="doc-version" placeholder="e.g. 1.0" value="1.0">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="doc-owner">Owner</label>
+            <input type="text" id="doc-owner" placeholder="Document owner">
+          </div>
+          <div class="form-group">
+            <label for="doc-status">Status</label>
+            <select id="doc-status">
+              <option value="draft">Draft</option>
+              <option value="review">Under Review</option>
+              <option value="approved">Approved</option>
+              <option value="obsolete">Obsolete</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="doc-description">Description</label>
+          <textarea id="doc-description" rows="2" placeholder="Brief description of this document"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="doc-file">File (PDF, DOCX, XLS, etc.)</label>
+          <input type="file" id="doc-file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.png,.jpg,.jpeg">
+        </div>
+        <div class="form-group">
+          <label for="doc-linked-module">Linked Module</label>
+          <select id="doc-linked-module">
+            <option value="">-- None --</option>
+            <option value="org-planning">Organizational Planning</option>
+            <option value="risk-management">Risk Management</option>
+            <option value="operational-planning">Operational Planning</option>
+            <option value="audits">Audits</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="doc-linked-ref">Linked Reference (Requirement/Risk/Task ID)</label>
+          <select id="doc-linked-ref">
+            <option value="">-- None --</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="doc-review-date">Next Review Date</label>
+          <input type="date" id="doc-review-date">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeDocModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Document</button>
         </div>
       </form>
     </div>

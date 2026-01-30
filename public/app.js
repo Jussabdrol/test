@@ -1,5 +1,5 @@
 // --- State ---
-let currentView = 'dashboard';
+let currentView = 'mission-control';
 let allTasks = [];
 let meta = { assignees: [], categories: [] };
 let filters = { active: 'true', assignee: '', category: '', priority: '' };
@@ -56,6 +56,7 @@ function switchView(view) {
   else if (view === 'risk-soa') loadSoA();
   else if (view === 'mission-control') loadMissionControl();
   else if (view === 'architecture') loadArchitecture();
+  else if (view === 'document-control') loadDocumentControl();
 }
 
 // --- API helpers ---
@@ -1879,6 +1880,80 @@ async function importStandardTemplate(standard) {
       { clause: 'A.8.33', title: 'Test information', category: 'Technological Controls' },
       { clause: 'A.8.34', title: 'Protection of information systems during audit testing', category: 'Technological Controls' },
     ],
+    'ISO 42001:2023': [
+      // 4 Context of the organization
+      { clause: '4.1', title: 'Understanding the organization and its context', category: 'Context of the Organization' },
+      { clause: '4.2', title: 'Understanding the needs and expectations of interested parties', category: 'Context of the Organization' },
+      { clause: '4.3', title: 'Determining the scope of the AI management system', category: 'Context of the Organization' },
+      { clause: '4.4', title: 'AI management system', category: 'Context of the Organization' },
+      // 5 Leadership
+      { clause: '5.1', title: 'Leadership and commitment', category: 'Leadership' },
+      { clause: '5.2', title: 'AI policy', category: 'Leadership' },
+      { clause: '5.3', title: 'Organizational roles, responsibilities and authorities', category: 'Leadership' },
+      // 6 Planning
+      { clause: '6.1', title: 'Actions to address risks and opportunities', category: 'Planning' },
+      { clause: '6.1.1', title: 'General', category: 'Planning' },
+      { clause: '6.1.2', title: 'AI risk assessment', category: 'Planning' },
+      { clause: '6.1.3', title: 'AI risk treatment', category: 'Planning' },
+      { clause: '6.1.4', title: 'AI system impact assessment', category: 'Planning' },
+      { clause: '6.2', title: 'AI objectives and planning to achieve them', category: 'Planning' },
+      { clause: '6.3', title: 'Planning of changes', category: 'Planning' },
+      // 7 Support
+      { clause: '7.1', title: 'Resources', category: 'Support' },
+      { clause: '7.2', title: 'Competence', category: 'Support' },
+      { clause: '7.3', title: 'Awareness', category: 'Support' },
+      { clause: '7.4', title: 'Communication', category: 'Support' },
+      { clause: '7.5', title: 'Documented information', category: 'Support' },
+      // 8 Operation
+      { clause: '8.1', title: 'Operational planning and control', category: 'Operation' },
+      { clause: '8.2', title: 'AI risk assessment', category: 'Operation' },
+      { clause: '8.3', title: 'AI risk treatment', category: 'Operation' },
+      { clause: '8.4', title: 'AI system impact assessment', category: 'Operation' },
+      // 9 Performance evaluation
+      { clause: '9.1', title: 'Monitoring, measurement, analysis and evaluation', category: 'Performance Evaluation' },
+      { clause: '9.2', title: 'Internal audit', category: 'Performance Evaluation' },
+      { clause: '9.2.1', title: 'General', category: 'Performance Evaluation' },
+      { clause: '9.2.2', title: 'Internal audit programme', category: 'Performance Evaluation' },
+      { clause: '9.3', title: 'Management review', category: 'Performance Evaluation' },
+      { clause: '9.3.1', title: 'General', category: 'Performance Evaluation' },
+      { clause: '9.3.2', title: 'Management review inputs', category: 'Performance Evaluation' },
+      { clause: '9.3.3', title: 'Management review results', category: 'Performance Evaluation' },
+      // 10 Improvement
+      { clause: '10.1', title: 'Continual improvement', category: 'Improvement' },
+      { clause: '10.2', title: 'Nonconformity and corrective action', category: 'Improvement' },
+      // Annex A - AI Controls
+      { clause: 'A.2', title: 'AI policies', category: 'Annex A - AI Controls' },
+      { clause: 'A.3', title: 'Internal organization for AI', category: 'Annex A - AI Controls' },
+      { clause: 'A.4', title: 'Resources for AI systems', category: 'Annex A - AI Controls' },
+      { clause: 'A.5', title: 'Assessing impacts of AI systems', category: 'Annex A - AI Controls' },
+      { clause: 'A.6', title: 'AI system life cycle', category: 'Annex A - AI Controls' },
+      { clause: 'A.6.1', title: 'AI system life cycle management', category: 'Annex A - AI Controls' },
+      { clause: 'A.6.2', title: 'AI system requirements and design', category: 'Annex A - AI Controls' },
+      { clause: 'A.6.3', title: 'Data for AI systems', category: 'Annex A - AI Controls' },
+      { clause: 'A.6.4', title: 'AI model building and validation', category: 'Annex A - AI Controls' },
+      { clause: 'A.6.5', title: 'AI system verification and validation', category: 'Annex A - AI Controls' },
+      { clause: 'A.6.6', title: 'AI system deployment', category: 'Annex A - AI Controls' },
+      { clause: 'A.6.7', title: 'AI system operation and monitoring', category: 'Annex A - AI Controls' },
+      { clause: 'A.6.8', title: 'AI system retirement', category: 'Annex A - AI Controls' },
+      { clause: 'A.7', title: 'Data management', category: 'Annex A - AI Controls' },
+      { clause: 'A.8', title: 'Technology and AI system monitoring', category: 'Annex A - AI Controls' },
+      { clause: 'A.9', title: 'Third-party and customer relationships', category: 'Annex A - AI Controls' },
+      { clause: 'A.9.1', title: 'Use of AI as third-party or customer', category: 'Annex A - AI Controls' },
+      { clause: 'A.9.2', title: 'Supplying AI to third parties', category: 'Annex A - AI Controls' },
+      { clause: 'A.9.3', title: 'Responsible provision of AI', category: 'Annex A - AI Controls' },
+      { clause: 'A.9.4', title: 'AI system end-user communication', category: 'Annex A - AI Controls' },
+      { clause: 'A.10', title: 'Documentation and record management for AI', category: 'Annex A - AI Controls' },
+      // Annex B - AI implementation guidance
+      { clause: 'B.2', title: 'AI policy objectives', category: 'Annex B - Implementation Guidance' },
+      { clause: 'B.3', title: 'Roles and responsibilities for AI', category: 'Annex B - Implementation Guidance' },
+      { clause: 'B.4', title: 'AI resources and competence', category: 'Annex B - Implementation Guidance' },
+      { clause: 'B.5', title: 'Impact assessment process', category: 'Annex B - Implementation Guidance' },
+      { clause: 'B.6', title: 'AI system life cycle processes', category: 'Annex B - Implementation Guidance' },
+      { clause: 'B.7', title: 'Data for AI systems guidance', category: 'Annex B - Implementation Guidance' },
+      { clause: 'B.8', title: 'Monitoring and measurement of AI systems', category: 'Annex B - Implementation Guidance' },
+      { clause: 'B.9', title: 'Third-party relationship management', category: 'Annex B - Implementation Guidance' },
+      { clause: 'B.10', title: 'AI documentation and information management', category: 'Annex B - Implementation Guidance' },
+    ],
   };
 
   const items = templates[standard];
@@ -2376,7 +2451,7 @@ async function loadMissionControl() {
     const latest = vals.length > 0 ? vals[0].value : null;
     const prev = vals.length > 1 ? vals[1].value : null;
     const trend = (latest !== null && prev !== null) ? latest - prev : null;
-    const trendHtml = trend !== null ? `<span class="kpi-trend ${trend > 0 ? 'down' : trend < 0 ? 'up' : 'flat'}">${trend > 0 ? '+' : ''}${Number(trend.toFixed(2))}${k.unit}</span>` : '';
+    const trendHtml = trend !== null ? `<span class="kpi-trend ${trend > 0 ? 'up' : trend < 0 ? 'down' : 'flat'}">${trend > 0 ? '+' : ''}${Number(trend.toFixed(2))}${k.unit}</span>` : '';
     const targetHtml = k.target_value !== null ? `<div style="font-size:12px;color:var(--text-muted)">Target: ${k.target_value}${k.unit}</div>` : '';
     // Mini sparkline using bars
     const sparkVals = vals.slice(0, 6).reverse();
@@ -2570,6 +2645,179 @@ async function deleteArch(id) {
   loadArchitecture();
 }
 
+// --- Document Control ---
+let docFilters = { doc_type: '', status: '' };
+
+async function loadDocumentControl() {
+  const params = new URLSearchParams();
+  if (docFilters.doc_type) params.set('doc_type', docFilters.doc_type);
+  if (docFilters.status) params.set('status', docFilters.status);
+  const docs = await api(`/api/documents?${params}`);
+
+  document.getElementById('doc-filters-bar').innerHTML = `
+    <select onchange="docFilters.doc_type=this.value;loadDocumentControl()">
+      <option value="">All Types</option>
+      <option value="policy" ${docFilters.doc_type==='policy'?'selected':''}>Policy</option>
+      <option value="procedure" ${docFilters.doc_type==='procedure'?'selected':''}>Procedure</option>
+      <option value="work_instruction" ${docFilters.doc_type==='work_instruction'?'selected':''}>Work Instruction</option>
+      <option value="record" ${docFilters.doc_type==='record'?'selected':''}>Record</option>
+      <option value="form" ${docFilters.doc_type==='form'?'selected':''}>Form / Template</option>
+      <option value="report" ${docFilters.doc_type==='report'?'selected':''}>Report</option>
+      <option value="other" ${docFilters.doc_type==='other'?'selected':''}>Other</option>
+    </select>
+    <select onchange="docFilters.status=this.value;loadDocumentControl()">
+      <option value="">All Status</option>
+      <option value="draft" ${docFilters.status==='draft'?'selected':''}>Draft</option>
+      <option value="review" ${docFilters.status==='review'?'selected':''}>Under Review</option>
+      <option value="approved" ${docFilters.status==='approved'?'selected':''}>Approved</option>
+      <option value="obsolete" ${docFilters.status==='obsolete'?'selected':''}>Obsolete</option>
+    </select>
+    <span style="font-size:13px;color:var(--text-muted)">${docs.length} document${docs.length!==1?'s':''}</span>`;
+
+  const list = document.getElementById('doc-list');
+  if (docs.length === 0) {
+    list.innerHTML = '<div class="empty-state">No documents yet. Upload one to get started.</div>';
+    return;
+  }
+
+  const docTypeLabels = { policy: 'Policy', procedure: 'Procedure', work_instruction: 'Work Instruction', record: 'Record', form: 'Form', report: 'Report', other: 'Other' };
+  const statusBadge = s => s === 'approved' ? 'badge-low' : s === 'review' ? 'badge-medium' : s === 'obsolete' ? 'badge-inactive' : 'badge-high';
+  const moduleLabels = { 'org-planning': 'Org Planning', 'risk-management': 'Risk Mgmt', 'operational-planning': 'Operational', 'audits': 'Audits' };
+  const fileIcon = mime => {
+    if (mime.includes('pdf')) return '&#128196;';
+    if (mime.includes('word') || mime.includes('document')) return '&#128195;';
+    if (mime.includes('sheet') || mime.includes('excel')) return '&#128202;';
+    if (mime.includes('presentation') || mime.includes('powerpoint')) return '&#128203;';
+    if (mime.includes('image')) return '&#128247;';
+    return '&#128193;';
+  };
+
+  list.innerHTML = `<div class="doc-grid">${docs.map(d => {
+    const size = d.file_size > 0 ? (d.file_size > 1048576 ? (d.file_size / 1048576).toFixed(1) + ' MB' : (d.file_size / 1024).toFixed(0) + ' KB') : '';
+    const reviewWarning = d.review_date && d.review_date < new Date().toISOString().split('T')[0];
+    return `<div class="doc-card${d.status === 'obsolete' ? ' doc-obsolete' : ''}">
+      <div class="doc-card-header">
+        <div class="doc-icon">${d.file_name ? fileIcon(d.mime_type) : '&#128196;'}</div>
+        <div class="doc-card-info">
+          <h4>${esc(d.title)}</h4>
+          <div class="doc-meta">
+            <span class="badge ${statusBadge(d.status)}">${d.status}</span>
+            <span class="badge badge-inactive">${docTypeLabels[d.doc_type] || d.doc_type}</span>
+            <span>v${esc(d.version)}</span>
+            ${d.owner ? `<span>Owner: ${esc(d.owner)}</span>` : ''}
+          </div>
+        </div>
+        ${actionMenu([
+          ...(d.file_name ? [{ label: '&#128229; Download', onclick: `downloadDoc(${d.id})`, cls: 'primary' }] : []),
+          { label: '&#9998; Edit', onclick: `openDocModal(${d.id})` },
+          'sep',
+          { label: '&#128465; Delete', onclick: `deleteDoc(${d.id})`, cls: 'danger' },
+        ])}
+      </div>
+      ${d.description ? `<p class="doc-desc">${esc(d.description)}</p>` : ''}
+      <div class="doc-card-footer">
+        ${d.linked_module ? `<span class="badge badge-low">${moduleLabels[d.linked_module] || d.linked_module}</span>` : ''}
+        ${d.file_name ? `<span class="doc-file-info">${esc(d.file_name)} (${size})</span>` : '<span class="doc-file-info" style="color:var(--text-muted)">No file attached</span>'}
+        ${d.review_date ? `<span class="doc-review${reviewWarning ? ' overdue' : ''}">Review: ${d.review_date}</span>` : ''}
+        <span class="doc-date">Updated: ${d.updated_at.split(' ')[0]}</span>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function openDocModal(id) {
+  document.getElementById('doc-form').reset();
+  document.getElementById('doc-id').value = '';
+  document.getElementById('doc-modal-title').textContent = 'Upload Document';
+  document.getElementById('doc-linked-ref').innerHTML = '<option value="">-- None --</option>';
+
+  if (id) {
+    api('/api/documents').then(docs => {
+      const d = docs.find(x => x.id === id);
+      if (!d) return;
+      document.getElementById('doc-modal-title').textContent = 'Edit Document';
+      document.getElementById('doc-id').value = d.id;
+      document.getElementById('doc-title').value = d.title;
+      document.getElementById('doc-type').value = d.doc_type;
+      document.getElementById('doc-version').value = d.version;
+      document.getElementById('doc-owner').value = d.owner;
+      document.getElementById('doc-status').value = d.status;
+      document.getElementById('doc-description').value = d.description;
+      document.getElementById('doc-linked-module').value = d.linked_module;
+      document.getElementById('doc-review-date').value = d.review_date || '';
+      if (d.linked_module) {
+        populateDocRefs(d.linked_module).then(() => {
+          if (d.linked_ref_id) document.getElementById('doc-linked-ref').value = `${d.linked_ref_type}:${d.linked_ref_id}`;
+        });
+      }
+      document.getElementById('doc-modal').classList.remove('hidden');
+    });
+    return;
+  }
+  document.getElementById('doc-modal').classList.remove('hidden');
+}
+
+function closeDocModal() { document.getElementById('doc-modal').classList.add('hidden'); }
+
+// Populate linked references based on selected module
+document.addEventListener('change', function(e) {
+  if (e.target && e.target.id === 'doc-linked-module') {
+    const mod = e.target.value;
+    if (mod) populateDocRefs(mod);
+    else document.getElementById('doc-linked-ref').innerHTML = '<option value="">-- None --</option>';
+  }
+});
+
+async function populateDocRefs(module) {
+  const refs = await api(`/api/link-references?module=${module}`);
+  const sel = document.getElementById('doc-linked-ref');
+  sel.innerHTML = '<option value="">-- None --</option>' + refs.map(r =>
+    `<option value="${r.type}:${r.id}">${esc(r.label)}</option>`
+  ).join('');
+}
+
+async function saveDocument(e) {
+  e.preventDefault();
+  const id = document.getElementById('doc-id').value;
+  const formData = new FormData();
+  formData.append('title', document.getElementById('doc-title').value);
+  formData.append('doc_type', document.getElementById('doc-type').value);
+  formData.append('version', document.getElementById('doc-version').value);
+  formData.append('owner', document.getElementById('doc-owner').value);
+  formData.append('status', document.getElementById('doc-status').value);
+  formData.append('description', document.getElementById('doc-description').value);
+  formData.append('linked_module', document.getElementById('doc-linked-module').value);
+  formData.append('review_date', document.getElementById('doc-review-date').value);
+
+  const refVal = document.getElementById('doc-linked-ref').value;
+  if (refVal) {
+    const [refType, refId] = refVal.split(':');
+    formData.append('linked_ref_type', refType);
+    formData.append('linked_ref_id', refId);
+  }
+
+  const fileInput = document.getElementById('doc-file');
+  if (fileInput.files.length > 0) {
+    formData.append('file', fileInput.files[0]);
+  }
+
+  const url = id ? `/api/documents/${id}` : '/api/documents';
+  const method = id ? 'PUT' : 'POST';
+  await fetch(url, { method, body: formData });
+  closeDocModal();
+  loadDocumentControl();
+}
+
+async function deleteDoc(id) {
+  if (!confirm('Delete this document and its file?')) return;
+  await api(`/api/documents/${id}`, { method: 'DELETE' });
+  loadDocumentControl();
+}
+
+function downloadDoc(id) {
+  window.open(`/api/documents/${id}/download`, '_blank');
+}
+
 // --- Helpers ---
 function refreshCurrentView() {
   switchView(currentView);
@@ -2582,4 +2830,4 @@ function esc(str) {
 }
 
 // --- Init ---
-loadDashboard();
+loadMissionControl();

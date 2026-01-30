@@ -1,12 +1,28 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const Database = require('better-sqlite3');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// File upload setup
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
+    cb(null, `${Date.now()}_${base}${ext}`);
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(uploadsDir));
 
 // --- Database Setup ---
 const db = new Database(path.join(__dirname, 'tasks.db'));
@@ -209,6 +225,26 @@ db.exec(`
     status TEXT DEFAULT 'active',
     metadata TEXT DEFAULT '{}',
     sort_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    doc_type TEXT DEFAULT 'policy' CHECK(doc_type IN ('policy','procedure','work_instruction','record','form','report','other')),
+    version TEXT DEFAULT '1.0',
+    owner TEXT DEFAULT '',
+    status TEXT DEFAULT 'draft' CHECK(status IN ('draft','review','approved','obsolete')),
+    file_name TEXT DEFAULT '',
+    file_path TEXT DEFAULT '',
+    file_size INTEGER DEFAULT 0,
+    mime_type TEXT DEFAULT '',
+    linked_module TEXT DEFAULT '',
+    linked_ref_type TEXT DEFAULT '',
+    linked_ref_id INTEGER DEFAULT NULL,
+    review_date TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   );
@@ -1183,6 +1219,92 @@ app.put('/api/architecture/:id', (req, res) => {
 app.delete('/api/architecture/:id', (req, res) => {
   db.prepare('DELETE FROM org_architecture WHERE id = ?').run(req.params.id);
   res.json({ success: true });
+});
+
+// --- Document Control API ---
+
+app.get('/api/documents', (req, res) => {
+  const { doc_type, status, linked_module } = req.query;
+  let sql = 'SELECT * FROM documents WHERE 1=1';
+  const params = [];
+  if (doc_type) { sql += ' AND doc_type = ?'; params.push(doc_type); }
+  if (status) { sql += ' AND status = ?'; params.push(status); }
+  if (linked_module) { sql += ' AND linked_module = ?'; params.push(linked_module); }
+  sql += ' ORDER BY updated_at DESC';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/documents', upload.single('file'), (req, res) => {
+  const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title is required' });
+  const file = req.file;
+  const result = db.prepare(`INSERT INTO documents (title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title, description || '', doc_type || 'policy', version || '1.0', owner || '', status || 'draft',
+    file ? file.originalname : '', file ? file.filename : '', file ? file.size : 0, file ? file.mimetype : '',
+    linked_module || '', linked_ref_type || '', linked_ref_id || null, review_date || null
+  );
+  res.status(201).json(db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.put('/api/documents/:id', upload.single('file'), (req, res) => {
+  const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Document not found' });
+  const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date } = req.body;
+  const file = req.file;
+  // If new file uploaded, delete old one
+  if (file && existing.file_path) {
+    const oldPath = path.join(uploadsDir, existing.file_path);
+    if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+  }
+  db.prepare(`UPDATE documents SET title=?, description=?, doc_type=?, version=?, owner=?, status=?, file_name=?, file_path=?, file_size=?, mime_type=?, linked_module=?, linked_ref_type=?, linked_ref_id=?, review_date=?, updated_at=datetime('now') WHERE id=?`).run(
+    title || existing.title, description !== undefined ? description : existing.description,
+    doc_type || existing.doc_type, version || existing.version, owner !== undefined ? owner : existing.owner,
+    status || existing.status,
+    file ? file.originalname : existing.file_name, file ? file.filename : existing.file_path,
+    file ? file.size : existing.file_size, file ? file.mimetype : existing.mime_type,
+    linked_module !== undefined ? linked_module : existing.linked_module,
+    linked_ref_type !== undefined ? linked_ref_type : existing.linked_ref_type,
+    linked_ref_id !== undefined ? (linked_ref_id || null) : existing.linked_ref_id,
+    review_date !== undefined ? (review_date || null) : existing.review_date,
+    req.params.id
+  );
+  res.json(db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/documents/:id', (req, res) => {
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Document not found' });
+  if (doc.file_path) {
+    const filePath = path.join(uploadsDir, doc.file_path);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  }
+  db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
+});
+
+app.get('/api/documents/:id/download', (req, res) => {
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!doc || !doc.file_path) return res.status(404).json({ error: 'File not found' });
+  const filePath = path.join(uploadsDir, doc.file_path);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+  res.download(filePath, doc.file_name);
+});
+
+// Cross-linking references endpoint
+app.get('/api/link-references', (req, res) => {
+  const { module } = req.query;
+  const refs = [];
+  if (module === 'audits') {
+    const reqs = db.prepare('SELECT id, clause, title, standard FROM standard_requirements ORDER BY standard, sort_order').all();
+    reqs.forEach(r => refs.push({ id: r.id, type: 'requirement', label: `${r.clause} - ${r.title} (${r.standard})` }));
+  } else if (module === 'risk-management') {
+    const risks = db.prepare('SELECT id, title FROM risks ORDER BY title').all();
+    risks.forEach(r => refs.push({ id: r.id, type: 'risk', label: r.title }));
+  } else if (module === 'operational-planning') {
+    const tasks = db.prepare('SELECT id, title FROM tasks ORDER BY title').all();
+    tasks.forEach(t => refs.push({ id: t.id, type: 'task', label: t.title }));
+  }
+  res.json(refs);
 });
 
 // SPA fallback
