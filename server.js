@@ -248,6 +248,16 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS cross_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,
+    source_id INTEGER NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(source_type, source_id, target_type, target_id)
+  );
 `);
 
 // Migration: add owner column if missing
@@ -1290,7 +1300,86 @@ app.get('/api/documents/:id/download', (req, res) => {
   res.download(filePath, doc.file_name);
 });
 
-// Cross-linking references endpoint
+// --- Universal Cross-Linking API ---
+
+// Entity type resolution helpers
+const entityResolvers = {
+  risk: id => db.prepare('SELECT id, title as name FROM risks WHERE id = ?').get(id),
+  task: id => db.prepare('SELECT id, title as name FROM tasks WHERE id = ?').get(id),
+  requirement: id => { const r = db.prepare('SELECT id, clause, title, standard FROM standard_requirements WHERE id = ?').get(id); return r ? { id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` } : null; },
+  audit: id => db.prepare('SELECT id, title as name FROM audits WHERE id = ?').get(id),
+  ncr: id => { const n = db.prepare('SELECT id, clause, description FROM non_conformities WHERE id = ?').get(id); return n ? { id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` } : null; },
+  role: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'role'").get(id),
+  process: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'process'").get(id),
+  system: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'system'").get(id),
+  asset: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'asset'").get(id),
+  facility: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'facility'").get(id),
+  document: id => db.prepare('SELECT id, title as name FROM documents WHERE id = ?').get(id),
+  treatment: id => { const t = db.prepare('SELECT id, description FROM risk_treatments WHERE id = ?').get(id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
+};
+
+// Get all cross-links for an entity
+app.get('/api/cross-links/:type/:id', (req, res) => {
+  const { type, id } = req.params;
+  const links = db.prepare(`
+    SELECT * FROM cross_links WHERE (source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?)
+  `).all(type, id, type, id);
+
+  const resolved = links.map(l => {
+    const isSource = l.source_type === type && l.source_id === parseInt(id);
+    const otherType = isSource ? l.target_type : l.source_type;
+    const otherId = isSource ? l.target_id : l.source_id;
+    const resolver = entityResolvers[otherType];
+    const entity = resolver ? resolver(otherId) : null;
+    return { link_id: l.id, type: otherType, id: otherId, name: entity ? entity.name : `${otherType} #${otherId}` };
+  }).filter(l => l.name);
+
+  res.json(resolved);
+});
+
+// Add a cross-link
+app.post('/api/cross-links', (req, res) => {
+  const { source_type, source_id, target_type, target_id } = req.body;
+  if (!source_type || !source_id || !target_type || !target_id) return res.status(400).json({ error: 'All fields required' });
+  // Normalize order to avoid duplicates (alphabetical source_type)
+  const [s_type, s_id, t_type, t_id] = source_type < target_type
+    ? [source_type, source_id, target_type, target_id]
+    : [target_type, target_id, source_type, source_id];
+  try {
+    db.prepare('INSERT INTO cross_links (source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?)').run(s_type, s_id, t_type, t_id);
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Link already exists' });
+    throw e;
+  }
+  res.status(201).json({ success: true });
+});
+
+// Delete a cross-link
+app.delete('/api/cross-links/:id', (req, res) => {
+  db.prepare('DELETE FROM cross_links WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
+});
+
+// List linkable entities by type
+app.get('/api/linkable/:type', (req, res) => {
+  const { type } = req.params;
+  let items = [];
+  if (type === 'risk') items = db.prepare('SELECT id, title as name FROM risks ORDER BY title').all();
+  else if (type === 'task') items = db.prepare('SELECT id, title as name FROM tasks ORDER BY title').all();
+  else if (type === 'requirement') items = db.prepare("SELECT id, clause || ' - ' || title || ' (' || standard || ')' as name FROM standard_requirements ORDER BY standard, sort_order").all();
+  else if (type === 'audit') items = db.prepare('SELECT id, title as name FROM audits ORDER BY title').all();
+  else if (type === 'role') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'role' ORDER BY name").all();
+  else if (type === 'process') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process' ORDER BY name").all();
+  else if (type === 'system') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'system' ORDER BY name").all();
+  else if (type === 'asset') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'asset' ORDER BY name").all();
+  else if (type === 'facility') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'facility' ORDER BY name").all();
+  else if (type === 'document') items = db.prepare('SELECT id, title as name FROM documents ORDER BY title').all();
+  else if (type === 'ncr') items = db.prepare("SELECT id, clause || ' - ' || substr(description, 1, 60) as name FROM non_conformities ORDER BY id DESC").all();
+  else if (type === 'treatment') items = db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments ORDER BY id DESC").all();
+  res.json(items);
+});
+
+// Cross-linking references endpoint (legacy for document control)
 app.get('/api/link-references', (req, res) => {
   const { module } = req.query;
   const refs = [];

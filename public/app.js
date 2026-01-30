@@ -8,6 +8,16 @@ let yearlyYear = new Date().getFullYear();
 let lastCompletionContext = null; // { completion_id, task_id }
 let yearlyData = null; // cached yearly API data
 
+// --- Sidebar Toggle ---
+function toggleSidebar() {
+  const sb = document.querySelector('.sidebar');
+  sb.classList.toggle('collapsed');
+  localStorage.setItem('sidebarCollapsed', sb.classList.contains('collapsed'));
+}
+if (localStorage.getItem('sidebarCollapsed') === 'true') {
+  document.querySelector('.sidebar').classList.add('collapsed');
+}
+
 // --- Navigation ---
 // Module toggles (expand/collapse)
 document.querySelectorAll('.module-toggle').forEach(toggle => {
@@ -67,6 +77,137 @@ async function api(url, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   return res.json();
+}
+
+// --- Cross-Link System ---
+const linkableTypes = {
+  risk: { label: 'Risk', icon: '&#9888;', canLink: ['role','process','system','asset','facility','requirement','document','task'] },
+  task: { label: 'Task', icon: '&#9881;', canLink: ['role','process','asset','facility','risk','document','requirement'] },
+  audit: { label: 'Audit', icon: '&#9998;', canLink: ['role','process','requirement','risk','document'] },
+  requirement: { label: 'Requirement', icon: '&#128220;', canLink: ['risk','task','audit','document','role','process'] },
+  role: { label: 'Role', icon: '&#128100;', canLink: ['risk','task','audit','process','system','document'] },
+  process: { label: 'Process', icon: '&#128260;', canLink: ['risk','task','audit','role','system','asset','document'] },
+  system: { label: 'System', icon: '&#128187;', canLink: ['risk','process','role','asset','document'] },
+  asset: { label: 'Asset', icon: '&#128230;', canLink: ['risk','task','process','facility','document'] },
+  facility: { label: 'Facility', icon: '&#127970;', canLink: ['risk','task','asset','document'] },
+  document: { label: 'Document', icon: '&#128196;', canLink: ['risk','task','audit','requirement','role','process','system','asset','facility'] },
+  ncr: { label: 'NCR', icon: '&#9888;', canLink: ['risk','requirement','document','role'] },
+};
+
+async function renderCrossLinks(entityType, entityId, containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const links = await api(`/api/cross-links/${entityType}/${entityId}`);
+  const allowed = linkableTypes[entityType]?.canLink || [];
+
+  const typeIcons = {};
+  for (const [k, v] of Object.entries(linkableTypes)) typeIcons[k] = v.icon;
+  const typeLabels = {};
+  for (const [k, v] of Object.entries(linkableTypes)) typeLabels[k] = v.label;
+
+  // Group links by type
+  const grouped = {};
+  for (const l of links) {
+    if (!grouped[l.type]) grouped[l.type] = [];
+    grouped[l.type].push(l);
+  }
+
+  let html = '<div class="cross-links">';
+  html += '<div class="cross-links-header"><span class="cross-links-title">&#128279; Linked Items</span>';
+  html += `<button class="btn btn-secondary btn-sm" onclick="openCrossLinkPicker('${entityType}',${entityId},'${containerId}')">+ Link</button>`;
+  html += '</div>';
+
+  if (links.length === 0) {
+    html += '<div class="cross-links-empty">No linked items yet.</div>';
+  } else {
+    for (const [type, items] of Object.entries(grouped)) {
+      html += `<div class="cross-link-group"><span class="cross-link-group-label">${typeIcons[type] || ''} ${typeLabels[type] || type}s</span>`;
+      for (const item of items) {
+        const viewTarget = getViewForType(item.type, item.id);
+        html += `<div class="cross-link-item">
+          <span class="cross-link-name"${viewTarget ? ` onclick="${viewTarget}" style="cursor:pointer;text-decoration:underline"` : ''}>${esc(item.name)}</span>
+          <button class="cross-link-remove" onclick="removeCrossLink(${item.link_id},'${entityType}',${entityId},'${containerId}')" title="Remove link">&times;</button>
+        </div>`;
+      }
+      html += '</div>';
+    }
+  }
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function getViewForType(type, id) {
+  const viewMap = {
+    risk: 'risk-identification', task: 'tasks', audit: 'audit-plan',
+    requirement: 'audit-requirements', role: 'architecture', process: 'architecture',
+    system: 'architecture', asset: 'architecture', facility: 'architecture',
+    document: 'document-control', ncr: 'audit-ncrs',
+  };
+  const view = viewMap[type];
+  return view ? `switchView('${view}')` : null;
+}
+
+async function openCrossLinkPicker(entityType, entityId, containerId) {
+  const allowed = linkableTypes[entityType]?.canLink || [];
+  // Build a modal dynamically
+  let existing = document.getElementById('cross-link-picker-modal');
+  if (!existing) {
+    existing = document.createElement('div');
+    existing.id = 'cross-link-picker-modal';
+    existing.className = 'modal hidden';
+    document.body.appendChild(existing);
+  }
+  existing.innerHTML = `
+    <div class="modal-overlay" onclick="closeCrossLinkPicker()"></div>
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h3>Link to...</h3>
+        <button class="modal-close" onclick="closeCrossLinkPicker()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>Type</label>
+        <select id="cl-pick-type" onchange="loadCrossLinkOptions()">
+          <option value="">-- Select type --</option>
+          ${allowed.map(t => `<option value="${t}">${linkableTypes[t]?.label || t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Item</label>
+        <select id="cl-pick-item"><option value="">-- Select type first --</option></select>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="closeCrossLinkPicker()">Cancel</button>
+        <button class="btn btn-primary" onclick="addCrossLink('${entityType}',${entityId},'${containerId}')">Link</button>
+      </div>
+    </div>`;
+  existing.classList.remove('hidden');
+}
+
+function closeCrossLinkPicker() {
+  const m = document.getElementById('cross-link-picker-modal');
+  if (m) m.classList.add('hidden');
+}
+
+async function loadCrossLinkOptions() {
+  const type = document.getElementById('cl-pick-type').value;
+  const sel = document.getElementById('cl-pick-item');
+  if (!type) { sel.innerHTML = '<option value="">-- Select type first --</option>'; return; }
+  const items = await api(`/api/linkable/${type}`);
+  sel.innerHTML = '<option value="">-- Select --</option>' + items.map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('');
+}
+
+async function addCrossLink(sourceType, sourceId, containerId) {
+  const targetType = document.getElementById('cl-pick-type').value;
+  const targetId = document.getElementById('cl-pick-item').value;
+  if (!targetType || !targetId) return alert('Please select a type and item');
+  await api('/api/cross-links', { method: 'POST', body: { source_type: sourceType, source_id: sourceId, target_type: targetType, target_id: parseInt(targetId) } });
+  closeCrossLinkPicker();
+  renderCrossLinks(sourceType, sourceId, containerId);
+}
+
+async function removeCrossLink(linkId, entityType, entityId, containerId) {
+  await api(`/api/cross-links/${linkId}`, { method: 'DELETE' });
+  renderCrossLinks(entityType, entityId, containerId);
 }
 
 async function ensureMeta() {
@@ -230,7 +371,9 @@ function renderTaskTable() {
     const status = t.next_due < today ? 'overdue' : t.next_due === today ? 'due-today' : 'upcoming';
     const statusLabel = status === 'overdue' ? 'Overdue' : status === 'due-today' ? 'Due Today' : 'Upcoming';
     return `<tr>
-      <td><strong>${esc(t.title)}</strong>${t.description ? '<br><small style="color:var(--text-muted)">' + esc(t.description) + '</small>' : ''}</td>
+      <td><strong>${esc(t.title)}</strong>${t.description ? '<br><small style="color:var(--text-muted)">' + esc(t.description) + '</small>' : ''}
+        <div id="task-links-${t.id}" class="task-inline-links"></div>
+      </td>
       <td>${esc(t.assignee || '-')}</td>
       <td>${esc(t.category)}</td>
       <td><span class="badge badge-${t.priority.toLowerCase()}">${t.priority}</span></td>
@@ -239,12 +382,19 @@ function renderTaskTable() {
       <td><span class="badge badge-${status}">${statusLabel}</span></td>
       <td>${actionMenu([
         { label: '&#10003; Mark Done', onclick: `openCompleteModal(${t.id})`, cls: 'success' },
+        { label: '&#128279; Links', onclick: `toggleTaskLinks(${t.id})` },
         { label: '&#9998; Edit', onclick: `openTaskModal(${t.id})` },
         'sep',
         { label: '&#128465; Delete', onclick: `deleteTask(${t.id})`, cls: 'danger' },
       ])}</td>
     </tr>`;
   }).join('');
+}
+
+function toggleTaskLinks(taskId) {
+  const el = document.getElementById(`task-links-${taskId}`);
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  renderCrossLinks('task', taskId, `task-links-${taskId}`);
 }
 
 // --- History ---
@@ -855,13 +1005,21 @@ async function loadAuditPlan() {
         ${actionMenu([
           ...(a.status === 'planned' ? [{ label: '&#9654; Start Audit', onclick: `startAudit(${a.id})`, cls: 'primary' }] : []),
           ...(a.status === 'in_progress' ? [{ label: '&#9654; Execute', onclick: `switchToExecute(${a.id})`, cls: 'success' }] : []),
+          { label: '&#128279; Links', onclick: `toggleAuditLinks(${a.id})` },
           { label: '&#9998; Edit', onclick: `openAuditModal(${a.id})` },
           'sep',
           { label: '&#128465; Delete', onclick: `deleteAudit(${a.id})`, cls: 'danger' },
         ])}
       </div>
+      <div id="audit-links-${a.id}"></div>
     </div>`;
   }).join('');
+}
+
+function toggleAuditLinks(id) {
+  const el = document.getElementById(`audit-links-${id}`);
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  renderCrossLinks('audit', id, `audit-links-${id}`);
 }
 
 function renderAuditGantt(audits) {
@@ -1343,7 +1501,9 @@ function renderNcrTable(ncrs) {
     const stBadge = n.status === 'open' ? 'badge-high' : n.status === 'in_progress' ? 'badge-medium' : 'badge-low';
     const isOverdue = n.due_date && n.due_date < today && (n.status === 'open' || n.status === 'in_progress');
     return `<tr>
-      <td><strong>${esc(n.description.substring(0, 80))}${n.description.length > 80 ? '...' : ''}</strong></td>
+      <td><strong>${esc(n.description.substring(0, 80))}${n.description.length > 80 ? '...' : ''}</strong>
+        <div id="ncr-links-${n.id}"></div>
+      </td>
       <td>${esc(n.audit_title)}</td>
       <td>${esc(n.clause || '-')}</td>
       <td><span class="badge ${sevBadge}">${n.severity}</span></td>
@@ -1354,12 +1514,19 @@ function renderNcrTable(ncrs) {
         ...(n.status === 'open' ? [{ label: '&#9654; Start', onclick: `updateNcrStatus(${n.id},'in_progress')`, cls: 'primary' }] : []),
         ...(n.status === 'in_progress' ? [{ label: '&#10003; Close', onclick: `updateNcrStatus(${n.id},'closed')`, cls: 'success' }] : []),
         ...(n.status === 'closed' ? [{ label: '&#10003; Verify', onclick: `updateNcrStatus(${n.id},'verified')`, cls: 'success' }] : []),
+        { label: '&#128279; Links', onclick: `toggleNcrLinks(${n.id})` },
         { label: '&#9998; Edit', onclick: `openNcrModal(${n.id})` },
         'sep',
         { label: '&#128465; Delete', onclick: `deleteNcr(${n.id})`, cls: 'danger' },
       ])}</td>
     </tr>`;
   }).join('');
+}
+
+function toggleNcrLinks(id) {
+  const el = document.getElementById(`ncr-links-${id}`);
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  renderCrossLinks('ncr', id, `ncr-links-${id}`);
 }
 
 async function updateNcrStatus(id, status) {
@@ -1597,16 +1764,24 @@ async function loadRequirements() {
           <span class="badge badge-low">${esc(r.standard)}</span>
           ${r.owner ? `<span class="req-audit-info">${esc(r.owner)}</span>` : ''}
           ${actionMenu([
+            { label: '&#128279; Links', onclick: `toggleReqLinks(${r.id})` },
             { label: '&#9998; Edit', onclick: `openRequirementModal(${r.id})` },
             'sep',
             { label: '&#128465; Delete', onclick: `deleteRequirement(${r.id})`, cls: 'danger' },
           ])}
         </div>
+        <div id="req-links-${r.id}"></div>
       </div>`;
     }
     html += '</div>';
   }
   list.innerHTML = html;
+}
+
+function toggleReqLinks(id) {
+  const el = document.getElementById(`req-links-${id}`);
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  renderCrossLinks('requirement', id, `req-links-${id}`);
 }
 
 async function openRequirementModal(id) {
@@ -2094,8 +2269,11 @@ async function loadRiskIdentification() {
           { label: '&#128465; Delete', onclick: `deleteRisk(${r.id})`, cls: 'danger' },
         ])}
       </div>
+      <div id="risk-links-${r.id}"></div>
     </div>`;
   }).join('');
+  // Load cross-links for each risk
+  for (const r of risks) renderCrossLinks('risk', r.id, `risk-links-${r.id}`);
 }
 
 async function openRiskModal(id) {
@@ -2595,8 +2773,10 @@ async function loadArchitecture() {
         'sep',
         { label: '&#128465; Delete', onclick: `deleteArch(${item.id})`, cls: 'danger' },
       ])}
+      <div id="arch-links-${item.id}"></div>
     </div>`;
   }).join('')}</div>`;
+  for (const item of items) renderCrossLinks(currentArchTab, item.id, `arch-links-${item.id}`);
 }
 
 async function openArchModal(id) {
@@ -2721,8 +2901,10 @@ async function loadDocumentControl() {
         ${d.review_date ? `<span class="doc-review${reviewWarning ? ' overdue' : ''}">Review: ${d.review_date}</span>` : ''}
         <span class="doc-date">Updated: ${d.updated_at.split(' ')[0]}</span>
       </div>
+      <div id="doc-links-${d.id}"></div>
     </div>`;
   }).join('')}</div>`;
+  for (const d of docs) renderCrossLinks('document', d.id, `doc-links-${d.id}`);
 }
 
 function openDocModal(id) {
