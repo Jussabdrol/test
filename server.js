@@ -317,6 +317,9 @@ try { db.exec("ALTER TABLE documents ADD COLUMN classification TEXT DEFAULT ''")
 // Migration: add linked_processes column to soa_entries (JSON array of process IDs)
 try { db.exec("ALTER TABLE soa_entries ADD COLUMN linked_processes TEXT DEFAULT '[]'"); } catch(e) { /* already exists */ }
 
+// Migration: add regulatory column to soa_entries
+try { db.exec("ALTER TABLE soa_entries ADD COLUMN regulatory INTEGER DEFAULT 0"); } catch(e) { /* already exists */ }
+
 // Ensure org_mission has at least one row
 const missionRow = db.prepare('SELECT COUNT(*) as c FROM org_mission').get();
 if (missionRow.c === 0) { db.prepare("INSERT INTO org_mission (content) VALUES ('')").run(); }
@@ -1020,6 +1023,13 @@ app.put('/api/requirements/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id));
 });
 
+// Delete all requirements for a standard
+app.delete('/api/requirements/standard/:standard', (req, res) => {
+  const standard = decodeURIComponent(req.params.standard);
+  const result = db.prepare('DELETE FROM standard_requirements WHERE standard = ?').run(standard);
+  res.json({ success: true, deleted: result.changes });
+});
+
 // Delete requirement
 app.delete('/api/requirements/:id', (req, res) => {
   const result = db.prepare('DELETE FROM standard_requirements WHERE id = ?').run(req.params.id);
@@ -1262,7 +1272,7 @@ app.delete('/api/treatments/:id', (req, res) => {
 
 app.get('/api/soa', (req, res) => {
   // Get all Annex A requirements with their SoA status
-  const reqs = db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes, soa.linked_processes
+  const reqs = db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes, soa.linked_processes, soa.regulatory
     FROM standard_requirements sr LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
     WHERE sr.standard = 'ISO 27001 Annex A'
     ORDER BY sr.sort_order, sr.clause`).all();
@@ -1288,12 +1298,13 @@ app.put('/api/soa/:requirementId', (req, res) => {
     if (implementation_status !== undefined) { fields.push('implementation_status = ?'); params.push(implementation_status); }
     if (notes !== undefined) { fields.push('notes = ?'); params.push(notes); }
     if (req.body.linked_processes !== undefined) { fields.push('linked_processes = ?'); params.push(JSON.stringify(req.body.linked_processes)); }
+    if (req.body.regulatory !== undefined) { fields.push('regulatory = ?'); params.push(req.body.regulatory ? 1 : 0); }
     fields.push("updated_at = datetime('now')");
     params.push(existing.id);
     db.prepare(`UPDATE soa_entries SET ${fields.join(', ')} WHERE id = ?`).run(...params);
   } else {
-    db.prepare('INSERT INTO soa_entries (requirement_id, applicable, justification, implementation_status, notes, linked_processes) VALUES (?, ?, ?, ?, ?, ?)').run(
-      reqId, applicable !== undefined ? (applicable ? 1 : 0) : 1, justification || '', implementation_status || 'not_implemented', notes || '', JSON.stringify(req.body.linked_processes || [])
+    db.prepare('INSERT INTO soa_entries (requirement_id, applicable, justification, implementation_status, notes, linked_processes, regulatory) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      reqId, applicable !== undefined ? (applicable ? 1 : 0) : 1, justification || '', implementation_status || 'not_implemented', notes || '', JSON.stringify(req.body.linked_processes || []), req.body.regulatory ? 1 : 0
     );
   }
   res.json({ success: true });

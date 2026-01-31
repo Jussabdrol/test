@@ -1718,7 +1718,8 @@ async function loadRequirements() {
       <option value="">All Standards</option>
       ${standards.map(s => `<option value="${esc(s)}" ${reqFilters.standard===s?'selected':''}>${esc(s)}</option>`).join('')}
     </select>
-    <span style="font-size:13px;color:var(--text-muted)">${reqs.length} requirement${reqs.length!==1?'s':''}</span>`;
+    <span style="font-size:13px;color:var(--text-muted)">${reqs.length} requirement${reqs.length!==1?'s':''}</span>
+    ${reqFilters.standard ? `<button class="btn btn-secondary btn-sm" style="margin-left:auto;color:var(--danger);border-color:var(--danger)" onclick="retireStandard('${esc(reqFilters.standard)}')">&#128465; Retire Standard</button>` : ''}`;
 
   // Group by category
   const groups = {};
@@ -1862,6 +1863,13 @@ async function saveRequirement(e) {
 async function deleteRequirement(id) {
   if (!confirm('Delete this requirement?')) return;
   await api(`/api/requirements/${id}`, { method: 'DELETE' });
+  loadRequirements();
+}
+
+async function retireStandard(standard) {
+  if (!confirm(`Remove all requirements for "${standard}"? This will also remove related SoA entries. This cannot be undone.`)) return;
+  await api(`/api/requirements/standard/${encodeURIComponent(standard)}`, { method: 'DELETE' });
+  reqFilters.standard = '';
   loadRequirements();
 }
 
@@ -2795,35 +2803,50 @@ async function loadSoA() {
   let html = '';
   for (const [cat, items] of Object.entries(groups)) {
     html += `<div class="soa-category">
-      <div class="soa-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>`;
+      <div class="soa-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>
+      <div class="soa-table">
+        <div class="soa-table-head">
+          <div class="soa-col-control">Control</div>
+          <div class="soa-col-check">Applicable</div>
+          <div class="soa-col-check">Risk</div>
+          <div class="soa-col-check">Regulatory</div>
+          <div class="soa-col-impl">Implemented</div>
+          <div class="soa-col-process">Process</div>
+        </div>`;
     for (const item of items) {
       const isApplicable = item.applicable !== 0;
       const implStatus = item.implementation_status || 'not_implemented';
-      const implBadge = implStatus === 'implemented' ? 'badge-low' : implStatus === 'partial' ? 'badge-medium' : 'badge-high';
+      const hasRisk = item.linked_treatments && item.linked_treatments.length > 0;
+      const isRegulatory = item.regulatory === 1;
       const processIds = item.linked_process_ids || [];
       const processNames = item.linked_process_names || [];
-      html += `<div class="soa-item${!isApplicable ? ' soa-na' : ''}">
-        <div class="soa-item-main">
-          <span class="req-clause">${esc(item.clause)}</span>
-          <span class="soa-title">${esc(item.title)}</span>
-        </div>
-        <div class="soa-item-controls">
-          <label class="soa-toggle">
-            <input type="checkbox" ${isApplicable ? 'checked' : ''} onchange="updateSoA(${item.id}, 'applicable', this.checked)">
-            <span class="soa-toggle-label">${isApplicable ? 'Applicable' : 'N/A'}</span>
-          </label>
-          ${isApplicable ? `<select class="soa-impl-select" onchange="updateSoA(${item.id}, 'implementation_status', this.value)">
-            <option value="not_implemented" ${implStatus==='not_implemented'?'selected':''}>Not Implemented</option>
-            <option value="partial" ${implStatus==='partial'?'selected':''}>Partial</option>
-            <option value="implemented" ${implStatus==='implemented'?'selected':''}>Implemented</option>
-          </select>` : ''}
-          ${item.linked_treatments.length > 0 ? `<span class="badge badge-low" style="font-size:10px">${item.linked_treatments.length} treatment${item.linked_treatments.length !== 1 ? 's' : ''}</span>` : ''}
-          ${isApplicable ? `<button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px" onclick="openSoAProcessPicker(${item.id}, [${processIds.join(',')}])">&#128260; ${processNames.length > 0 ? processNames.length + ' process' + (processNames.length !== 1 ? 'es' : '') : 'Link Processes'}</button>` : ''}
-        </div>
-        ${processNames.length > 0 ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:56px">Processes: ${processNames.map(n => esc(n)).join(', ')}</div>` : ''}
-      </div>`;
+      html += `<div class="soa-table-row${!isApplicable ? ' soa-na' : ''}">
+          <div class="soa-col-control">
+            <span class="req-clause">${esc(item.clause)}</span>
+            <span class="soa-title">${esc(item.title)}</span>
+          </div>
+          <div class="soa-col-check">
+            <input type="checkbox" ${isApplicable ? 'checked' : ''} onchange="updateSoA(${item.id}, 'applicable', this.checked)" title="Applicable">
+          </div>
+          <div class="soa-col-check">
+            <input type="checkbox" ${hasRisk ? 'checked' : ''} disabled title="Risk linked (auto)">
+          </div>
+          <div class="soa-col-check">
+            <input type="checkbox" ${isRegulatory ? 'checked' : ''} onchange="updateSoA(${item.id}, 'regulatory', this.checked)" title="Regulatory/contractual">
+          </div>
+          <div class="soa-col-impl">
+            ${isApplicable ? `<select class="soa-impl-select" onchange="updateSoA(${item.id}, 'implementation_status', this.value)">
+              <option value="not_implemented" ${implStatus==='not_implemented'?'selected':''}>No</option>
+              <option value="partial" ${implStatus==='partial'?'selected':''}>Partial</option>
+              <option value="implemented" ${implStatus==='implemented'?'selected':''}>Yes</option>
+            </select>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
+          </div>
+          <div class="soa-col-process">
+            ${isApplicable ? `<button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px" onclick="openSoAProcessPicker(${item.id}, [${processIds.join(',')}])">${processNames.length > 0 ? esc(processNames.join(', ')) : 'Link'}</button>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
+          </div>
+        </div>`;
     }
-    html += '</div>';
+    html += '</div></div>';
   }
   list.innerHTML = html;
 }

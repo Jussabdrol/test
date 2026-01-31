@@ -377,14 +377,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 /* Statement of Applicability */
 .soa-category { margin-bottom: 16px; }
 .soa-category-header { font-size: 14px; font-weight: 700; padding: 10px 16px; background: #f8fafc; border-radius: var(--radius) var(--radius) 0 0; border-bottom: 2px solid var(--border); }
-.soa-item { display: flex; align-items: center; padding: 10px 16px; background: var(--card-bg); border-bottom: 1px solid var(--border); box-shadow: var(--shadow); gap: 12px; }
-.soa-item:last-child { border-radius: 0 0 var(--radius) var(--radius); }
-.soa-item.soa-na { opacity: 0.5; }
-.soa-item-main { flex: 1; display: flex; gap: 8px; align-items: center; min-width: 0; }
+.soa-table { width: 100%; }
+.soa-table-head { display: grid; grid-template-columns: 1fr 80px 60px 85px 100px 140px; padding: 8px 16px; background: #eef1f6; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }
+.soa-table-row { display: grid; grid-template-columns: 1fr 80px 60px 85px 100px 140px; padding: 8px 16px; background: var(--card-bg); border-bottom: 1px solid var(--border); align-items: center; }
+.soa-table-row:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+.soa-table-row.soa-na { opacity: 0.5; }
+.soa-col-control { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.soa-col-check { display: flex; justify-content: center; align-items: center; }
+.soa-col-check input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+.soa-col-check input[type="checkbox"]:disabled { cursor: default; opacity: 0.7; }
+.soa-col-impl { display: flex; justify-content: center; align-items: center; }
+.soa-col-process { display: flex; align-items: center; min-width: 0; }
+.soa-col-process .btn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
 .soa-title { font-size: 13px; }
-.soa-item-controls { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
-.soa-toggle { display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
-.soa-toggle-label { font-size: 11px; color: var(--text-muted); }
 .soa-impl-select { padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
 
 /* Mission Control */
