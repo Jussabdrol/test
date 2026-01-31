@@ -258,7 +258,55 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE(source_type, source_id, target_type, target_id)
   );
+
+  CREATE TABLE IF NOT EXISTS threat_feeds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    tier INTEGER DEFAULT 1 CHECK(tier BETWEEN 1 AND 4),
+    enabled INTEGER DEFAULT 1,
+    last_fetched TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS threat_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feed_id INTEGER NOT NULL,
+    guid TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    link TEXT DEFAULT '',
+    pub_date TEXT DEFAULT '',
+    status TEXT DEFAULT 'new' CHECK(status IN ('new','reviewed','dismissed','risk_created')),
+    created_risk_id INTEGER DEFAULT NULL,
+    fetched_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (feed_id) REFERENCES threat_feeds(id) ON DELETE CASCADE,
+    UNIQUE(feed_id, guid)
+  );
 `);
+
+// Seed default threat feeds if none exist
+const feedCount = db.prepare('SELECT COUNT(*) as c FROM threat_feeds').get().c;
+if (feedCount === 0) {
+  const defaultFeeds = [
+    // Tier 1 - Authority
+    { name: 'CERT-EU Latest', url: 'https://cert.europa.eu/publications/security-advisories/rss', tier: 1 },
+    { name: 'NCSC-UK Advisories', url: 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml', tier: 1 },
+    { name: 'ENISA News', url: 'https://www.enisa.europa.eu/rss.xml', tier: 1 },
+    // Tier 2 - Early Warning
+    { name: 'CISA Advisories', url: 'https://www.cisa.gov/cybersecurity-advisories/all.xml', tier: 2 },
+    { name: 'US-CERT Alerts', url: 'https://www.us-cert.gov/ncas/alerts.xml', tier: 2 },
+    // Tier 3 - Context
+    { name: 'SANS ISC', url: 'https://isc.sans.edu/rssfeed_full.xml', tier: 3 },
+    { name: 'Schneier on Security', url: 'https://www.schneier.com/feed/atom/', tier: 3 },
+    { name: 'Krebs on Security', url: 'https://krebsonsecurity.com/feed/', tier: 3 },
+    // Tier 4 - Technical
+    { name: 'NVD CVE Feed', url: 'https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml', tier: 4 },
+    { name: 'Exploit-DB', url: 'https://www.exploit-db.com/rss.xml', tier: 4 },
+  ];
+  const ins = db.prepare('INSERT INTO threat_feeds (name, url, tier) VALUES (?, ?, ?)');
+  for (const f of defaultFeeds) ins.run(f.name, f.url, f.tier);
+}
 
 // Migration: add owner column if missing
 try { db.exec("ALTER TABLE standard_requirements ADD COLUMN owner TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
@@ -978,6 +1026,133 @@ app.delete('/api/requirements/:id', (req, res) => {
   if (result.changes === 0) return res.status(404).json({ error: 'Requirement not found' });
   res.json({ success: true });
 });
+
+// --- Threat Intelligence API ---
+
+// List feeds
+app.get('/api/threat-feeds', (req, res) => {
+  const feeds = db.prepare('SELECT * FROM threat_feeds ORDER BY tier, name').all();
+  for (const f of feeds) {
+    f.item_count = db.prepare('SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ?').get(f.id).c;
+    f.new_count = db.prepare("SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ? AND status = 'new'").get(f.id).c;
+  }
+  res.json(feeds);
+});
+
+// Add feed
+app.post('/api/threat-feeds', (req, res) => {
+  const { name, url, tier } = req.body;
+  if (!name || !url) return res.status(400).json({ error: 'name and url required' });
+  const result = db.prepare('INSERT INTO threat_feeds (name, url, tier) VALUES (?, ?, ?)').run(name, url, tier || 1);
+  res.status(201).json(db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(result.lastInsertRowid));
+});
+
+// Update feed
+app.put('/api/threat-feeds/:id', (req, res) => {
+  const fields = ['name', 'url', 'tier', 'enabled'];
+  const updates = []; const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  params.push(req.params.id);
+  db.prepare(`UPDATE threat_feeds SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(req.params.id));
+});
+
+// Delete feed
+app.delete('/api/threat-feeds/:id', (req, res) => {
+  db.prepare('DELETE FROM threat_feeds WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
+});
+
+// Fetch/refresh a single feed (server-side RSS proxy)
+app.post('/api/threat-feeds/:id/fetch', async (req, res) => {
+  const feed = db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(req.params.id);
+  if (!feed) return res.status(404).json({ error: 'Feed not found' });
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(feed.url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'LetTheFrameWork/1.0 ThreatIntelFetcher' }
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const text = await response.text();
+
+    // Simple XML parser for RSS/Atom - extract items
+    const items = [];
+    // Try RSS <item> format
+    const rssItems = text.match(/<item[\s>][\s\S]*?<\/item>/gi) || [];
+    for (const raw of rssItems) {
+      const title = (raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '';
+      const desc = (raw.match(/<description[^>]*>([\s\S]*?)<\/description>/i) || [])[1] || '';
+      const link = (raw.match(/<link[^>]*>([\s\S]*?)<\/link>/i) || [])[1] || '';
+      const guid = (raw.match(/<guid[^>]*>([\s\S]*?)<\/guid>/i) || [])[1] || link || title;
+      const pubDate = (raw.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i) || [])[1] || '';
+      if (title || desc) items.push({ title: stripTags(title).trim(), description: stripTags(desc).trim().substring(0, 2000), link: stripTags(link).trim(), guid: stripTags(guid).trim(), pub_date: pubDate.trim() });
+    }
+    // Try Atom <entry> format if no RSS items found
+    if (items.length === 0) {
+      const atomEntries = text.match(/<entry[\s>][\s\S]*?<\/entry>/gi) || [];
+      for (const raw of atomEntries) {
+        const title = (raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '';
+        const desc = (raw.match(/<(?:summary|content)[^>]*>([\s\S]*?)<\/(?:summary|content)>/i) || [])[1] || '';
+        const linkMatch = raw.match(/<link[^>]*href=["']([^"']+)["'][^>]*\/?>/i);
+        const link = linkMatch ? linkMatch[1] : '';
+        const idTag = (raw.match(/<id[^>]*>([\s\S]*?)<\/id>/i) || [])[1] || link || title;
+        const updated = (raw.match(/<(?:updated|published)[^>]*>([\s\S]*?)<\/(?:updated|published)>/i) || [])[1] || '';
+        if (title || desc) items.push({ title: stripTags(title).trim(), description: stripTags(desc).trim().substring(0, 2000), link: stripTags(link).trim(), guid: stripTags(idTag).trim(), pub_date: updated.trim() });
+      }
+    }
+
+    // Upsert items
+    const upsert = db.prepare(`INSERT INTO threat_items (feed_id, guid, title, description, link, pub_date) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(feed_id, guid) DO UPDATE SET title=excluded.title, description=excluded.description, link=excluded.link, pub_date=excluded.pub_date`);
+    const insertMany = db.transaction((items) => { for (const i of items) upsert.run(feed.id, i.guid || i.title, i.title, i.description, i.link, i.pub_date); });
+    insertMany(items);
+
+    // Update last_fetched
+    db.prepare("UPDATE threat_feeds SET last_fetched = datetime('now') WHERE id = ?").run(feed.id);
+
+    res.json({ success: true, count: items.length });
+  } catch (err) {
+    res.json({ success: false, error: err.message, count: 0 });
+  }
+});
+
+// Get threat items (with filters)
+app.get('/api/threat-items', (req, res) => {
+  const { feed_id, tier, status, limit: lim } = req.query;
+  let sql = `SELECT ti.*, tf.name as feed_name, tf.tier FROM threat_items ti JOIN threat_feeds tf ON ti.feed_id = tf.id WHERE tf.enabled = 1`;
+  const params = [];
+  if (feed_id) { sql += ' AND ti.feed_id = ?'; params.push(feed_id); }
+  if (tier) { sql += ' AND tf.tier = ?'; params.push(tier); }
+  if (status) { sql += ' AND ti.status = ?'; params.push(status); }
+  sql += ' ORDER BY ti.fetched_at DESC, ti.pub_date DESC';
+  if (lim) { sql += ' LIMIT ?'; params.push(parseInt(lim)); }
+  else { sql += ' LIMIT 200'; }
+  res.json(db.prepare(sql).all(...params));
+});
+
+// Update threat item status
+app.put('/api/threat-items/:id', (req, res) => {
+  const { status, created_risk_id } = req.body;
+  const updates = []; const params = [];
+  if (status) { updates.push('status = ?'); params.push(status); }
+  if (created_risk_id !== undefined) { updates.push('created_risk_id = ?'); params.push(created_risk_id); }
+  if (updates.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+  params.push(req.params.id);
+  db.prepare(`UPDATE threat_items SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(db.prepare('SELECT * FROM threat_items WHERE id = ?').get(req.params.id));
+});
+
+function stripTags(str) {
+  if (!str) return '';
+  return str.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+}
 
 // --- Risk Management API ---
 

@@ -33,6 +33,7 @@
             <span class="module-arrow">&#9662;</span>
           </a>
           <ul class="module-submenu">
+            <li><a href="#" class="nav-link" data-view="threat-intelligence">Threat Intelligence</a></li>
             <li><a href="#" class="nav-link" data-view="risk-identification">Risk Identification</a></li>
             <li><a href="#" class="nav-link" data-view="risk-treatment">Risk Treatment</a></li>
             <li><a href="#" class="nav-link" data-view="risk-soa">Statement of Applicability</a></li>
@@ -255,6 +256,132 @@
           </table>
         </div>
       </section>
+      <!-- Threat Intelligence View -->
+      <section id="view-threat-intelligence" class="view hidden">
+        <div class="view-header">
+          <h2>Threat Intelligence</h2>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" onclick="openManageFeedsModal()">Manage Feeds</button>
+            <button class="btn btn-primary" onclick="refreshAllFeeds()">Refresh Feeds</button>
+          </div>
+        </div>
+        <div id="ti-stats"></div>
+        <div class="filters" id="ti-filters-bar"></div>
+        <div id="ti-feed-list"></div>
+      </section>
+
+      <!-- Threat Intelligence: Manage Feeds Modal -->
+      <div id="ti-feeds-modal" class="modal hidden">
+        <div class="modal-overlay" onclick="closeManageFeedsModal()"></div>
+        <div class="modal-content" style="width:640px">
+          <div class="modal-header">
+            <h3>Manage Threat Feeds</h3>
+            <button class="modal-close" onclick="closeManageFeedsModal()">&times;</button>
+          </div>
+          <div id="ti-feeds-list-manage"></div>
+          <h4 style="margin-top:16px;font-size:14px">Add New Feed</h4>
+          <form id="ti-feed-form" onsubmit="saveTiFeed(event)">
+            <input type="hidden" id="ti-feed-id">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="ti-feed-name">Feed Name *</label>
+                <input type="text" id="ti-feed-name" required placeholder="e.g. CISA Advisories">
+              </div>
+              <div class="form-group">
+                <label for="ti-feed-tier">Tier</label>
+                <select id="ti-feed-tier">
+                  <option value="1">Tier 1 - Authority</option>
+                  <option value="2">Tier 2 - Early Warning</option>
+                  <option value="3">Tier 3 - Context</option>
+                  <option value="4">Tier 4 - Technical</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="ti-feed-url">RSS / Atom Feed URL *</label>
+              <input type="url" id="ti-feed-url" required placeholder="https://example.com/feed.xml">
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" onclick="document.getElementById('ti-feed-form').reset();document.getElementById('ti-feed-id').value=''">Clear</button>
+              <button type="submit" class="btn btn-primary">Save Feed</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Threat Intelligence: Create Risk from Threat Modal -->
+      <div id="ti-risk-modal" class="modal hidden">
+        <div class="modal-overlay" onclick="closeTiRiskModal()"></div>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Create Risk from Threat</h3>
+            <button class="modal-close" onclick="closeTiRiskModal()">&times;</button>
+          </div>
+          <form id="ti-risk-form" onsubmit="saveTiRisk(event)">
+            <div class="form-group">
+              <label for="ti-risk-title">Risk Title *</label>
+              <input type="text" id="ti-risk-title" required>
+            </div>
+            <div class="form-group">
+              <label for="ti-risk-description">Description</label>
+              <textarea id="ti-risk-description" rows="4"></textarea>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="ti-risk-category">Category</label>
+                <input type="text" id="ti-risk-category" value="Information Security" list="ti-risk-cat-list">
+                <datalist id="ti-risk-cat-list">
+                  <option value="Information Security">
+                  <option value="Operational">
+                  <option value="Compliance">
+                  <option value="Technology">
+                </datalist>
+              </div>
+              <div class="form-group">
+                <label for="ti-risk-source">Source</label>
+                <input type="text" id="ti-risk-source" readonly>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="ti-risk-threat">Threat</label>
+                <input type="text" id="ti-risk-threat">
+              </div>
+              <div class="form-group">
+                <label for="ti-risk-likelihood">Likelihood (1-5)</label>
+                <select id="ti-risk-likelihood">
+                  <option value="1">1 - Rare</option>
+                  <option value="2">2 - Unlikely</option>
+                  <option value="3" selected>3 - Possible</option>
+                  <option value="4">4 - Likely</option>
+                  <option value="5">5 - Almost Certain</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="ti-risk-vulnerability">Vulnerability</label>
+                <input type="text" id="ti-risk-vulnerability" placeholder="What weakness could be exploited?">
+              </div>
+              <div class="form-group">
+                <label for="ti-risk-impact">Impact (1-5)</label>
+                <select id="ti-risk-impact">
+                  <option value="1">1 - Negligible</option>
+                  <option value="2">2 - Minor</option>
+                  <option value="3" selected>3 - Moderate</option>
+                  <option value="4">4 - Major</option>
+                  <option value="5">5 - Severe</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" onclick="closeTiRiskModal()">Cancel</button>
+              <button type="submit" class="btn btn-primary">Create Risk</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
       <!-- Risk Identification View -->
       <section id="view-risk-identification" class="view hidden">
         <div class="view-header">
