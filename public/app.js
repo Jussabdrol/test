@@ -23,9 +23,22 @@ if (localStorage.getItem('sidebarCollapsed') === 'true') {
 document.querySelectorAll('.module-toggle').forEach(toggle => {
   toggle.addEventListener('click', e => {
     e.preventDefault();
-    const submenu = toggle.nextElementSibling;
-    submenu.classList.toggle('open');
-    toggle.classList.toggle('collapsed');
+    const sb = document.querySelector('.sidebar');
+    if (sb.classList.contains('collapsed')) {
+      // Expand sidebar and open this module's submenu
+      sb.classList.remove('collapsed');
+      localStorage.setItem('sidebarCollapsed', 'false');
+      // Close all submenus, open this one
+      document.querySelectorAll('.module-submenu').forEach(s => s.classList.remove('open'));
+      document.querySelectorAll('.module-toggle').forEach(t => t.classList.add('collapsed'));
+      const submenu = toggle.nextElementSibling;
+      submenu.classList.add('open');
+      toggle.classList.remove('collapsed');
+    } else {
+      const submenu = toggle.nextElementSibling;
+      submenu.classList.toggle('open');
+      toggle.classList.toggle('collapsed');
+    }
   });
 });
 
@@ -137,11 +150,13 @@ async function renderCrossLinks(entityType, entityId, containerId) {
 }
 
 function getViewForType(type, id) {
+  const archTypes = ['role','process','system','asset','facility'];
+  if (archTypes.includes(type)) {
+    return `currentArchTab='${type}';switchView('architecture')`;
+  }
   const viewMap = {
     risk: 'risk-identification', task: 'tasks', audit: 'audit-plan',
-    requirement: 'audit-requirements', role: 'architecture', process: 'architecture',
-    system: 'architecture', asset: 'architecture', facility: 'architecture',
-    document: 'document-control', ncr: 'audit-ncrs',
+    requirement: 'audit-requirements', document: 'document-control', ncr: 'audit-ncrs',
   };
   const view = viewMap[type];
   return view ? `switchView('${view}')` : null;

@@ -29,7 +29,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .sidebar.collapsed .logo h1,
 .sidebar.collapsed .module-submenu,
 .sidebar.collapsed .module-arrow,
-.sidebar.collapsed .module-toggle span:not(.module-icon),
+.sidebar.collapsed .module-text,
 .sidebar.collapsed .sidebar-toggle-label { display: none; }
 .sidebar.collapsed .logo { justify-content: center; padding: 0; margin-bottom: 20px; }
 .sidebar.collapsed .module-toggle { justify-content: center; padding: 10px 0; }
