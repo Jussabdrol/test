@@ -1077,6 +1077,7 @@
             </select>
           </div>
         </div>
+        <div id="arch-extra-fields"></div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeArchModal()">Cancel</button>
           <button type="submit" class="btn btn-primary">Save</button>
@@ -1132,6 +1133,22 @@
             </select>
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="doc-classification">Classification</label>
+            <select id="doc-classification">
+              <option value="">-- None --</option>
+              <option value="public">Public</option>
+              <option value="internal">Internal</option>
+              <option value="confidential">Confidential</option>
+              <option value="restricted">Restricted</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="doc-review-date">Review Date</label>
+            <input type="date" id="doc-review-date">
+          </div>
+        </div>
         <div class="form-group">
           <label for="doc-description">Description</label>
           <textarea id="doc-description" rows="2" placeholder="Brief description of this document"></textarea>
@@ -1155,10 +1172,6 @@
           <select id="doc-linked-ref">
             <option value="">-- None --</option>
           </select>
-        </div>
-        <div class="form-group">
-          <label for="doc-review-date">Next Review Date</label>
-          <input type="date" id="doc-review-date">
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeDocModal()">Cancel</button>

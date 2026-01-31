@@ -303,7 +303,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .action-menu { position: relative; display: inline-flex; }
 .action-menu-toggle { background: none; border: 1px solid var(--border); border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; color: var(--text-muted); transition: background .15s, border-color .15s; }
 .action-menu-toggle:hover { background: #f1f5f9; border-color: #94a3b8; color: var(--text); }
-.action-menu-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: 4px; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,.12); min-width: 150px; z-index: 50; overflow: hidden; }
+.action-menu-dropdown { display: none; position: fixed; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,.12); min-width: 150px; z-index: 9999; overflow: hidden; }
 .action-menu.open .action-menu-dropdown { display: block; }
 .action-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 14px; border: none; background: none; font-size: 13px; font-family: inherit; cursor: pointer; color: var(--text); text-align: left; transition: background .1s; }
 .action-menu-item:hover { background: #f1f5f9; }
@@ -435,3 +435,5 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .cross-link-remove:hover { color: var(--danger); }
 .task-inline-links:empty { display: none; }
 .task-inline-links .cross-links { margin-top: 8px; font-size: 12px; }
+.cross-links-body.collapsed { display: none; }
+.cl-toggle-icon { font-size: 14px; margin-left: 4px; }

@@ -263,6 +263,12 @@ db.exec(`
 // Migration: add owner column if missing
 try { db.exec("ALTER TABLE standard_requirements ADD COLUMN owner TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
 
+// Migration: add classification column to documents
+try { db.exec("ALTER TABLE documents ADD COLUMN classification TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
+
+// Migration: add linked_processes column to soa_entries (JSON array of process IDs)
+try { db.exec("ALTER TABLE soa_entries ADD COLUMN linked_processes TEXT DEFAULT '[]'"); } catch(e) { /* already exists */ }
+
 // Ensure org_mission has at least one row
 const missionRow = db.prepare('SELECT COUNT(*) as c FROM org_mission').get();
 if (missionRow.c === 0) { db.prepare("INSERT INTO org_mission (content) VALUES ('')").run(); }
@@ -1081,13 +1087,16 @@ app.delete('/api/treatments/:id', (req, res) => {
 
 app.get('/api/soa', (req, res) => {
   // Get all Annex A requirements with their SoA status
-  const reqs = db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes
+  const reqs = db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes, soa.linked_processes
     FROM standard_requirements sr LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
     WHERE sr.standard = 'ISO 27001 Annex A'
     ORDER BY sr.sort_order, sr.clause`).all();
   // Attach linked risk treatments
+  const allProcesses = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process'").all();
   for (const r of reqs) {
     r.linked_treatments = db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ?`).all(r.id);
+    try { r.linked_process_ids = JSON.parse(r.linked_processes || '[]'); } catch(e) { r.linked_process_ids = []; }
+    r.linked_process_names = r.linked_process_ids.map(pid => { const p = allProcesses.find(x => x.id === pid); return p ? p.name : null; }).filter(Boolean);
   }
   res.json(reqs);
 });
@@ -1103,12 +1112,13 @@ app.put('/api/soa/:requirementId', (req, res) => {
     if (justification !== undefined) { fields.push('justification = ?'); params.push(justification); }
     if (implementation_status !== undefined) { fields.push('implementation_status = ?'); params.push(implementation_status); }
     if (notes !== undefined) { fields.push('notes = ?'); params.push(notes); }
+    if (req.body.linked_processes !== undefined) { fields.push('linked_processes = ?'); params.push(JSON.stringify(req.body.linked_processes)); }
     fields.push("updated_at = datetime('now')");
     params.push(existing.id);
     db.prepare(`UPDATE soa_entries SET ${fields.join(', ')} WHERE id = ?`).run(...params);
   } else {
-    db.prepare('INSERT INTO soa_entries (requirement_id, applicable, justification, implementation_status, notes) VALUES (?, ?, ?, ?, ?)').run(
-      reqId, applicable !== undefined ? (applicable ? 1 : 0) : 1, justification || '', implementation_status || 'not_implemented', notes || ''
+    db.prepare('INSERT INTO soa_entries (requirement_id, applicable, justification, implementation_status, notes, linked_processes) VALUES (?, ?, ?, ?, ?, ?)').run(
+      reqId, applicable !== undefined ? (applicable ? 1 : 0) : 1, justification || '', implementation_status || 'not_implemented', notes || '', JSON.stringify(req.body.linked_processes || [])
     );
   }
   res.json({ success: true });
@@ -1245,13 +1255,13 @@ app.get('/api/documents', (req, res) => {
 });
 
 app.post('/api/documents', upload.single('file'), (req, res) => {
-  const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date } = req.body;
+  const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date, classification } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
   const file = req.file;
-  const result = db.prepare(`INSERT INTO documents (title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  const result = db.prepare(`INSERT INTO documents (title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     title, description || '', doc_type || 'policy', version || '1.0', owner || '', status || 'draft',
     file ? file.originalname : '', file ? file.filename : '', file ? file.size : 0, file ? file.mimetype : '',
-    linked_module || '', linked_ref_type || '', linked_ref_id || null, review_date || null
+    linked_module || '', linked_ref_type || '', linked_ref_id || null, review_date || null, classification || ''
   );
   res.status(201).json(db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -1259,14 +1269,14 @@ app.post('/api/documents', upload.single('file'), (req, res) => {
 app.put('/api/documents/:id', upload.single('file'), (req, res) => {
   const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Document not found' });
-  const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date } = req.body;
+  const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date, classification } = req.body;
   const file = req.file;
   // If new file uploaded, delete old one
   if (file && existing.file_path) {
     const oldPath = path.join(uploadsDir, existing.file_path);
     if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
   }
-  db.prepare(`UPDATE documents SET title=?, description=?, doc_type=?, version=?, owner=?, status=?, file_name=?, file_path=?, file_size=?, mime_type=?, linked_module=?, linked_ref_type=?, linked_ref_id=?, review_date=?, updated_at=datetime('now') WHERE id=?`).run(
+  db.prepare(`UPDATE documents SET title=?, description=?, doc_type=?, version=?, owner=?, status=?, file_name=?, file_path=?, file_size=?, mime_type=?, linked_module=?, linked_ref_type=?, linked_ref_id=?, review_date=?, classification=?, updated_at=datetime('now') WHERE id=?`).run(
     title || existing.title, description !== undefined ? description : existing.description,
     doc_type || existing.doc_type, version || existing.version, owner !== undefined ? owner : existing.owner,
     status || existing.status,
@@ -1276,6 +1286,7 @@ app.put('/api/documents/:id', upload.single('file'), (req, res) => {
     linked_ref_type !== undefined ? linked_ref_type : existing.linked_ref_type,
     linked_ref_id !== undefined ? (linked_ref_id || null) : existing.linked_ref_id,
     review_date !== undefined ? (review_date || null) : existing.review_date,
+    classification !== undefined ? classification : (existing.classification || ''),
     req.params.id
   );
   res.json(db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id));

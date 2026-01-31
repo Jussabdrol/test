@@ -125,10 +125,13 @@ async function renderCrossLinks(entityType, entityId, containerId) {
     grouped[l.type].push(l);
   }
 
+  const collapseId = `cl-collapse-${entityType}-${entityId}`;
   let html = '<div class="cross-links">';
-  html += '<div class="cross-links-header"><span class="cross-links-title">&#128279; Linked Items</span>';
+  html += '<div class="cross-links-header">';
+  html += `<span class="cross-links-title" style="cursor:pointer" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">&#128279; Linked Items (${links.length}) <span class="cl-toggle-icon">−</span></span>`;
   html += `<button class="btn btn-secondary btn-sm" onclick="openCrossLinkPicker('${entityType}',${entityId},'${containerId}')">+ Link</button>`;
   html += '</div>';
+  html += `<div id="${collapseId}" class="cross-links-body collapsed">`;
 
   if (links.length === 0) {
     html += '<div class="cross-links-empty">No linked items yet.</div>';
@@ -145,7 +148,7 @@ async function renderCrossLinks(entityType, entityId, containerId) {
       html += '</div>';
     }
   }
-  html += '</div>';
+  html += '</div></div>';
   container.innerHTML = html;
 }
 
@@ -2189,7 +2192,21 @@ function toggleMenu(btn) {
   const menu = btn.closest('.action-menu');
   const wasOpen = menu.classList.contains('open');
   closeAllMenus();
-  if (!wasOpen) menu.classList.add('open');
+  if (!wasOpen) {
+    menu.classList.add('open');
+    const dd = menu.querySelector('.action-menu-dropdown');
+    const rect = btn.getBoundingClientRect();
+    dd.style.top = (rect.bottom + 4) + 'px';
+    dd.style.left = 'auto';
+    dd.style.right = (window.innerWidth - rect.right) + 'px';
+    // If dropdown goes below viewport, show above instead
+    requestAnimationFrame(() => {
+      const ddRect = dd.getBoundingClientRect();
+      if (ddRect.bottom > window.innerHeight) {
+        dd.style.top = (rect.top - ddRect.height - 4) + 'px';
+      }
+    });
+  }
 }
 
 function closeAllMenus() {
@@ -2500,8 +2517,11 @@ async function deleteTreatment(id) {
 }
 
 // --- Statement of Applicability ---
+let soaProcesses = [];
+
 async function loadSoA() {
   const data = await api('/api/soa');
+  soaProcesses = await api('/api/architecture?arch_type=process');
   const summary = document.getElementById('soa-summary');
   const list = document.getElementById('soa-list');
 
@@ -2541,6 +2561,8 @@ async function loadSoA() {
       const isApplicable = item.applicable !== 0;
       const implStatus = item.implementation_status || 'not_implemented';
       const implBadge = implStatus === 'implemented' ? 'badge-low' : implStatus === 'partial' ? 'badge-medium' : 'badge-high';
+      const processIds = item.linked_process_ids || [];
+      const processNames = item.linked_process_names || [];
       html += `<div class="soa-item${!isApplicable ? ' soa-na' : ''}">
         <div class="soa-item-main">
           <span class="req-clause">${esc(item.clause)}</span>
@@ -2557,12 +2579,58 @@ async function loadSoA() {
             <option value="implemented" ${implStatus==='implemented'?'selected':''}>Implemented</option>
           </select>` : ''}
           ${item.linked_treatments.length > 0 ? `<span class="badge badge-low" style="font-size:10px">${item.linked_treatments.length} treatment${item.linked_treatments.length !== 1 ? 's' : ''}</span>` : ''}
+          ${isApplicable ? `<button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px" onclick="openSoAProcessPicker(${item.id}, [${processIds.join(',')}])">&#128260; ${processNames.length > 0 ? processNames.length + ' process' + (processNames.length !== 1 ? 'es' : '') : 'Link Processes'}</button>` : ''}
         </div>
+        ${processNames.length > 0 ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding-left:56px">Processes: ${processNames.map(n => esc(n)).join(', ')}</div>` : ''}
       </div>`;
     }
     html += '</div>';
   }
   list.innerHTML = html;
+}
+
+function openSoAProcessPicker(requirementId, currentIds) {
+  let modal = document.getElementById('soa-process-picker-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'soa-process-picker-modal';
+    modal.className = 'modal hidden';
+    document.body.appendChild(modal);
+  }
+  const processCheckboxes = soaProcesses.map(p =>
+    `<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px">
+      <input type="checkbox" name="soa-proc" value="${p.id}" ${currentIds.includes(p.id) ? 'checked' : ''}>
+      ${esc(p.name)}${p.owner ? ' <span style="color:var(--text-muted);font-size:11px">(' + esc(p.owner) + ')</span>' : ''}
+    </label>`
+  ).join('');
+  modal.innerHTML = `
+    <div class="modal-overlay" onclick="closeSoAProcessPicker()"></div>
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h3>Link Processes</h3>
+        <button class="modal-close" onclick="closeSoAProcessPicker()">&times;</button>
+      </div>
+      <div style="max-height:300px;overflow-y:auto;padding:8px 0">
+        ${soaProcesses.length === 0 ? '<div class="empty-state">No processes defined. Add processes in the Architecture view first.</div>' : processCheckboxes}
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="closeSoAProcessPicker()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveSoAProcesses(${requirementId})">Save</button>
+      </div>
+    </div>`;
+  modal.classList.remove('hidden');
+}
+
+function closeSoAProcessPicker() {
+  const m = document.getElementById('soa-process-picker-modal');
+  if (m) m.classList.add('hidden');
+}
+
+async function saveSoAProcesses(requirementId) {
+  const ids = [...document.querySelectorAll('#soa-process-picker-modal input[name="soa-proc"]:checked')].map(cb => parseInt(cb.value));
+  await api(`/api/soa/${requirementId}`, { method: 'PUT', body: { linked_processes: ids } });
+  closeSoAProcessPicker();
+  loadSoA();
 }
 
 async function updateSoA(requirementId, field, value) {
@@ -2774,14 +2842,31 @@ async function loadArchitecture() {
   }
   list.innerHTML = `<div class="arch-items">${items.map(item => {
     const stBadge = item.status === 'active' ? 'badge-low' : item.status === 'planned' ? 'badge-medium' : 'badge-inactive';
+    let meta = {};
+    try { meta = JSON.parse(item.metadata || '{}'); } catch(e) {}
+    let extraHtml = '';
+    if (item.arch_type === 'role' && (meta.contact_name || meta.contact_email || meta.contact_phone)) {
+      extraHtml = `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+        ${meta.contact_name ? `<span>&#128100; ${esc(meta.contact_name)}</span>` : ''}
+        ${meta.contact_email ? `<span> &middot; &#9993; ${esc(meta.contact_email)}</span>` : ''}
+        ${meta.contact_phone ? `<span> &middot; &#128222; ${esc(meta.contact_phone)}</span>` : ''}
+      </div>`;
+    } else if (item.arch_type === 'system' && meta.criticality) {
+      const critBadge = meta.criticality === 'critical' ? 'badge-critical' : meta.criticality === 'high' ? 'badge-high' : meta.criticality === 'medium' ? 'badge-medium' : 'badge-low';
+      extraHtml = `<span class="badge ${critBadge}" style="margin-left:6px">${meta.criticality} criticality</span>`;
+    } else if (item.arch_type === 'facility' && meta.address) {
+      extraHtml = `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">&#127968; ${esc(meta.address)}</div>`;
+    }
     return `<div class="arch-item">
       <div class="arch-item-main">
         <h4>${esc(item.name)}</h4>
         ${item.description ? `<p style="font-size:13px;color:var(--text-muted);margin:4px 0">${esc(item.description)}</p>` : ''}
-        <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text-muted)">
+        <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text-muted);flex-wrap:wrap">
           ${item.owner ? `<span>Owner: ${esc(item.owner)}</span>` : ''}
           <span class="badge ${stBadge}">${item.status}</span>
+          ${item.arch_type === 'system' ? extraHtml : ''}
         </div>
+        ${item.arch_type !== 'system' ? extraHtml : ''}
       </div>
       ${actionMenu([
         { label: '&#9998; Edit', onclick: `openArchModal(${item.id})` },
@@ -2800,6 +2885,7 @@ async function openArchModal(id) {
   document.getElementById('arch-modal-title').textContent = 'New Item';
   document.getElementById('arch-type').value = currentArchTab;
 
+  let metadata = {};
   if (id) {
     const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
     const item = items.find(x => x.id === id);
@@ -2811,8 +2897,36 @@ async function openArchModal(id) {
       document.getElementById('arch-description').value = item.description;
       document.getElementById('arch-owner').value = item.owner;
       document.getElementById('arch-status').value = item.status;
+      try { metadata = JSON.parse(item.metadata || '{}'); } catch(e) { metadata = {}; }
     }
   }
+
+  // Render type-specific fields
+  const extraFields = document.getElementById('arch-extra-fields');
+  const archType = document.getElementById('arch-type').value;
+  if (archType === 'role') {
+    extraFields.innerHTML = `
+      <div class="form-group"><label>Contact Name</label><input type="text" id="arch-contact-name" value="${esc(metadata.contact_name || '')}" placeholder="Full name of person in this role"></div>
+      <div class="form-group"><label>Contact Email</label><input type="email" id="arch-contact-email" value="${esc(metadata.contact_email || '')}" placeholder="Email address"></div>
+      <div class="form-group"><label>Contact Phone</label><input type="text" id="arch-contact-phone" value="${esc(metadata.contact_phone || '')}" placeholder="Phone number"></div>`;
+  } else if (archType === 'system') {
+    extraFields.innerHTML = `
+      <div class="form-group"><label>Criticality</label>
+        <select id="arch-criticality">
+          <option value="" ${!metadata.criticality?'selected':''}>-- Select --</option>
+          <option value="critical" ${metadata.criticality==='critical'?'selected':''}>Critical</option>
+          <option value="high" ${metadata.criticality==='high'?'selected':''}>High</option>
+          <option value="medium" ${metadata.criticality==='medium'?'selected':''}>Medium</option>
+          <option value="low" ${metadata.criticality==='low'?'selected':''}>Low</option>
+        </select>
+      </div>`;
+  } else if (archType === 'facility') {
+    extraFields.innerHTML = `
+      <div class="form-group"><label>Address</label><textarea id="arch-address" rows="2" placeholder="Street address, city, country">${esc(metadata.address || '')}</textarea></div>`;
+  } else {
+    extraFields.innerHTML = '';
+  }
+
   document.getElementById('arch-modal').classList.remove('hidden');
 }
 function closeArchModal() { document.getElementById('arch-modal').classList.add('hidden'); }
@@ -2820,12 +2934,29 @@ function closeArchModal() { document.getElementById('arch-modal').classList.add(
 async function saveArch(e) {
   e.preventDefault();
   const id = document.getElementById('arch-id').value;
+  const archType = document.getElementById('arch-type').value;
+  const metadata = {};
+  if (archType === 'role') {
+    const cn = document.getElementById('arch-contact-name');
+    const ce = document.getElementById('arch-contact-email');
+    const cp = document.getElementById('arch-contact-phone');
+    if (cn) metadata.contact_name = cn.value;
+    if (ce) metadata.contact_email = ce.value;
+    if (cp) metadata.contact_phone = cp.value;
+  } else if (archType === 'system') {
+    const cr = document.getElementById('arch-criticality');
+    if (cr) metadata.criticality = cr.value;
+  } else if (archType === 'facility') {
+    const addr = document.getElementById('arch-address');
+    if (addr) metadata.address = addr.value;
+  }
   const body = {
-    arch_type: document.getElementById('arch-type').value,
+    arch_type: archType,
     name: document.getElementById('arch-name').value,
     description: document.getElementById('arch-description').value,
     owner: document.getElementById('arch-owner').value,
     status: document.getElementById('arch-status').value,
+    metadata: JSON.stringify(metadata),
   };
   if (id) await api(`/api/architecture/${id}`, { method: 'PUT', body });
   else await api('/api/architecture', { method: 'POST', body });
@@ -2898,6 +3029,7 @@ async function loadDocumentControl() {
           <div class="doc-meta">
             <span class="badge ${statusBadge(d.status)}">${d.status}</span>
             <span class="badge badge-inactive">${docTypeLabels[d.doc_type] || d.doc_type}</span>
+            ${d.classification ? `<span class="badge ${d.classification === 'restricted' ? 'badge-critical' : d.classification === 'confidential' ? 'badge-high' : d.classification === 'internal' ? 'badge-medium' : 'badge-low'}">${d.classification}</span>` : ''}
             <span>v${esc(d.version)}</span>
             ${d.owner ? `<span>Owner: ${esc(d.owner)}</span>` : ''}
           </div>
@@ -2942,6 +3074,7 @@ function openDocModal(id) {
       document.getElementById('doc-description').value = d.description;
       document.getElementById('doc-linked-module').value = d.linked_module;
       document.getElementById('doc-review-date').value = d.review_date || '';
+      document.getElementById('doc-classification').value = d.classification || '';
       if (d.linked_module) {
         populateDocRefs(d.linked_module).then(() => {
           if (d.linked_ref_id) document.getElementById('doc-linked-ref').value = `${d.linked_ref_type}:${d.linked_ref_id}`;
@@ -2985,6 +3118,7 @@ async function saveDocument(e) {
   formData.append('description', document.getElementById('doc-description').value);
   formData.append('linked_module', document.getElementById('doc-linked-module').value);
   formData.append('review_date', document.getElementById('doc-review-date').value);
+  formData.append('classification', document.getElementById('doc-classification').value);
 
   const refVal = document.getElementById('doc-linked-ref').value;
   if (refVal) {
