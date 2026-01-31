@@ -1144,12 +1144,17 @@ async function openAuditModal(id) {
   document.getElementById('audit-status-group').classList.add('hidden');
   document.getElementById('audit-summary-group').classList.add('hidden');
 
+  // Dynamically populate standard dropdown from active requirements
+  const activeStandards = await api('/api/requirements/standards');
+  const stdSelect = document.getElementById('audit-standard');
+  let editStandard = null;
+
   if (id) {
     const a = await api(`/api/audits/${id}`);
+    editStandard = a.standard;
     document.getElementById('audit-modal-title').textContent = 'Edit Audit';
     document.getElementById('audit-id').value = a.id;
     document.getElementById('audit-title').value = a.title;
-    document.getElementById('audit-standard').value = a.standard;
     document.getElementById('audit-scope').value = a.scope;
     document.getElementById('audit-lead').value = a.lead_auditor;
     document.getElementById('audit-team').value = a.audit_team;
@@ -1159,6 +1164,17 @@ async function openAuditModal(id) {
     document.getElementById('audit-status-group').classList.remove('hidden');
     document.getElementById('audit-summary-group').classList.remove('hidden');
   }
+
+  // Build options: active standards + the audit's own standard if retired
+  const optionStandards = [...activeStandards];
+  if (editStandard && !optionStandards.includes(editStandard)) {
+    optionStandards.push(editStandard);
+  }
+  stdSelect.innerHTML = optionStandards.length === 0
+    ? '<option value="">No standards available</option>'
+    : optionStandards.map(s => `<option value="${esc(s)}"${!activeStandards.includes(s) ? ' disabled' : ''}>${esc(s)}${!activeStandards.includes(s) ? ' (retired)' : ''}</option>`).join('');
+
+  if (editStandard) stdSelect.value = editStandard;
 
   // Load requirements picker based on selected standard
   await populateAuditReqPicker(id);

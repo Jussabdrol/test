@@ -1023,9 +1023,11 @@ app.put('/api/requirements/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id));
 });
 
-// Delete all requirements for a standard
+// Delete all requirements for a standard (retire)
 app.delete('/api/requirements/standard/:standard', (req, res) => {
   const standard = decodeURIComponent(req.params.standard);
+  // Clean up SoA entries for requirements of this standard (cascade should handle, but explicit for safety)
+  db.prepare(`DELETE FROM soa_entries WHERE requirement_id IN (SELECT id FROM standard_requirements WHERE standard = ?)`).run(standard);
   const result = db.prepare('DELETE FROM standard_requirements WHERE standard = ?').run(standard);
   res.json({ success: true, deleted: result.changes });
 });
