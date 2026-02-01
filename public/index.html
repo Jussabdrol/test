@@ -488,13 +488,17 @@
           </div>
         </div>
         <div class="form-group">
-          <label for="audit-scope">Scope</label>
+          <label for="audit-scope">Scope Description</label>
           <textarea id="audit-scope" rows="2" placeholder="Departments, processes, or clauses to audit"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Scope — Processes</label>
+          <div id="audit-scope-processes" class="arch-picker-wrap"></div>
         </div>
         <div class="form-row">
           <div class="form-group">
             <label for="audit-lead">Lead Auditor</label>
-            <input type="text" id="audit-lead" placeholder="Lead auditor name">
+            <select id="audit-lead"><option value="">-- Select Role --</option></select>
           </div>
           <div class="form-group">
             <label for="audit-team">Audit Team</label>
@@ -942,17 +946,27 @@
           </div>
           <div class="form-group">
             <label for="risk-owner">Risk Owner</label>
-            <input type="text" id="risk-owner" placeholder="e.g. IT Manager">
+            <select id="risk-owner"><option value="">-- Select Role --</option></select>
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label for="risk-asset">Asset</label>
-            <input type="text" id="risk-asset" placeholder="What asset is at risk?">
+            <label for="risk-asset">Asset / System</label>
+            <select id="risk-asset"><option value="">-- Select --</option></select>
           </div>
           <div class="form-group">
             <label for="risk-source">Source</label>
             <input type="text" id="risk-source" placeholder="Source of the risk">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="risk-process">Linked Process</label>
+            <select id="risk-process"><option value="">-- None --</option></select>
+          </div>
+          <div class="form-group">
+            <label for="risk-facility">Linked Facility</label>
+            <select id="risk-facility"><option value="">-- None --</option></select>
           </div>
         </div>
         <div class="form-row">
@@ -1044,7 +1058,7 @@
         <div class="form-row">
           <div class="form-group">
             <label for="treatment-responsible">Responsible</label>
-            <input type="text" id="treatment-responsible" placeholder="Who is responsible?">
+            <select id="treatment-responsible"><option value="">-- Select Role --</option></select>
           </div>
           <div class="form-group">
             <label for="treatment-due-date">Due Date</label>

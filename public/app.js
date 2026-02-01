@@ -1145,9 +1145,23 @@ async function openAuditModal(id) {
   document.getElementById('audit-summary-group').classList.add('hidden');
 
   // Dynamically populate standard dropdown from active requirements
-  const activeStandards = await api('/api/requirements/standards');
+  const [activeStandards, archRoles, archProcesses] = await Promise.all([
+    api('/api/requirements/standards'),
+    api('/api/architecture?arch_type=role'),
+    api('/api/architecture?arch_type=process'),
+  ]);
   const stdSelect = document.getElementById('audit-standard');
   let editStandard = null;
+
+  // Populate lead auditor dropdown from roles
+  const leadSel = document.getElementById('audit-lead');
+  leadSel.innerHTML = '<option value="">-- Select Role --</option>' + archRoles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+
+  // Populate scope processes as checkboxes
+  const scopeWrap = document.getElementById('audit-scope-processes');
+  scopeWrap.innerHTML = archProcesses.length === 0
+    ? '<span style="font-size:12px;color:var(--text-muted)">No processes defined in Architecture.</span>'
+    : archProcesses.map(p => `<label class="arch-picker-item"><input type="checkbox" name="audit-scope-proc" value="${p.id}" data-name="${esc(p.name)}"> ${esc(p.name)}</label>`).join('');
 
   if (id) {
     const a = await api(`/api/audits/${id}`);
@@ -1156,8 +1170,15 @@ async function openAuditModal(id) {
     document.getElementById('audit-id').value = a.id;
     document.getElementById('audit-title').value = a.title;
     document.getElementById('audit-scope').value = a.scope;
-    document.getElementById('audit-lead').value = a.lead_auditor;
+    leadSel.value = a.lead_auditor || '';
     document.getElementById('audit-team').value = a.audit_team;
+
+    // Check scope processes from cross-links
+    const auditLinks = await api(`/api/cross-links/audit/${id}`);
+    auditLinks.filter(l => l.type === 'process').forEach(l => {
+      const cb = scopeWrap.querySelector(`input[value="${l.id}"]`);
+      if (cb) cb.checked = true;
+    });
     document.getElementById('audit-planned-date').value = a.planned_date || '';
     document.getElementById('audit-status-field').value = a.status;
     document.getElementById('audit-summary').value = a.summary || '';
@@ -1267,12 +1288,21 @@ async function saveAudit(e) {
     body.requirement_ids = selectedReqIds;
   }
 
+  let auditId = id;
   if (id) {
     body.status = document.getElementById('audit-status-field').value;
     body.summary = document.getElementById('audit-summary').value;
     await api(`/api/audits/${id}`, { method: 'PUT', body });
   } else {
-    await api('/api/audits', { method: 'POST', body });
+    const result = await api('/api/audits', { method: 'POST', body });
+    auditId = result.id;
+  }
+  // Auto-link selected scope processes
+  if (auditId) {
+    const selectedProcs = [...document.querySelectorAll('#audit-scope-processes input[name="audit-scope-proc"]:checked')].map(cb => parseInt(cb.value));
+    for (const procId of selectedProcs) {
+      await api('/api/cross-links', { method: 'POST', body: { source_type: 'audit', source_id: parseInt(auditId), target_type: 'process', target_id: procId } });
+    }
   }
   closeAuditModal();
   refreshCurrentView();
@@ -2513,7 +2543,12 @@ async function loadRiskIdentification() {
   if (riskFilters.category) params.set('category', riskFilters.category);
   const risks = await api(`/api/risks?${params}`);
 
+  // Prefetch cross-links
+  const allLinks = {};
+  await Promise.all(risks.map(async r => { allLinks[r.id] = await api(`/api/cross-links/risk/${r.id}`); }));
+
   // Filters
+  const categories = [...new Set(risks.map(r => r.category).filter(Boolean))];
   document.getElementById('risk-filters-bar').innerHTML = `
     <select onchange="riskFilters.status=this.value;loadRiskIdentification()">
       <option value="">All Status</option>
@@ -2522,6 +2557,10 @@ async function loadRiskIdentification() {
       <option value="treating" ${riskFilters.status==='treating'?'selected':''}>Treating</option>
       <option value="accepted" ${riskFilters.status==='accepted'?'selected':''}>Accepted</option>
       <option value="closed" ${riskFilters.status==='closed'?'selected':''}>Closed</option>
+    </select>
+    <select onchange="riskFilters.category=this.value;loadRiskIdentification()">
+      <option value="">All Categories</option>
+      ${categories.map(c => `<option value="${esc(c)}" ${riskFilters.category===c?'selected':''}>${esc(c)}</option>`).join('')}
     </select>
     <span style="font-size:13px;color:var(--text-muted)">${risks.length} risk${risks.length!==1?'s':''}</span>`;
 
@@ -2543,44 +2582,85 @@ async function loadRiskIdentification() {
   matrix += '</tbody></table>';
   document.getElementById('risk-matrix-wrap').innerHTML = matrix;
 
-  // Risk list
+  // Risk Register table
   const list = document.getElementById('risk-list');
   if (risks.length === 0) {
     list.innerHTML = '<div class="empty-state">No risks identified yet. Add one to get started.</div>';
     return;
   }
-  list.innerHTML = '<h3 class="section-title" style="margin-top:20px">Risk Register</h3>' + risks.map(r => {
+
+  let html = '<h3 class="section-title" style="margin-top:20px">Risk Register</h3>';
+  html += `<div class="risk-table">
+    <div class="risk-table-head">
+      <div class="risk-col-title">Risk</div>
+      <div class="risk-col-cat">Category</div>
+      <div class="risk-col-owner">Owner</div>
+      <div class="risk-col-score">Score</div>
+      <div class="risk-col-status">Status</div>
+      <div class="risk-col-treat">Treatments</div>
+      <div class="risk-col-links">Links</div>
+      <div class="risk-col-actions"></div>
+    </div>`;
+
+  for (const r of risks) {
     const cls = riskScoreClass(r.inherent_score);
     const stBadge = r.status === 'closed' ? 'badge-low' : r.status === 'accepted' ? 'badge-medium' : r.status === 'treating' ? 'badge-medium' : 'badge-high';
-    return `<div class="risk-card ${cls}">
-      <div class="risk-card-header">
-        <div>
-          <h4>${esc(r.title)}</h4>
-          <div class="risk-meta">${esc(r.category)} &middot; Owner: ${esc(r.risk_owner || 'Unassigned')}${r.asset ? ' &middot; Asset: ' + esc(r.asset) : ''}</div>
+    const links = allLinks[r.id] || [];
+    const linkCount = links.length;
+    const collapseId = `risk-cl-${r.id}`;
+
+    html += `<div class="risk-table-row">
+        <div class="risk-col-title">
+          <span class="risk-row-title">${esc(r.title)}</span>
+          ${r.asset ? `<span class="risk-row-sub">Asset: ${esc(r.asset)}</span>` : ''}
         </div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <span class="badge risk-score-badge ${cls}">${r.inherent_score} (${riskScoreLabel(r.inherent_score)})</span>
-          <span class="badge ${stBadge}">${r.status}</span>
+        <div class="risk-col-cat"><span style="font-size:12px">${esc(r.category || '-')}</span></div>
+        <div class="risk-col-owner"><span style="font-size:12px">${esc(r.risk_owner || '-')}</span></div>
+        <div class="risk-col-score"><span class="badge risk-score-badge ${cls}">${r.inherent_score}</span></div>
+        <div class="risk-col-status"><span class="badge ${stBadge}">${r.status}</span></div>
+        <div class="risk-col-treat">${r.treatment_count > 0 ? `<span style="font-size:12px">${r.treatment_count}${r.open_treatments > 0 ? ` (${r.open_treatments} open)` : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
+        <div class="risk-col-links">
+          ${linkCount > 0 ? `<span style="cursor:pointer;font-size:12px" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">${linkCount} linked <span class="cl-toggle-icon">+</span></span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
+        </div>
+        <div class="risk-col-actions">
+          ${actionMenu([
+            { label: '&#128736; Add Treatment', onclick: `openTreatmentModalForRisk(${r.id})` },
+            { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('risk',${r.id},'risk-expand-${r.id}')` },
+            { label: '&#9998; Edit', onclick: `openRiskModal(${r.id})` },
+            'sep',
+            { label: '&#128465; Delete', onclick: `deleteRisk(${r.id})`, cls: 'danger' },
+          ])}
         </div>
       </div>
-      ${r.description ? `<p style="font-size:13px;color:var(--text-muted);margin:6px 0">${esc(r.description)}</p>` : ''}
-      <div class="risk-card-footer">
-        <div class="risk-detail">
-          <span>L:${r.likelihood} x I:${r.impact} = ${r.inherent_score}</span>
-          ${r.treatment_count > 0 ? `<span>&middot; ${r.treatment_count} treatment${r.treatment_count !== 1 ? 's' : ''}${r.open_treatments > 0 ? ` (${r.open_treatments} open)` : ''}</span>` : ''}
+      <div id="risk-expand-${r.id}" class="risk-expand-row">
+        <div id="${collapseId}" class="risk-links-detail collapsed">
+          ${linkCount === 0 ? '' : buildInlineLinksDetail(links, 'risk', r.id, `risk-expand-${r.id}`)}
         </div>
-        ${actionMenu([
-          { label: '&#128736; Add Treatment', onclick: `openTreatmentModalForRisk(${r.id})`, cls: 'primary' },
-          { label: '&#9998; Edit', onclick: `openRiskModal(${r.id})` },
-          'sep',
-          { label: '&#128465; Delete', onclick: `deleteRisk(${r.id})`, cls: 'danger' },
-        ])}
-      </div>
-      <div id="risk-links-${r.id}"></div>
-    </div>`;
-  }).join('');
-  // Load cross-links for each risk
-  for (const r of risks) renderCrossLinks('risk', r.id, `risk-links-${r.id}`);
+      </div>`;
+  }
+  html += '</div>';
+  list.innerHTML = html;
+}
+
+function buildInlineLinksDetail(links, entityType, entityId, containerId) {
+  const typeIcons = {};
+  const typeLabels = {};
+  for (const [k, v] of Object.entries(linkableTypes)) { typeIcons[k] = v.icon; typeLabels[k] = v.label; }
+  const grouped = {};
+  for (const l of links) { if (!grouped[l.type]) grouped[l.type] = []; grouped[l.type].push(l); }
+  let html = '';
+  for (const [type, items] of Object.entries(grouped)) {
+    html += `<div class="cross-link-group"><span class="cross-link-group-label">${typeIcons[type] || ''} ${typeLabels[type] || type}s</span>`;
+    for (const item of items) {
+      const viewTarget = getViewForType(item.type, item.id);
+      html += `<div class="cross-link-item">
+        <span class="cross-link-name"${viewTarget ? ` onclick="${viewTarget}" style="cursor:pointer;text-decoration:underline"` : ''}>${esc(item.name)}</span>
+        <button class="cross-link-remove" onclick="removeCrossLink(${item.link_id},'${entityType}',${entityId},'${containerId}');setTimeout(()=>refreshCurrentView(),300)" title="Remove link">&times;</button>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  return html;
 }
 
 async function openRiskModal(id) {
@@ -2590,6 +2670,25 @@ async function openRiskModal(id) {
   document.getElementById('risk-modal-title').textContent = 'New Risk';
   document.getElementById('risk-status-group').classList.add('hidden');
 
+  // Populate architecture dropdowns
+  const [roles, systems, assets, processes, facilities] = await Promise.all([
+    api('/api/architecture?arch_type=role'),
+    api('/api/architecture?arch_type=system'),
+    api('/api/architecture?arch_type=asset'),
+    api('/api/architecture?arch_type=process'),
+    api('/api/architecture?arch_type=facility'),
+  ]);
+  const ownerSel = document.getElementById('risk-owner');
+  ownerSel.innerHTML = '<option value="">-- Select Role --</option>' + roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+  const assetSel = document.getElementById('risk-asset');
+  assetSel.innerHTML = '<option value="">-- Select --</option>'
+    + (systems.length > 0 ? `<optgroup label="Systems">${systems.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('')}</optgroup>` : '')
+    + (assets.length > 0 ? `<optgroup label="Assets">${assets.map(a => `<option value="${esc(a.name)}">${esc(a.name)}</option>`).join('')}</optgroup>` : '');
+  const procSel = document.getElementById('risk-process');
+  procSel.innerHTML = '<option value="">-- None --</option>' + processes.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const facSel = document.getElementById('risk-facility');
+  facSel.innerHTML = '<option value="">-- None --</option>' + facilities.map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join('');
+
   if (id) {
     const r = await api(`/api/risks/${id}`);
     document.getElementById('risk-modal-title').textContent = 'Edit Risk';
@@ -2597,8 +2696,8 @@ async function openRiskModal(id) {
     document.getElementById('risk-title').value = r.title;
     document.getElementById('risk-description').value = r.description;
     document.getElementById('risk-category').value = r.category;
-    document.getElementById('risk-owner').value = r.risk_owner;
-    document.getElementById('risk-asset').value = r.asset;
+    ownerSel.value = r.risk_owner || '';
+    assetSel.value = r.asset || '';
     document.getElementById('risk-source').value = r.source;
     document.getElementById('risk-threat').value = r.threat;
     document.getElementById('risk-vulnerability').value = r.vulnerability;
@@ -2606,6 +2705,13 @@ async function openRiskModal(id) {
     document.getElementById('risk-impact').value = r.impact;
     document.getElementById('risk-status-field').value = r.status;
     document.getElementById('risk-status-group').classList.remove('hidden');
+
+    // Pre-select linked process/facility from cross-links
+    const links = await api(`/api/cross-links/risk/${id}`);
+    const procLink = links.find(l => l.type === 'process');
+    const facLink = links.find(l => l.type === 'facility');
+    if (procLink) procSel.value = procLink.id;
+    if (facLink) facSel.value = facLink.id;
   }
   modal.classList.remove('hidden');
 }
@@ -2627,11 +2733,24 @@ async function saveRisk(e) {
     likelihood: parseInt(document.getElementById('risk-likelihood').value),
     impact: parseInt(document.getElementById('risk-impact').value),
   };
+  let riskId = id;
   if (id) {
     body.status = document.getElementById('risk-status-field').value;
     await api(`/api/risks/${id}`, { method: 'PUT', body });
   } else {
-    await api('/api/risks', { method: 'POST', body });
+    const result = await api('/api/risks', { method: 'POST', body });
+    riskId = result.id;
+  }
+  // Auto-link selected process and facility
+  if (riskId) {
+    const procId = document.getElementById('risk-process').value;
+    const facId = document.getElementById('risk-facility').value;
+    if (procId) {
+      await api('/api/cross-links', { method: 'POST', body: { source_type: 'risk', source_id: parseInt(riskId), target_type: 'process', target_id: parseInt(procId) } });
+    }
+    if (facId) {
+      await api('/api/cross-links', { method: 'POST', body: { source_type: 'risk', source_id: parseInt(riskId), target_type: 'facility', target_id: parseInt(facId) } });
+    }
   }
   closeRiskModal();
   refreshCurrentView();
@@ -2646,72 +2765,118 @@ async function deleteRisk(id) {
 // --- Risk Treatment View ---
 async function loadRiskTreatmentView() {
   const risks = await api('/api/risks');
-  let html = '';
+  // Fetch all treatment details
+  const details = {};
+  await Promise.all(risks.map(async r => { details[r.id] = await api(`/api/risks/${r.id}`); }));
 
-  document.getElementById('treatment-filters-bar').innerHTML = `<span style="font-size:13px;color:var(--text-muted)">${risks.length} risk${risks.length !== 1 ? 's' : ''} in register</span>`;
+  const totalTreatments = Object.values(details).reduce((s, d) => s + (d.treatments || []).length, 0);
+  const openTreatments = Object.values(details).reduce((s, d) => s + (d.treatments || []).filter(t => t.status === 'planned' || t.status === 'in_progress').length, 0);
+
+  document.getElementById('treatment-filters-bar').innerHTML = `<span style="font-size:13px;color:var(--text-muted)">${risks.length} risk${risks.length !== 1 ? 's' : ''}, ${totalTreatments} treatment${totalTreatments !== 1 ? 's' : ''}, ${openTreatments} open</span>`;
 
   if (risks.length === 0) {
     document.getElementById('treatment-list').innerHTML = '<div class="empty-state">No risks identified yet. Go to Risk Identification first.</div>';
     return;
   }
 
-  for (const r of risks) {
-    const detail = await api(`/api/risks/${r.id}`);
-    const cls = riskScoreClass(r.inherent_score);
-    const treatments = detail.treatments || [];
+  let html = `<div class="treat-table">
+    <div class="treat-table-head">
+      <div class="treat-col-risk">Risk</div>
+      <div class="treat-col-score">Inherent</div>
+      <div class="treat-col-score">Residual</div>
+      <div class="treat-col-count">Actions</div>
+      <div class="treat-col-status">Progress</div>
+      <div class="treat-col-actions"></div>
+    </div>`;
 
-    // Compute residual score
+  for (const r of risks) {
+    const detail = details[r.id];
+    const treatments = detail.treatments || [];
+    const cls = riskScoreClass(r.inherent_score);
+
     let residualScore = r.inherent_score;
     const implemented = treatments.filter(t => t.status === 'implemented' || t.status === 'verified');
     if (implemented.length > 0) {
       const last = implemented[implemented.length - 1];
-      if (last.residual_likelihood && last.residual_impact) {
-        residualScore = last.residual_likelihood * last.residual_impact;
-      }
+      if (last.residual_likelihood && last.residual_impact) residualScore = last.residual_likelihood * last.residual_impact;
     }
+    const resCls = riskScoreClass(residualScore);
+    const done = treatments.filter(t => t.status === 'implemented' || t.status === 'verified').length;
+    const pct = treatments.length > 0 ? Math.round((done / treatments.length) * 100) : 0;
+    const collapseId = `treat-expand-${r.id}`;
 
-    html += `<div class="treatment-risk-group">
-      <div class="treatment-risk-header ${cls}">
-        <div>
-          <strong>${esc(r.title)}</strong>
-          <span class="badge risk-score-badge ${cls}">${r.inherent_score}</span>
-          ${residualScore !== r.inherent_score ? `<span>&rarr;</span><span class="badge risk-score-badge ${riskScoreClass(residualScore)}">${residualScore} residual</span>` : ''}
+    html += `<div class="treat-table-row">
+        <div class="treat-col-risk">
+          <span class="risk-row-title">${esc(r.title)}</span>
+          <span class="risk-row-sub">${esc(r.category || '')}${r.risk_owner ? ' · ' + esc(r.risk_owner) : ''}</span>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="openTreatmentModalForRisk(${r.id})">+ Add Treatment</button>
-      </div>`;
-
-    if (treatments.length === 0) {
-      html += '<div class="empty-state" style="padding:16px;font-size:13px">No treatments planned yet.</div>';
-    } else {
-      html += '<div class="treatment-items">';
-      for (const t of treatments) {
-        const stBadge = t.status === 'verified' ? 'badge-low' : t.status === 'implemented' ? 'badge-low' : t.status === 'in_progress' ? 'badge-medium' : 'badge-high';
-        html += `<div class="treatment-item">
-          <div class="treatment-item-main">
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <span class="badge badge-inactive">${t.treatment_type}</span>
-              <span class="badge ${stBadge}">${t.status}</span>
-              ${t.control_reference ? `<span style="font-size:12px;color:var(--primary);font-weight:600">${esc(t.control_reference)}</span>` : ''}
-              ${t.requirement_title ? `<span style="font-size:11px;color:var(--text-muted)">Linked: ${esc(t.clause)} - ${esc(t.requirement_title)}</span>` : ''}
-            </div>
-            <p style="font-size:13px;margin:4px 0">${esc(t.description)}</p>
-            <div style="font-size:12px;color:var(--text-muted)">${t.responsible ? 'Responsible: ' + esc(t.responsible) : ''}${t.due_date ? ' | Due: ' + t.due_date : ''}</div>
-          </div>
+        <div class="treat-col-score"><span class="badge risk-score-badge ${cls}">${r.inherent_score}</span></div>
+        <div class="treat-col-score">${residualScore !== r.inherent_score ? `<span class="badge risk-score-badge ${resCls}">${residualScore}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
+        <div class="treat-col-count">
+          ${treatments.length > 0 ? `<span style="cursor:pointer;font-size:12px" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">${treatments.length} action${treatments.length !== 1 ? 's' : ''} <span class="cl-toggle-icon">+</span></span>` : '<span style="color:var(--text-muted);font-size:11px">none</span>'}
+        </div>
+        <div class="treat-col-status">
+          ${treatments.length > 0 ? `<div class="treat-progress-bar"><div class="treat-progress-fill" style="width:${pct}%"></div></div><span style="font-size:11px;color:var(--text-muted)">${pct}%</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
+        </div>
+        <div class="treat-col-actions">
           ${actionMenu([
-            ...(t.status === 'planned' ? [{ label: '&#9654; Start', onclick: `updateTreatmentStatus(${t.id},'in_progress')`, cls: 'primary' }] : []),
-            ...(t.status === 'in_progress' ? [{ label: '&#10003; Implement', onclick: `updateTreatmentStatus(${t.id},'implemented')`, cls: 'success' }] : []),
-            ...(t.status === 'implemented' ? [{ label: '&#10003; Verify', onclick: `updateTreatmentStatus(${t.id},'verified')`, cls: 'success' }] : []),
-            { label: '&#9998; Edit', onclick: `openTreatmentModal(${t.id})` },
-            'sep',
-            { label: '&#128465; Delete', onclick: `deleteTreatment(${t.id})`, cls: 'danger' },
+            { label: '+ Add Treatment', onclick: `openTreatmentModalForRisk(${r.id})` },
           ])}
-        </div>`;
-      }
-      html += '</div>';
-    }
-    html += '</div>';
+        </div>
+      </div>
+      <div class="treat-expand-row">
+        <div id="${collapseId}" class="treat-detail collapsed">
+          ${treatments.length === 0 ? '' : buildTreatmentDetail(treatments)}
+        </div>
+      </div>`;
   }
+  html += '</div>';
   document.getElementById('treatment-list').innerHTML = html;
+}
+
+function buildTreatmentDetail(treatments) {
+  let html = '<div class="treat-sub-table">';
+  html += `<div class="treat-sub-head">
+    <div class="treat-sub-type">Type</div>
+    <div class="treat-sub-desc">Description</div>
+    <div class="treat-sub-ref">Control Ref</div>
+    <div class="treat-sub-resp">Responsible</div>
+    <div class="treat-sub-due">Due</div>
+    <div class="treat-sub-st">Status</div>
+    <div class="treat-sub-act"></div>
+  </div>`;
+  for (const t of treatments) {
+    const stBadge = t.status === 'verified' ? 'badge-low' : t.status === 'implemented' ? 'badge-low' : t.status === 'in_progress' ? 'badge-medium' : 'badge-high';
+    html += `<div class="treat-sub-row">
+      <div class="treat-sub-type"><span class="badge badge-inactive">${t.treatment_type}</span></div>
+      <div class="treat-sub-desc">
+        <span style="font-size:12px">${esc(t.description)}</span>
+        ${t.requirement_title ? `<span style="font-size:10px;color:var(--text-muted);display:block">${esc(t.clause)} - ${esc(t.requirement_title)}</span>` : ''}
+      </div>
+      <div class="treat-sub-ref"><span style="font-size:12px;color:var(--primary)">${t.control_reference ? esc(t.control_reference) : '-'}</span></div>
+      <div class="treat-sub-resp"><span style="font-size:12px">${t.responsible ? esc(t.responsible) : '-'}</span></div>
+      <div class="treat-sub-due"><span style="font-size:12px">${t.due_date || '-'}</span></div>
+      <div class="treat-sub-st"><span class="badge ${stBadge}">${t.status}</span></div>
+      <div class="treat-sub-act">
+        ${actionMenu([
+          ...(t.status === 'planned' ? [{ label: '&#9654; Start', onclick: `updateTreatmentStatus(${t.id},'in_progress')` }] : []),
+          ...(t.status === 'in_progress' ? [{ label: '&#10003; Implement', onclick: `updateTreatmentStatus(${t.id},'implemented')` }] : []),
+          ...(t.status === 'implemented' ? [{ label: '&#10003; Verify', onclick: `updateTreatmentStatus(${t.id},'verified')` }] : []),
+          { label: '&#9998; Edit', onclick: `openTreatmentModal(${t.id})` },
+          'sep',
+          { label: '&#128465; Delete', onclick: `deleteTreatment(${t.id})`, cls: 'danger' },
+        ])}
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+async function populateTreatmentRoles() {
+  const roles = await api('/api/architecture?arch_type=role');
+  const sel = document.getElementById('treatment-responsible');
+  sel.innerHTML = '<option value="">-- Select Role --</option>' + roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
 }
 
 async function openTreatmentModalForRisk(riskId) {
@@ -2720,7 +2885,7 @@ async function openTreatmentModalForRisk(riskId) {
   document.getElementById('treatment-risk-id').value = riskId;
   document.getElementById('treatment-modal-title').textContent = 'New Treatment';
   document.getElementById('treatment-status-group').classList.add('hidden');
-  await populateTreatmentReqDropdown();
+  await Promise.all([populateTreatmentReqDropdown(), populateTreatmentRoles()]);
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
 
@@ -2735,14 +2900,14 @@ async function openTreatmentModal(id) {
   document.getElementById('treatment-type').value = t.treatment_type;
   document.getElementById('treatment-description').value = t.description;
   document.getElementById('treatment-control-ref').value = t.control_reference || '';
-  document.getElementById('treatment-responsible').value = t.responsible || '';
   document.getElementById('treatment-due-date').value = t.due_date || '';
   document.getElementById('treatment-res-likelihood').value = t.residual_likelihood || '';
   document.getElementById('treatment-res-impact').value = t.residual_impact || '';
   document.getElementById('treatment-notes').value = t.notes || '';
   document.getElementById('treatment-status-field').value = t.status;
   document.getElementById('treatment-status-group').classList.remove('hidden');
-  await populateTreatmentReqDropdown();
+  await Promise.all([populateTreatmentReqDropdown(), populateTreatmentRoles()]);
+  document.getElementById('treatment-responsible').value = t.responsible || '';
   document.getElementById('treatment-requirement').value = t.requirement_id || '';
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
