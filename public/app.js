@@ -828,65 +828,132 @@ async function loadYearlyPlan() {
   // Render Gantt chart
   renderGanttChart(data, monthStats, today);
 
-  // Render monthly breakdown
-  const breakdownEl = document.getElementById('yearly-breakdown');
-  if (totalDue === 0 && totalCompleted === 0) {
-    breakdownEl.innerHTML = '<div class="empty-state">No recurring tasks yet. Create a task to see your yearly plan.</div>';
-    document.getElementById('yearly-breakdown-title').style.display = 'none';
-    return;
+  // Render Coming Up & Overdue section
+  const upcomingEl = document.getElementById('yearly-upcoming');
+  const todayDate = new Date(today);
+  const fourWeeksOut = new Date(todayDate);
+  fourWeeksOut.setDate(fourWeeksOut.getDate() + 28);
+  const fourWeeksStr = fourWeeksOut.toISOString().split('T')[0];
+
+  // Collect overdue tasks
+  const overdueItems = [];
+  const upcomingItems = [];
+  for (const [dateStr, tasks] of Object.entries(data.dueDates)) {
+    for (const t of tasks) {
+      if (dateStr < today) {
+        // Check if completed on this date
+        const completedOnDate = data.completedDates[dateStr] && data.completedDates[dateStr].some(c => c.task_id === t.task_id);
+        if (!completedOnDate) {
+          overdueItems.push({ ...t, date: dateStr });
+        }
+      } else if (dateStr >= today && dateStr <= fourWeeksStr) {
+        upcomingItems.push({ ...t, date: dateStr });
+      }
+    }
   }
-  document.getElementById('yearly-breakdown-title').style.display = '';
 
-  let breakdownHtml = '';
-  for (let m = 0; m < 12; m++) {
-    const ms = monthStats[m];
-    const tasks = Object.values(ms.taskDates);
-    const isCurrentMonth = yearlyYear === new Date().getFullYear() && m === new Date().getMonth();
-    const collapsed = !isCurrentMonth && tasks.length > 0;
+  overdueItems.sort((a, b) => a.date.localeCompare(b.date));
+  upcomingItems.sort((a, b) => a.date.localeCompare(b.date));
 
-    breakdownHtml += `<div class="yearly-month-section">
-      <div class="yearly-month-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-        <h4>${MONTH_NAMES[m]} ${yearlyYear}</h4>
-        <div class="month-stats">
-          <span>${ms.due} scheduled</span>
-          <span class="badge badge-low">${ms.completed} done</span>
-          ${ms.overdue > 0 ? `<span class="badge badge-high">${ms.overdue} overdue</span>` : ''}
-          <span style="font-size:16px">${collapsed ? '+' : '−'}</span>
+  const priorityBadge = p => p === 'High' ? 'badge-high' : p === 'Medium' ? 'badge-medium' : 'badge-low';
+  const dayLabel = ds => {
+    const d = new Date(ds + 'T00:00:00');
+    const diff = Math.round((d - todayDate) / 86400000);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Tomorrow';
+    if (diff < 7) return MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate() + ' (' + ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] + ')';
+    return MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate();
+  };
+  const overdueDayLabel = ds => {
+    const d = new Date(ds + 'T00:00:00');
+    const diff = Math.round((todayDate - d) / 86400000);
+    return MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate() + ` (${diff}d ago)`;
+  };
+
+  let html = '';
+
+  // Overdue section
+  if (overdueItems.length > 0) {
+    html += `<h3 class="section-title" style="margin-top:28px;color:var(--danger)">Overdue Tasks</h3>
+    <div class="upcoming-table">
+      <div class="upcoming-table-head">
+        <div class="upcoming-col-task">Task</div>
+        <div class="upcoming-col-date">Due Date</div>
+        <div class="upcoming-col-assign">Assignee</div>
+        <div class="upcoming-col-priority">Priority</div>
+        <div class="upcoming-col-recurrence">Recurrence</div>
+        <div class="upcoming-col-actions"></div>
+      </div>`;
+    for (const item of overdueItems) {
+      html += `<div class="upcoming-table-row upcoming-overdue">
+        <div class="upcoming-col-task">
+          <span class="upcoming-task-title">${esc(item.title)}</span>
+          ${item.category ? `<span class="upcoming-task-cat">${esc(item.category)}</span>` : ''}
         </div>
-      </div>
-      <div class="yearly-month-body${collapsed ? ' collapsed' : ''}">`;
+        <div class="upcoming-col-date"><span class="upcoming-date overdue">${overdueDayLabel(item.date)}</span></div>
+        <div class="upcoming-col-assign"><span style="font-size:12px">${esc(item.assignee || '-')}</span></div>
+        <div class="upcoming-col-priority"><span class="badge ${priorityBadge(item.priority)}">${item.priority}</span></div>
+        <div class="upcoming-col-recurrence"><span style="font-size:12px">${esc(item.recurrence)}</span></div>
+        <div class="upcoming-col-actions">
+          <button class="btn btn-primary btn-sm" style="font-size:11px;padding:2px 8px" onclick="quickComplete(${item.task_id},'${item.date}')">Complete</button>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+  }
 
-    if (tasks.length === 0) {
-      breakdownHtml += '<div class="yearly-empty-month">No tasks scheduled this month</div>';
-    } else {
-      // Sort: tasks with overdue dates first, then by title
-      tasks.sort((a, b) => {
-        const aOverdue = a.dates.some(d => d.type === 'overdue');
-        const bOverdue = b.dates.some(d => d.type === 'overdue');
-        if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
-        return a.title.localeCompare(b.title);
-      });
+  // Upcoming section
+  html += `<h3 class="section-title" style="margin-top:28px">Coming Up — Next 4 Weeks</h3>`;
+  if (upcomingItems.length === 0) {
+    html += '<div class="empty-state">No tasks scheduled in the next 4 weeks.</div>';
+  } else {
+    // Group by week
+    const weeks = {};
+    for (const item of upcomingItems) {
+      const d = new Date(item.date + 'T00:00:00');
+      const diffDays = Math.round((d - todayDate) / 86400000);
+      const weekNum = diffDays < 7 ? 'This Week' : diffDays < 14 ? 'Next Week' : diffDays < 21 ? 'In 2 Weeks' : 'In 3 Weeks';
+      if (!weeks[weekNum]) weeks[weekNum] = [];
+      weeks[weekNum].push(item);
+    }
 
-      for (const task of tasks) {
-        breakdownHtml += `<div class="yearly-task-row">
-          <div class="yearly-task-info">
-            <strong>${esc(task.title)}</strong>
-            <span class="badge badge-${task.priority.toLowerCase()}">${task.priority}</span>
-            <div class="ytr-meta">${esc(task.assignee || 'Unassigned')} &middot; ${esc(task.recurrence)} &middot; ${task.category ? esc(task.category) : ''}</div>
+    for (const [weekLabel, items] of Object.entries(weeks)) {
+      html += `<div class="upcoming-group">
+        <div class="upcoming-group-header">${weekLabel} <span class="req-cat-count">(${items.length})</span></div>
+        <div class="upcoming-table">
+          <div class="upcoming-table-head">
+            <div class="upcoming-col-task">Task</div>
+            <div class="upcoming-col-date">Due Date</div>
+            <div class="upcoming-col-assign">Assignee</div>
+            <div class="upcoming-col-priority">Priority</div>
+            <div class="upcoming-col-recurrence">Recurrence</div>
+            <div class="upcoming-col-actions"></div>
+          </div>`;
+      for (const item of items) {
+        html += `<div class="upcoming-table-row">
+          <div class="upcoming-col-task">
+            <span class="upcoming-task-title">${esc(item.title)}</span>
+            ${item.category ? `<span class="upcoming-task-cat">${esc(item.category)}</span>` : ''}
           </div>
-          <div class="yearly-task-dates">
-            ${task.dates.map(d => {
-              const day = parseInt(d.date.split('-')[2]);
-              return `<span class="yearly-date-chip ${d.type}">${day}</span>`;
-            }).join('')}
+          <div class="upcoming-col-date"><span class="upcoming-date">${dayLabel(item.date)}</span></div>
+          <div class="upcoming-col-assign"><span style="font-size:12px">${esc(item.assignee || '-')}</span></div>
+          <div class="upcoming-col-priority"><span class="badge ${priorityBadge(item.priority)}">${item.priority}</span></div>
+          <div class="upcoming-col-recurrence"><span style="font-size:12px">${esc(item.recurrence)}</span></div>
+          <div class="upcoming-col-actions">
+            <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px" onclick="quickComplete(${item.task_id},'${item.date}')">Complete</button>
           </div>
         </div>`;
       }
+      html += '</div></div>';
     }
-
-    breakdownHtml += '</div></div>';
   }
-  breakdownEl.innerHTML = breakdownHtml;
+
+  upcomingEl.innerHTML = html;
+}
+
+async function quickComplete(taskId, dateStr) {
+  await api('/api/completions', { method: 'POST', body: { task_id: taskId, completed_at: dateStr, notes: '' } });
+  loadYearlyPlan();
 }
 
 let activePopover = null;

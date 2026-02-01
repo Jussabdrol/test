@@ -154,24 +154,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 
 .yearly-legend { display: flex; gap: 18px; margin-bottom: 16px; }
 
-.yearly-month-section { margin-bottom: 20px; }
-.yearly-month-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: var(--card-bg); border-radius: var(--radius) var(--radius) 0 0; border-bottom: 2px solid var(--border); cursor: pointer; user-select: none; box-shadow: var(--shadow); }
-.yearly-month-header:hover { background: #f8fafc; }
-.yearly-month-header h4 { font-size: 15px; font-weight: 700; }
-.yearly-month-header .month-stats { display: flex; gap: 12px; align-items: center; font-size: 12px; color: var(--text-muted); }
-.yearly-month-body { background: var(--card-bg); border-radius: 0 0 var(--radius) var(--radius); box-shadow: var(--shadow); overflow: hidden; }
-.yearly-month-body.collapsed { display: none; }
-.yearly-task-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
-.yearly-task-row:last-child { border-bottom: none; }
-.yearly-task-row:hover { background: #f8fafc; }
-.yearly-task-info { flex: 1; }
-.yearly-task-info strong { font-weight: 600; font-size: 14px; }
-.yearly-task-info .ytr-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.yearly-task-dates { display: flex; flex-wrap: wrap; gap: 4px; max-width: 50%; }
-.yearly-date-chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; background: #dbeafe; color: #1e40af; }
-.yearly-date-chip.completed { background: #d1fae5; color: #065f46; text-decoration: line-through; }
-.yearly-date-chip.overdue { background: #fee2e2; color: #991b1b; font-weight: 700; }
-.yearly-empty-month { padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
+/* Upcoming & Overdue Table */
+.upcoming-group { margin-bottom: 16px; }
+.upcoming-group-header { font-size: 14px; font-weight: 700; padding: 10px 16px; background: #f8fafc; border-radius: var(--radius) var(--radius) 0 0; border-bottom: 2px solid var(--border); }
+.upcoming-table { width: 100%; }
+.upcoming-table-head { display: grid; grid-template-columns: 1fr 130px 100px 80px 100px 80px; padding: 8px 16px; background: #eef1f6; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }
+.upcoming-table-row { display: grid; grid-template-columns: 1fr 130px 100px 80px 100px 80px; padding: 8px 16px; background: var(--card-bg); border-bottom: 1px solid var(--border); align-items: center; }
+.upcoming-table-row:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+.upcoming-table-row.upcoming-overdue { background: #fff5f5; }
+.upcoming-col-task { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.upcoming-task-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.upcoming-task-cat { font-size: 11px; color: var(--text-muted); }
+.upcoming-col-date, .upcoming-col-assign, .upcoming-col-priority, .upcoming-col-recurrence { display: flex; justify-content: center; align-items: center; }
+.upcoming-col-actions { display: flex; justify-content: center; align-items: center; }
+.upcoming-date { font-size: 12px; font-weight: 500; }
+.upcoming-date.overdue { color: var(--danger); font-weight: 700; }
 .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
 .legend-dot { width: 12px; height: 12px; border-radius: 3px; }
 .legend-completed { background: var(--success); }
