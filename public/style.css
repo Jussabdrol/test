@@ -437,21 +437,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   .yearly-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
-/* Document Control */
-.doc-grid { display: flex; flex-direction: column; gap: 12px; }
-.doc-card { background: var(--card-bg); border-radius: 8px; padding: 16px; border: 1px solid var(--border); }
-.doc-card.doc-obsolete { opacity: 0.6; }
-.doc-card-header { display: flex; align-items: flex-start; gap: 12px; }
-.doc-icon { font-size: 28px; flex-shrink: 0; line-height: 1; }
-.doc-card-info { flex: 1; min-width: 0; }
-.doc-card-info h4 { font-size: 15px; margin-bottom: 4px; }
-.doc-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
-.doc-desc { font-size: 13px; color: var(--text-muted); margin: 8px 0 0; }
-.doc-card-footer { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
-.doc-file-info { font-family: monospace; font-size: 11px; }
-.doc-review { font-size: 11px; }
-.doc-review.overdue { color: var(--danger); font-weight: 600; }
-.doc-date { margin-left: auto; }
+/* Document Control - Table Layout */
+.doc-type-group { margin-bottom: 16px; }
+.doc-type-header { font-size: 14px; font-weight: 700; padding: 10px 16px; background: #f8fafc; border-radius: var(--radius) var(--radius) 0 0; border-bottom: 2px solid var(--border); }
+.doc-table { width: 100%; }
+.doc-table-head { display: grid; grid-template-columns: 1fr 100px 80px 60px 90px 90px 120px 44px; padding: 8px 16px; background: #eef1f6; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }
+.doc-table-row { display: grid; grid-template-columns: 1fr 100px 80px 60px 90px 90px 120px 44px; padding: 8px 16px; background: var(--card-bg); border-bottom: 1px solid var(--border); align-items: center; }
+.doc-table-row.doc-obsolete { opacity: 0.5; }
+.doc-col-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.doc-row-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.doc-row-file { font-size: 11px; color: var(--text-muted); font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.doc-col-class, .doc-col-status, .doc-col-ver, .doc-col-owner, .doc-col-review { display: flex; justify-content: center; align-items: center; font-size: 12px; }
+.doc-col-links { display: flex; align-items: center; min-width: 0; }
+.doc-col-actions { display: flex; justify-content: center; align-items: center; }
+.doc-expand-row { background: var(--bg); }
+.doc-links-detail { padding: 8px 16px 12px 16px; border-bottom: 1px solid var(--border); }
+.doc-links-detail.collapsed { display: none; }
 
 /* Cross-Links */
 .cross-links { background: var(--bg); border-radius: var(--radius); padding: 12px; margin-top: 12px; border: 1px solid var(--border); }
