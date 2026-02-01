@@ -1735,7 +1735,7 @@ async function loadRequirements() {
       ${standards.map(s => `<option value="${esc(s)}" ${reqFilters.standard===s?'selected':''}>${esc(s)}</option>`).join('')}
     </select>
     <span style="font-size:13px;color:var(--text-muted)">${reqs.length} requirement${reqs.length!==1?'s':''}</span>
-    ${reqFilters.standard ? `<button class="btn btn-secondary btn-sm" style="margin-left:auto;color:var(--danger);border-color:var(--danger)" onclick="retireStandard('${esc(reqFilters.standard)}')">&#128465; Retire Standard</button>` : ''}`;
+    ${reqFilters.standard ? `<button class="btn btn-secondary btn-sm" style="margin-left:auto;color:var(--danger);border-color:var(--danger)" onclick="retireStandard(this.closest('.filters').querySelector('select').value)">Retire Standard</button>` : ''}`;
 
   // Group by category
   const groups = {};
@@ -1765,51 +1765,57 @@ async function loadRequirements() {
   for (const [cat, items] of Object.entries(groups)) {
     items.sort((a, b) => a.clause.localeCompare(b.clause, undefined, { numeric: true }));
     html += `<div class="req-category-group">
-      <div class="req-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>`;
+      <div class="req-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>
+      <div class="req-table">
+        <div class="req-table-head">
+          <div class="req-col-clause">Clause</div>
+          <div class="req-col-title">Requirement</div>
+          <div class="req-col-audit">Last Audit</div>
+          <div class="req-col-rating">Rating</div>
+          <div class="req-col-nc">NCs</div>
+          <div class="req-col-owner">Owner</div>
+          <div class="req-col-actions"></div>
+        </div>`;
     for (const r of items) {
-      // Audit history badges
-      const lastAuditBadge = r.last_audited
+      const lastAuditLabel = r.last_audited
         ? `<span class="req-audit-info" title="Last audited in: ${esc(r.last_audit_title || '')}">${r.last_audited}</span>`
-        : '<span class="req-audit-info none">Never audited</span>';
+        : '<span class="req-audit-info none">-</span>';
 
       const ratingBadge = r.last_rating
         ? `<span class="badge ${ratingBadgeClass(r.last_rating)}">${ratingLabel(r.last_rating)}</span>`
-        : '';
+        : '<span style="color:var(--text-muted);font-size:11px">-</span>';
 
-      let ncBadge = '';
+      let ncBadge = '<span style="color:var(--text-muted);font-size:11px">-</span>';
       if (r.nc_total > 0) {
         if (r.nc_open > 0) {
-          ncBadge = `<span class="badge badge-high" title="${r.nc_open} open, ${r.nc_closed} treated">${r.nc_open} open NC</span>`;
+          ncBadge = `<span class="badge badge-high" title="${r.nc_open} open, ${r.nc_closed} treated">${r.nc_open} open</span>`;
         } else {
-          ncBadge = `<span class="badge badge-low" title="All ${r.nc_total} NCs treated">${r.nc_total} NC (all treated)</span>`;
+          ncBadge = `<span class="badge badge-low" title="All ${r.nc_total} NCs treated">${r.nc_total} treated</span>`;
         }
       }
 
-      html += `<div class="req-item">
-        <div class="req-item-main">
-          <div class="req-clause">${esc(r.clause)}</div>
-          <div class="req-title">${esc(r.title)}</div>
-          ${r.description ? `<div class="req-desc">${esc(r.description)}</div>` : ''}
+      html += `<div class="req-table-row">
+          <div class="req-col-clause"><span class="req-clause">${esc(r.clause)}</span></div>
+          <div class="req-col-title">
+            <span class="req-title">${esc(r.title)}</span>
+            ${r.description ? `<span class="req-desc">${esc(r.description)}</span>` : ''}
+          </div>
+          <div class="req-col-audit">${lastAuditLabel}</div>
+          <div class="req-col-rating">${ratingBadge}</div>
+          <div class="req-col-nc">${ncBadge}</div>
+          <div class="req-col-owner">${r.owner ? `<span style="font-size:12px">${esc(r.owner)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
+          <div class="req-col-actions">
+            ${actionMenu([
+              { label: '&#128279; Links', onclick: `toggleReqLinks(${r.id})` },
+              { label: '&#9998; Edit', onclick: `openRequirementModal(${r.id})` },
+              'sep',
+              { label: '&#128465; Delete', onclick: `deleteRequirement(${r.id})`, cls: 'danger' },
+            ])}
+          </div>
         </div>
-        <div class="req-item-audit-history">
-          ${lastAuditBadge}
-          ${ratingBadge}
-          ${ncBadge}
-        </div>
-        <div class="req-item-meta">
-          <span class="badge badge-low">${esc(r.standard)}</span>
-          ${r.owner ? `<span class="req-audit-info">${esc(r.owner)}</span>` : ''}
-          ${actionMenu([
-            { label: '&#128279; Links', onclick: `toggleReqLinks(${r.id})` },
-            { label: '&#9998; Edit', onclick: `openRequirementModal(${r.id})` },
-            'sep',
-            { label: '&#128465; Delete', onclick: `deleteRequirement(${r.id})`, cls: 'danger' },
-          ])}
-        </div>
-        <div id="req-links-${r.id}"></div>
-      </div>`;
+        <div id="req-links-${r.id}"></div>`;
     }
-    html += '</div>';
+    html += '</div></div>';
   }
   list.innerHTML = html;
 }
@@ -2439,18 +2445,18 @@ async function deleteFeed(id) {
 }
 
 // Create risk from threat item
-function openTiRiskModal(itemId) {
-  api(`/api/threat-items?limit=500`).then(items => {
-    const item = items.find(i => i.id === itemId);
-    if (!item) return;
-    document.getElementById('ti-risk-form').reset();
-    document.getElementById('ti-risk-form').dataset.itemId = itemId;
-    document.getElementById('ti-risk-title').value = item.title;
-    document.getElementById('ti-risk-description').value = item.description + (item.link ? '\n\nSource: ' + item.link : '');
-    document.getElementById('ti-risk-source').value = item.feed_name + ' (Tier ' + item.tier + ')';
-    document.getElementById('ti-risk-threat').value = item.title;
-    document.getElementById('ti-risk-modal').classList.remove('hidden');
-  });
+async function openTiRiskModal(itemId) {
+  const items = await api(`/api/threat-items?limit=1000`);
+  const item = items.find(i => i.id === itemId);
+  if (!item) { alert('Could not find threat item. It may belong to a disabled feed.'); return; }
+  const form = document.getElementById('ti-risk-form');
+  form.reset();
+  form.dataset.itemId = itemId;
+  document.getElementById('ti-risk-title').value = item.title || '';
+  document.getElementById('ti-risk-description').value = (item.description || '') + (item.link ? '\n\nSource: ' + item.link : '');
+  document.getElementById('ti-risk-source').value = (item.feed_name || '') + ' (Tier ' + (item.tier || '?') + ')';
+  document.getElementById('ti-risk-threat').value = item.title || '';
+  document.getElementById('ti-risk-modal').classList.remove('hidden');
 }
 
 function closeTiRiskModal() {
@@ -2460,19 +2466,25 @@ function closeTiRiskModal() {
 async function saveTiRisk(e) {
   e.preventDefault();
   const itemId = document.getElementById('ti-risk-form').dataset.itemId;
+  const title = document.getElementById('ti-risk-title').value.trim();
+  if (!title) { alert('Risk title is required.'); return; }
   const body = {
-    title: document.getElementById('ti-risk-title').value,
+    title,
     description: document.getElementById('ti-risk-description').value,
     category: document.getElementById('ti-risk-category').value,
     source: document.getElementById('ti-risk-source').value,
     threat: document.getElementById('ti-risk-threat').value,
     vulnerability: document.getElementById('ti-risk-vulnerability').value,
-    likelihood: parseInt(document.getElementById('ti-risk-likelihood').value),
-    impact: parseInt(document.getElementById('ti-risk-impact').value),
+    likelihood: parseInt(document.getElementById('ti-risk-likelihood').value) || 3,
+    impact: parseInt(document.getElementById('ti-risk-impact').value) || 3,
   };
   const risk = await api('/api/risks', { method: 'POST', body });
+  if (!risk || risk.error || !risk.id) {
+    alert('Failed to create risk: ' + (risk.error || 'Unknown error'));
+    return;
+  }
   // Update threat item to mark as risk_created
-  if (itemId && risk.id) {
+  if (itemId) {
     await api(`/api/threat-items/${itemId}`, { method: 'PUT', body: { status: 'risk_created', created_risk_id: risk.id } });
   }
   closeTiRiskModal();
@@ -2964,18 +2976,52 @@ async function loadMissionControl() {
     </div>`;
 
   // Auto KPIs
-  const autoData = await api('/api/kpis/auto');
+  const d = await api('/api/kpis/auto');
+  const soaPct = d.soa_applicable > 0 ? Math.round((d.soa_implemented / d.soa_applicable) * 100) : 0;
   document.getElementById('auto-kpi-grid').innerHTML = `
-    <div class="stats-grid" style="margin-bottom:0">
-      <div class="stat-card"><div class="stat-value">${autoData.tasks_active}</div><div class="stat-label">Active Tasks</div></div>
-      <div class="stat-card${autoData.tasks_overdue > 0 ? ' overdue' : ''}"><div class="stat-value">${autoData.tasks_overdue}</div><div class="stat-label">Overdue Tasks</div></div>
-      <div class="stat-card done"><div class="stat-value">${autoData.completions_this_month}</div><div class="stat-label">Completions (Month)</div></div>
-      <div class="stat-card${autoData.open_actions > 0 ? ' overdue' : ''}"><div class="stat-value">${autoData.open_actions}</div><div class="stat-label">Open Actions</div></div>
-      <div class="stat-card done"><div class="stat-value">${autoData.audits_completed}</div><div class="stat-label">Audits Completed</div></div>
-      <div class="stat-card${autoData.open_ncrs > 0 ? ' overdue' : ''}"><div class="stat-value">${autoData.open_ncrs}</div><div class="stat-label">Open NCRs</div></div>
-      <div class="stat-card"><div class="stat-value">${autoData.total_risks}</div><div class="stat-label">Total Risks</div></div>
-      <div class="stat-card${autoData.high_risks > 0 ? ' overdue' : ''}"><div class="stat-value">${autoData.high_risks}</div><div class="stat-label">High Risks</div></div>
-      <div class="stat-card"><div class="stat-value">${autoData.open_treatments}</div><div class="stat-label">Open Treatments</div></div>
+    <div class="kpi-module-group">
+      <h4 class="kpi-module-title">Task Management</h4>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-value">${d.tasks_active}</div><div class="stat-label">Active Tasks</div></div>
+        <div class="stat-card${d.tasks_overdue > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.tasks_overdue}</div><div class="stat-label">Overdue</div></div>
+        <div class="stat-card done"><div class="stat-value">${d.completions_this_month}</div><div class="stat-label">Completions (Month)</div></div>
+      </div>
+    </div>
+    <div class="kpi-module-group">
+      <h4 class="kpi-module-title">Audits &amp; Compliance</h4>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-value">${d.audits_planned}</div><div class="stat-label">Planned Audits</div></div>
+        <div class="stat-card done"><div class="stat-value">${d.audits_completed}</div><div class="stat-label">Completed</div></div>
+        <div class="stat-card${d.open_ncrs > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.open_ncrs}</div><div class="stat-label">Open NCRs</div></div>
+        <div class="stat-card${d.open_actions > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.open_actions}</div><div class="stat-label">Open Actions</div></div>
+        <div class="stat-card"><div class="stat-value">${d.standards_count}</div><div class="stat-label">Standards</div></div>
+      </div>
+    </div>
+    <div class="kpi-module-group">
+      <h4 class="kpi-module-title">Risk Management</h4>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-value">${d.total_risks}</div><div class="stat-label">Total Risks</div></div>
+        <div class="stat-card${d.high_risks > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.high_risks}</div><div class="stat-label">High / Critical</div></div>
+        <div class="stat-card"><div class="stat-value">${d.open_treatments}</div><div class="stat-label">Open Treatments</div></div>
+        <div class="stat-card${soaPct >= 80 ? ' done' : ''}"><div class="stat-value">${soaPct}%</div><div class="stat-label">SoA Implemented</div></div>
+        <div class="stat-card${d.threat_items_new > 0 ? ' overdue' : ''}"><div class="stat-value">${d.threat_items_new}</div><div class="stat-label">New Threats</div></div>
+      </div>
+    </div>
+    <div class="kpi-module-group">
+      <h4 class="kpi-module-title">Document Control</h4>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-value">${d.total_documents}</div><div class="stat-label">Documents</div></div>
+        <div class="stat-card${d.docs_due_review > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.docs_due_review}</div><div class="stat-label">Due for Review</div></div>
+      </div>
+    </div>
+    <div class="kpi-module-group">
+      <h4 class="kpi-module-title">Architecture</h4>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-value">${d.arch_processes}</div><div class="stat-label">Processes</div></div>
+        <div class="stat-card"><div class="stat-value">${d.arch_roles}</div><div class="stat-label">Roles</div></div>
+        <div class="stat-card"><div class="stat-value">${d.arch_systems}</div><div class="stat-label">Systems</div></div>
+        <div class="stat-card"><div class="stat-value">${d.arch_facilities}</div><div class="stat-label">Facilities</div></div>
+      </div>
     </div>`;
 
   // Custom KPIs

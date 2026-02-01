@@ -1338,15 +1338,31 @@ app.get('/api/kpis', (req, res) => {
 app.get('/api/kpis/auto', (req, res) => {
   const today = new Date().toISOString().split('T')[0];
   const auto = {
+    // Task Management
     tasks_active: db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1').get().v,
     tasks_overdue: db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1 AND next_due < ?').get(today).v,
     completions_this_month: db.prepare("SELECT COUNT(*) as v FROM completions WHERE completed_at >= date('now','start of month')").get().v,
-    open_actions: db.prepare("SELECT COUNT(*) as v FROM actions WHERE status IN ('open','in_progress')").get().v,
+    // Audits & Compliance
+    audits_planned: db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'planned'").get().v,
     audits_completed: db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'completed'").get().v,
     open_ncrs: db.prepare("SELECT COUNT(*) as v FROM non_conformities WHERE status IN ('open','in_progress')").get().v,
+    open_actions: db.prepare("SELECT COUNT(*) as v FROM actions WHERE status IN ('open','in_progress')").get().v,
+    standards_count: db.prepare('SELECT COUNT(DISTINCT standard) as v FROM standard_requirements').get().v,
+    // Risk Management
     total_risks: db.prepare('SELECT COUNT(*) as v FROM risks').get().v,
     high_risks: db.prepare('SELECT COUNT(*) as v FROM risks WHERE inherent_score >= 15').get().v,
     open_treatments: db.prepare("SELECT COUNT(*) as v FROM risk_treatments WHERE status IN ('planned','in_progress')").get().v,
+    soa_applicable: db.prepare('SELECT COUNT(*) as v FROM soa_entries WHERE applicable = 1').get().v,
+    soa_implemented: db.prepare("SELECT COUNT(*) as v FROM soa_entries WHERE applicable = 1 AND implementation_status = 'implemented'").get().v,
+    threat_items_new: db.prepare("SELECT COUNT(*) as v FROM threat_items WHERE status = 'new'").get().v,
+    // Document Control
+    total_documents: db.prepare('SELECT COUNT(*) as v FROM documents').get().v,
+    docs_due_review: db.prepare('SELECT COUNT(*) as v FROM documents WHERE review_date IS NOT NULL AND review_date <= ?').get(today).v,
+    // Architecture
+    arch_processes: db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'process'").get().v,
+    arch_roles: db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'role'").get().v,
+    arch_systems: db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'system'").get().v,
+    arch_facilities: db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'facility'").get().v,
   };
   res.json(auto);
 });
