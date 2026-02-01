@@ -1825,6 +1825,10 @@ async function loadRequirements() {
   const reqs = await api(`/api/requirements?${params}`);
   const standards = await api('/api/requirements/standards');
 
+  // Prefetch cross-links for all requirements
+  const allLinks = {};
+  await Promise.all(reqs.map(async r => { allLinks[r.id] = await api(`/api/cross-links/requirement/${r.id}`); }));
+
   // Render filter bar
   document.getElementById('req-filters-bar').innerHTML = `
     <select onchange="reqFilters.standard=this.value;loadRequirements()">
@@ -1870,7 +1874,7 @@ async function loadRequirements() {
           <div class="req-col-audit">Last Audit</div>
           <div class="req-col-rating">Rating</div>
           <div class="req-col-nc">NCs</div>
-          <div class="req-col-owner">Owner</div>
+          <div class="req-col-links">Links</div>
           <div class="req-col-actions"></div>
         </div>`;
     for (const r of items) {
@@ -1891,6 +1895,23 @@ async function loadRequirements() {
         }
       }
 
+      // Build links column: show processes inline, rest behind collapse
+      const links = allLinks[r.id] || [];
+      const processLinks = links.filter(l => l.type === 'process');
+      const otherLinks = links.filter(l => l.type !== 'process');
+      const collapseId = `req-cl-${r.id}`;
+      let linksHtml;
+      if (links.length === 0) {
+        linksHtml = '<span style="color:var(--text-muted);font-size:11px">-</span>';
+      } else {
+        const procLabel = processLinks.length > 0 ? processLinks.map(l => esc(l.name)).join(', ') : '';
+        const otherCount = otherLinks.length;
+        linksHtml = `<span style="font-size:12px;cursor:pointer" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">`;
+        if (procLabel) linksHtml += procLabel;
+        if (otherCount > 0) linksHtml += `${procLabel ? ' ' : ''}<span style="color:var(--text-muted)">(+${otherCount})</span>`;
+        linksHtml += ` <span class="cl-toggle-icon">+</span></span>`;
+      }
+
       html += `<div class="req-table-row">
           <div class="req-col-clause"><span class="req-clause">${esc(r.clause)}</span></div>
           <div class="req-col-title">
@@ -1900,28 +1921,28 @@ async function loadRequirements() {
           <div class="req-col-audit">${lastAuditLabel}</div>
           <div class="req-col-rating">${ratingBadge}</div>
           <div class="req-col-nc">${ncBadge}</div>
-          <div class="req-col-owner">${r.owner ? `<span style="font-size:12px">${esc(r.owner)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
+          <div class="req-col-links">${linksHtml}</div>
           <div class="req-col-actions">
             ${actionMenu([
-              { label: '&#128279; Links', onclick: `toggleReqLinks(${r.id})` },
+              { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('requirement',${r.id},'req-expand-${r.id}')` },
               { label: '&#9998; Edit', onclick: `openRequirementModal(${r.id})` },
               'sep',
               { label: '&#128465; Delete', onclick: `deleteRequirement(${r.id})`, cls: 'danger' },
             ])}
           </div>
         </div>
-        <div id="req-links-${r.id}"></div>`;
+        <div id="req-expand-${r.id}" class="req-expand-row">
+          <div id="${collapseId}" class="req-links-detail collapsed">
+            ${links.length > 0 ? buildInlineLinksDetail(links, 'requirement', r.id, `req-expand-${r.id}`) : ''}
+          </div>
+        </div>`;
     }
     html += '</div></div>';
   }
   list.innerHTML = html;
 }
 
-function toggleReqLinks(id) {
-  const el = document.getElementById(`req-links-${id}`);
-  if (el.innerHTML) { el.innerHTML = ''; return; }
-  renderCrossLinks('requirement', id, `req-links-${id}`);
-}
+// toggleReqLinks removed — links now inline in table
 
 async function openRequirementModal(id) {
   const modal = document.getElementById('requirement-modal');
