@@ -328,13 +328,7 @@
             <div class="form-row">
               <div class="form-group">
                 <label for="ti-risk-category">Category</label>
-                <input type="text" id="ti-risk-category" value="Information Security" list="ti-risk-cat-list">
-                <datalist id="ti-risk-cat-list">
-                  <option value="Information Security">
-                  <option value="Operational">
-                  <option value="Compliance">
-                  <option value="Technology">
-                </datalist>
+                <select id="ti-risk-category"><option value="">-- Select --</option></select>
               </div>
               <div class="form-group">
                 <label for="ti-risk-source">Source</label>
@@ -487,10 +481,6 @@
           </div>
         </div>
         <div class="form-group">
-          <label for="audit-scope">Scope Description</label>
-          <textarea id="audit-scope" rows="2" placeholder="Departments, processes, or clauses to audit"></textarea>
-        </div>
-        <div class="form-group">
           <label>Scope — Processes</label>
           <div id="audit-scope-processes" class="arch-picker-wrap"></div>
         </div>
@@ -500,8 +490,8 @@
             <select id="audit-lead"><option value="">-- Select Role --</option></select>
           </div>
           <div class="form-group">
-            <label for="audit-team">Audit Team</label>
-            <input type="text" id="audit-team" placeholder="Team members (comma separated)">
+            <label for="audit-auditee">Auditee</label>
+            <select id="audit-auditee"><option value="">-- Select Role --</option></select>
           </div>
         </div>
         <div class="form-group" id="audit-req-picker-group">
@@ -641,17 +631,15 @@
           <label for="req-description">Description / Details</label>
           <textarea id="req-description" rows="4" placeholder="Full requirement text or audit guidance"></textarea>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for="req-category-field">Category</label>
-            <input type="text" id="req-category-field" placeholder="e.g. Context, Leadership, Support" list="req-category-list">
-            <datalist id="req-category-list"></datalist>
-          </div>
-          <div class="form-group">
-            <label for="req-owner">Owner / Department</label>
-            <input type="text" id="req-owner" placeholder="e.g. Quality, IT, Operations" list="req-owner-list">
-            <datalist id="req-owner-list"></datalist>
-          </div>
+        <div class="form-group">
+          <label for="req-category-field">Category</label>
+          <input type="text" id="req-category-field" placeholder="e.g. Context, Leadership, Support" list="req-category-list">
+          <datalist id="req-category-list"></datalist>
+        </div>
+        <div class="form-group" id="req-links-group" style="display:none">
+          <label>Links</label>
+          <div id="req-links-container" class="req-links-edit-container"></div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="openReqLinkPicker()">+ Add Link</button>
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeRequirementModal()">Cancel</button>
@@ -933,15 +921,7 @@
         <div class="form-row">
           <div class="form-group">
             <label for="risk-category">Category</label>
-            <input type="text" id="risk-category" value="Information Security" list="risk-category-list">
-            <datalist id="risk-category-list">
-              <option value="Information Security">
-              <option value="Operational">
-              <option value="Compliance">
-              <option value="Strategic">
-              <option value="Environmental">
-              <option value="Health & Safety">
-            </datalist>
+            <select id="risk-category"><option value="">-- Select --</option></select>
           </div>
           <div class="form-group">
             <label for="risk-owner">Risk Owner</label>

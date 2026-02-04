@@ -1224,11 +1224,15 @@ async function openAuditModal(id) {
   const leadSel = document.getElementById('audit-lead');
   leadSel.innerHTML = '<option value="">-- Select Role --</option>' + archRoles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
 
-  // Populate scope processes as checkboxes
+  // Populate scope processes as checkboxes with auto-select handler
   const scopeWrap = document.getElementById('audit-scope-processes');
   scopeWrap.innerHTML = archProcesses.length === 0
     ? '<span style="font-size:12px;color:var(--text-muted)">No processes defined in Architecture.</span>'
-    : archProcesses.map(p => `<label class="arch-picker-item"><input type="checkbox" name="audit-scope-proc" value="${p.id}" data-name="${esc(p.name)}"> ${esc(p.name)}</label>`).join('');
+    : archProcesses.map(p => `<label class="arch-picker-item"><input type="checkbox" name="audit-scope-proc" value="${p.id}" data-name="${esc(p.name)}" onchange="onAuditProcessChange(this)"> ${esc(p.name)}</label>`).join('');
+
+  // Populate auditee dropdown from roles
+  const auditeeSel = document.getElementById('audit-auditee');
+  auditeeSel.innerHTML = '<option value="">-- Select Role --</option>' + archRoles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
 
   if (id) {
     const a = await api(`/api/audits/${id}`);
@@ -1236,9 +1240,8 @@ async function openAuditModal(id) {
     document.getElementById('audit-modal-title').textContent = 'Edit Audit';
     document.getElementById('audit-id').value = a.id;
     document.getElementById('audit-title').value = a.title;
-    document.getElementById('audit-scope').value = a.scope;
     leadSel.value = a.lead_auditor || '';
-    document.getElementById('audit-team').value = a.audit_team;
+    auditeeSel.value = a.auditee || '';
 
     // Check scope processes from cross-links
     const auditLinks = await api(`/api/cross-links/audit/${id}`);
@@ -1285,8 +1288,20 @@ async function populateAuditReqPicker(auditId) {
   if (reqs.length === 0) {
     container.innerHTML = '<div class="empty-state" style="padding:12px;font-size:13px">No requirements found for this standard. Import a template in the Requirements view first.</div>';
     document.getElementById('audit-req-count').textContent = '';
+    auditReqProcessMap = {};
     return;
   }
+
+  // Fetch cross-links for all requirements to build process mapping
+  auditReqProcessMap = {};
+  const linkPromises = reqs.map(async r => {
+    const links = await api(`/api/cross-links/requirement/${r.id}`);
+    const processIds = links.filter(l => l.type === 'process').map(l => l.id);
+    if (processIds.length > 0) {
+      auditReqProcessMap[r.id] = processIds;
+    }
+  });
+  await Promise.all(linkPromises);
 
   // Group by category
   const groups = {};
@@ -1301,17 +1316,24 @@ async function populateAuditReqPicker(auditId) {
     html += `<div class="req-picker-category">${esc(cat)}</div>`;
     for (const r of items) {
       const alreadyAdded = existingClauses.includes(r.clause);
-      html += `<label class="req-picker-item${alreadyAdded ? ' already-added' : ''}">
+      const linkedProcesses = auditReqProcessMap[r.id] || [];
+      const processHint = linkedProcesses.length > 0 ? ` data-processes="${linkedProcesses.join(',')}"` : '';
+      html += `<label class="req-picker-item${alreadyAdded ? ' already-added' : ''}"${processHint}>
         <input type="checkbox" name="audit_req_ids" value="${r.id}" ${alreadyAdded ? 'disabled checked' : ''} onchange="updateAuditReqCount()">
         <span class="req-picker-clause">${esc(r.clause)}</span>
         <span class="req-picker-title">${esc(r.title)}</span>
-        ${r.owner ? `<span style="font-size:11px;color:var(--text-muted);flex-shrink:0">${esc(r.owner)}</span>` : ''}
+        ${linkedProcesses.length > 0 ? `<span style="font-size:10px;color:var(--primary);flex-shrink:0" title="Linked to process(es)">&#128260;</span>` : ''}
         ${alreadyAdded ? '<span class="badge badge-low" style="font-size:10px;flex-shrink:0">already added</span>' : ''}
       </label>`;
     }
   }
   container.innerHTML = html;
   updateAuditReqCount();
+
+  // Auto-select requirements for already checked processes
+  document.querySelectorAll('#audit-scope-processes input[name="audit-scope-proc"]:checked').forEach(cb => {
+    onAuditProcessChange(cb);
+  });
 }
 
 function updateAuditReqCount() {
@@ -1333,6 +1355,28 @@ document.getElementById('audit-standard').addEventListener('change', () => {
   populateAuditReqPicker(auditId || null);
 });
 
+// Store requirement-to-process mapping for auto-selection
+let auditReqProcessMap = {}; // { reqId: [processId, ...] }
+
+async function onAuditProcessChange(checkbox) {
+  const processId = parseInt(checkbox.value);
+  const isChecked = checkbox.checked;
+
+  // Find all requirements linked to this process and auto-select/deselect them
+  for (const [reqIdStr, processIds] of Object.entries(auditReqProcessMap)) {
+    if (processIds.includes(processId)) {
+      const reqCheckbox = document.querySelector(`#audit-req-checklist input[name="audit_req_ids"][value="${reqIdStr}"]:not(:disabled)`);
+      if (reqCheckbox) {
+        if (isChecked) {
+          reqCheckbox.checked = true;
+        }
+        // Note: We don't auto-uncheck when process is deselected, as user may have manually selected it
+      }
+    }
+  }
+  updateAuditReqCount();
+}
+
 function closeAuditModal() {
   document.getElementById('audit-modal').classList.add('hidden');
 }
@@ -1343,9 +1387,8 @@ async function saveAudit(e) {
   const body = {
     title: document.getElementById('audit-title').value,
     standard: document.getElementById('audit-standard').value,
-    scope: document.getElementById('audit-scope').value,
     lead_auditor: document.getElementById('audit-lead').value,
-    audit_team: document.getElementById('audit-team').value,
+    auditee: document.getElementById('audit-auditee').value,
     planned_date: document.getElementById('audit-planned-date').value || null,
   };
 
@@ -1872,7 +1915,6 @@ async function loadRequirements() {
           <div class="req-col-clause">Clause</div>
           <div class="req-col-title">Requirement</div>
           <div class="req-col-audit">Last Audit</div>
-          <div class="req-col-rating">Rating</div>
           <div class="req-col-nc">NCs</div>
           <div class="req-col-links">Links</div>
           <div class="req-col-actions"></div>
@@ -1881,10 +1923,6 @@ async function loadRequirements() {
       const lastAuditLabel = r.last_audited
         ? `<span class="req-audit-info" title="Last audited in: ${esc(r.last_audit_title || '')}">${r.last_audited}</span>`
         : '<span class="req-audit-info none">-</span>';
-
-      const ratingBadge = r.last_rating
-        ? `<span class="badge ${ratingBadgeClass(r.last_rating)}">${ratingLabel(r.last_rating)}</span>`
-        : '<span style="color:var(--text-muted);font-size:11px">-</span>';
 
       let ncBadge = '<span style="color:var(--text-muted);font-size:11px">-</span>';
       if (r.nc_total > 0) {
@@ -1919,7 +1957,6 @@ async function loadRequirements() {
             ${r.description ? `<span class="req-desc">${esc(r.description)}</span>` : ''}
           </div>
           <div class="req-col-audit">${lastAuditLabel}</div>
-          <div class="req-col-rating">${ratingBadge}</div>
           <div class="req-col-nc">${ncBadge}</div>
           <div class="req-col-links">${linksHtml}</div>
           <div class="req-col-actions">
@@ -1944,21 +1981,24 @@ async function loadRequirements() {
 
 // toggleReqLinks removed — links now inline in table
 
+let currentReqLinks = []; // Temporary storage for links being edited in modal
+
 async function openRequirementModal(id) {
   const modal = document.getElementById('requirement-modal');
   document.getElementById('requirement-form').reset();
   document.getElementById('req-id').value = '';
   document.getElementById('req-modal-title').textContent = 'New Requirement';
+  currentReqLinks = [];
 
   // Populate standard datalist from existing
   const standards = await api('/api/requirements/standards');
   document.getElementById('req-standard-list').innerHTML = standards.map(s => `<option value="${esc(s)}">`).join('');
-  // Populate category and owner datalists
+  // Populate category datalist
   const reqs = await api('/api/requirements');
   const cats = [...new Set(reqs.map(r => r.category).filter(Boolean))];
   document.getElementById('req-category-list').innerHTML = cats.map(c => `<option value="${esc(c)}">`).join('');
-  const owners = [...new Set(reqs.map(r => r.owner).filter(Boolean))];
-  document.getElementById('req-owner-list').innerHTML = owners.map(o => `<option value="${esc(o)}">`).join('');
+
+  const linksGroup = document.getElementById('req-links-group');
 
   if (id) {
     const r = reqs.find(x => x.id === id);
@@ -1970,10 +2010,124 @@ async function openRequirementModal(id) {
       document.getElementById('req-title-field').value = r.title;
       document.getElementById('req-description').value = r.description || '';
       document.getElementById('req-category-field').value = r.category || '';
-      document.getElementById('req-owner').value = r.owner || '';
+
+      // Load existing links
+      const links = await api(`/api/cross-links/requirement/${id}`);
+      currentReqLinks = links.map(l => ({ link_id: l.link_id, type: l.type, id: l.id, name: l.name }));
+      linksGroup.style.display = 'block';
+      renderReqLinksInModal();
     }
+  } else {
+    // New requirement - hide links until saved
+    linksGroup.style.display = 'none';
   }
   modal.classList.remove('hidden');
+}
+
+function renderReqLinksInModal() {
+  const container = document.getElementById('req-links-container');
+  if (currentReqLinks.length === 0) {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:12px">No links yet.</span>';
+    return;
+  }
+  const typeLabels = {};
+  for (const [k, v] of Object.entries(linkableTypes)) typeLabels[k] = v.label;
+
+  container.innerHTML = currentReqLinks.map((l, idx) => `
+    <div class="req-link-item" style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:#f1f5f9;border-radius:var(--radius);margin-bottom:4px;font-size:12px">
+      <span><strong>${typeLabels[l.type] || l.type}:</strong> ${esc(l.name)}</span>
+      <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 6px;font-size:10px" onclick="removeReqLinkFromModal(${idx})">&times;</button>
+    </div>
+  `).join('');
+}
+
+function removeReqLinkFromModal(idx) {
+  const removed = currentReqLinks.splice(idx, 1)[0];
+  // If it has a link_id, delete from server
+  if (removed.link_id) {
+    api(`/api/cross-links/${removed.link_id}`, { method: 'DELETE' });
+  }
+  renderReqLinksInModal();
+}
+
+async function openReqLinkPicker() {
+  const reqId = document.getElementById('req-id').value;
+  if (!reqId) {
+    alert('Please save the requirement first before adding links.');
+    return;
+  }
+
+  const allowed = linkableTypes['requirement']?.canLink || [];
+  let existing = document.getElementById('req-link-picker-modal');
+  if (!existing) {
+    existing = document.createElement('div');
+    existing.id = 'req-link-picker-modal';
+    existing.className = 'modal hidden';
+    document.body.appendChild(existing);
+  }
+  existing.innerHTML = `
+    <div class="modal-overlay" onclick="closeReqLinkPicker()"></div>
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h3>Add Link</h3>
+        <button class="modal-close" onclick="closeReqLinkPicker()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>Type</label>
+        <select id="req-link-pick-type" onchange="loadReqLinkOptions()">
+          <option value="">-- Select type --</option>
+          ${allowed.map(t => `<option value="${t}">${linkableTypes[t]?.label || t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Item</label>
+        <select id="req-link-pick-item"><option value="">-- Select type first --</option></select>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="closeReqLinkPicker()">Cancel</button>
+        <button class="btn btn-primary" onclick="addReqLinkFromModal()">Add Link</button>
+      </div>
+    </div>`;
+  existing.classList.remove('hidden');
+}
+
+function closeReqLinkPicker() {
+  const m = document.getElementById('req-link-picker-modal');
+  if (m) m.classList.add('hidden');
+}
+
+async function loadReqLinkOptions() {
+  const type = document.getElementById('req-link-pick-type').value;
+  const sel = document.getElementById('req-link-pick-item');
+  if (!type) { sel.innerHTML = '<option value="">-- Select type first --</option>'; return; }
+  const items = await api(`/api/linkable/${type}`);
+  sel.innerHTML = '<option value="">-- Select --</option>' + items.map(i => `<option value="${i.id}" data-name="${esc(i.name)}">${esc(i.name)}</option>`).join('');
+}
+
+async function addReqLinkFromModal() {
+  const reqId = document.getElementById('req-id').value;
+  const targetType = document.getElementById('req-link-pick-type').value;
+  const targetIdStr = document.getElementById('req-link-pick-item').value;
+  const targetSel = document.getElementById('req-link-pick-item');
+  const targetName = targetSel.options[targetSel.selectedIndex]?.dataset.name || '';
+
+  if (!targetType || !targetIdStr) return alert('Please select a type and item');
+
+  // Check if already linked
+  if (currentReqLinks.some(l => l.type === targetType && l.id === parseInt(targetIdStr))) {
+    alert('This item is already linked.');
+    return;
+  }
+
+  // Create the link via API
+  await api('/api/cross-links', { method: 'POST', body: { source_type: 'requirement', source_id: parseInt(reqId), target_type: targetType, target_id: parseInt(targetIdStr) } });
+
+  // Reload links
+  const links = await api(`/api/cross-links/requirement/${reqId}`);
+  currentReqLinks = links.map(l => ({ link_id: l.link_id, type: l.type, id: l.id, name: l.name }));
+
+  closeReqLinkPicker();
+  renderReqLinksInModal();
 }
 
 function closeRequirementModal() {
@@ -1989,13 +2143,25 @@ async function saveRequirement(e) {
     title: document.getElementById('req-title-field').value,
     description: document.getElementById('req-description').value,
     category: document.getElementById('req-category-field').value,
-    owner: document.getElementById('req-owner').value,
   };
+  let reqId = id;
   if (id) {
     await api(`/api/requirements/${id}`, { method: 'PUT', body });
   } else {
-    await api('/api/requirements', { method: 'POST', body });
+    const result = await api('/api/requirements', { method: 'POST', body });
+    reqId = result.id;
   }
+
+  // Show links section for newly created requirement so user can add links
+  if (!id && reqId) {
+    document.getElementById('req-id').value = reqId;
+    document.getElementById('req-links-group').style.display = 'block';
+    document.getElementById('req-modal-title').textContent = 'Edit Requirement';
+    renderReqLinksInModal();
+    // Don't close modal - let user add links
+    return;
+  }
+
   closeRequirementModal();
   loadRequirements();
 }
@@ -2564,14 +2730,26 @@ async function deleteFeed(id) {
 
 // Create risk from threat item
 async function openTiRiskModal(itemId) {
-  const items = await api(`/api/threat-items?limit=1000`);
+  const [items, riskCategories] = await Promise.all([
+    api(`/api/threat-items?limit=1000`),
+    getRiskCategoriesFromStandards(),
+  ]);
   const item = items.find(i => i.id === itemId);
   if (!item) { alert('Could not find threat item. It may belong to a disabled feed.'); return; }
+
+  // Populate category dropdown
+  const catSel = document.getElementById('ti-risk-category');
+  catSel.innerHTML = '<option value="">-- Select --</option>' + riskCategories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  // Default to Information Security for TI items (if available)
+  const defaultCat = riskCategories.includes('Information Security') ? 'Information Security' : (riskCategories[0] || '');
+  catSel.value = defaultCat;
+
   const form = document.getElementById('ti-risk-form');
   form.reset();
   form.dataset.itemId = itemId;
   document.getElementById('ti-risk-title').value = item.title || '';
   document.getElementById('ti-risk-description').value = (item.description || '') + (item.link ? '\n\nSource: ' + item.link : '');
+  document.getElementById('ti-risk-category').value = defaultCat;
   document.getElementById('ti-risk-source').value = (item.feed_name || '') + ' (Tier ' + (item.tier || '?') + ')';
   document.getElementById('ti-risk-threat').value = item.title || '';
   document.getElementById('ti-risk-modal').classList.remove('hidden');
@@ -2611,6 +2789,33 @@ async function saveTiRisk(e) {
 
 // --- Risk Management Module ---
 let riskFilters = { status: '', category: '' };
+
+// Standard to risk category mapping
+const standardToCategoryMap = {
+  'ISO 9001': 'Quality',
+  'ISO 14001': 'Environment',
+  'ISO 45001': 'Health & Safety',
+  'ISO 27001': 'Information Security',
+  'ISO 27001 Annex A': 'Information Security',
+  'ISO 22000': 'Food Safety',
+  'ISO 42001': 'AI',
+  'ISO 42001:2023': 'AI',
+};
+
+async function getRiskCategoriesFromStandards() {
+  const standards = await api('/api/requirements/standards');
+  const categories = new Set();
+  for (const std of standards) {
+    const cat = standardToCategoryMap[std];
+    if (cat) categories.add(cat);
+  }
+  // Always include some defaults if no standards selected
+  if (categories.size === 0) {
+    categories.add('Information Security');
+    categories.add('Operational');
+  }
+  return [...categories].sort();
+}
 
 function riskScoreClass(score) {
   if (score >= 20) return 'risk-critical';
@@ -2758,14 +2963,21 @@ async function openRiskModal(id) {
   document.getElementById('risk-modal-title').textContent = 'New Risk';
   document.getElementById('risk-status-group').classList.add('hidden');
 
-  // Populate architecture dropdowns
-  const [roles, systems, assets, processes, facilities] = await Promise.all([
+  // Populate architecture dropdowns and category from standards
+  const [roles, systems, assets, processes, facilities, riskCategories] = await Promise.all([
     api('/api/architecture?arch_type=role'),
     api('/api/architecture?arch_type=system'),
     api('/api/architecture?arch_type=asset'),
     api('/api/architecture?arch_type=process'),
     api('/api/architecture?arch_type=facility'),
+    getRiskCategoriesFromStandards(),
   ]);
+
+  // Populate category dropdown from standards
+  const catSel = document.getElementById('risk-category');
+  catSel.innerHTML = '<option value="">-- Select --</option>' + riskCategories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  if (riskCategories.length > 0) catSel.value = riskCategories[0]; // Default to first category
+
   const ownerSel = document.getElementById('risk-owner');
   ownerSel.innerHTML = '<option value="">-- Select Role --</option>' + roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
   const assetSel = document.getElementById('risk-asset');

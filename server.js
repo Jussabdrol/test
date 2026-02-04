@@ -81,6 +81,7 @@ db.exec(`
     scope TEXT DEFAULT '',
     lead_auditor TEXT DEFAULT '',
     audit_team TEXT DEFAULT '',
+    auditee TEXT DEFAULT '',
     status TEXT DEFAULT 'planned' CHECK(status IN ('planned','in_progress','completed','cancelled')),
     planned_date TEXT DEFAULT NULL,
     completed_date TEXT DEFAULT NULL,
@@ -316,6 +317,9 @@ try { db.exec("ALTER TABLE documents ADD COLUMN classification TEXT DEFAULT ''")
 
 // Migration: add linked_processes column to soa_entries (JSON array of process IDs)
 try { db.exec("ALTER TABLE soa_entries ADD COLUMN linked_processes TEXT DEFAULT '[]'"); } catch(e) { /* already exists */ }
+
+// Migration: add auditee column to audits
+try { db.exec("ALTER TABLE audits ADD COLUMN auditee TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
 
 // Migration: add regulatory column to soa_entries
 try { db.exec("ALTER TABLE soa_entries ADD COLUMN regulatory INTEGER DEFAULT 0"); } catch(e) { /* already exists */ }
@@ -739,12 +743,12 @@ app.get('/api/audits/:id', (req, res) => {
 
 // Create audit
 app.post('/api/audits', (req, res) => {
-  const { title, standard, scope, lead_auditor, audit_team, planned_date, requirement_ids } = req.body;
+  const { title, standard, scope, lead_auditor, audit_team, auditee, planned_date, requirement_ids } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
 
   const createAudit = db.transaction(() => {
-    const result = db.prepare(`INSERT INTO audits (title, standard, scope, lead_auditor, audit_team, planned_date) VALUES (?, ?, ?, ?, ?, ?)`).run(
-      title, standard || 'ISO 9001', scope || '', lead_auditor || '', audit_team || '', planned_date || null
+    const result = db.prepare(`INSERT INTO audits (title, standard, scope, lead_auditor, audit_team, auditee, planned_date) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+      title, standard || 'ISO 9001', scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null
     );
     const auditId = result.lastInsertRowid;
 
@@ -772,7 +776,7 @@ app.post('/api/audits', (req, res) => {
 app.put('/api/audits/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Audit not found' });
-  const fields = ['title', 'standard', 'scope', 'lead_auditor', 'audit_team', 'status', 'planned_date', 'completed_date', 'summary'];
+  const fields = ['title', 'standard', 'scope', 'lead_auditor', 'audit_team', 'auditee', 'status', 'planned_date', 'completed_date', 'summary'];
   const updates = [];
   const params = [];
   for (const f of fields) {
