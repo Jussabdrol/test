@@ -242,6 +242,7 @@
             <thead>
               <tr>
                 <th>NCR</th>
+                <th>Standard</th>
                 <th>Audit</th>
                 <th>Clause</th>
                 <th>Severity</th>
@@ -727,6 +728,11 @@
           <option value="process">Process</option>
           <option value="system">System</option>
           <option value="asset">Asset</option>
+          <option value="facility">Facility</option>
+          <option value="role">Role</option>
+          <option value="risk">Risk</option>
+          <option value="task">Task</option>
+          <option value="requirement">Requirement</option>
         </select>
       </div>
       <div class="form-group">
@@ -1104,10 +1110,9 @@
           <label for="treatment-description">Description *</label>
           <textarea id="treatment-description" rows="3" required placeholder="Describe the treatment plan"></textarea>
         </div>
-        <div class="form-group" id="treatment-links-group" style="display:none">
-          <label>Links</label>
-          <div id="treatment-links-container" class="treatment-links-edit-container"></div>
-          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="openTreatmentLinkPicker()">+ Add Link</button>
+        <div class="form-group">
+          <label for="treatment-control-ref">Control Reference</label>
+          <input type="text" id="treatment-control-ref" placeholder="e.g. A.5.1, Policy-001">
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -1261,7 +1266,7 @@
         <div class="form-row">
           <div class="form-group">
             <label for="arch-owner">Owner</label>
-            <input type="text" id="arch-owner" placeholder="Who owns this?">
+            <select id="arch-owner"><option value="">-- Select Owner --</option></select>
           </div>
           <div class="form-group">
             <label for="arch-status">Status</label>

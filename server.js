@@ -754,6 +754,19 @@ app.get('/api/audits/:id', (req, res) => {
   res.json(audit);
 });
 
+// Helper function to calculate next recurrence date
+function getNextRecurrenceDate(dateStr, recurrenceType) {
+  const date = new Date(dateStr);
+  switch (recurrenceType) {
+    case 'monthly': date.setMonth(date.getMonth() + 1); break;
+    case 'quarterly': date.setMonth(date.getMonth() + 3); break;
+    case 'semi-annual': date.setMonth(date.getMonth() + 6); break;
+    case 'annual': date.setFullYear(date.getFullYear() + 1); break;
+    default: return null;
+  }
+  return date.toISOString().split('T')[0];
+}
+
 // Create audit
 app.post('/api/audits', (req, res) => {
   const { title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, requirement_ids, recurrence, recurrence_end_date } = req.body;
@@ -764,6 +777,7 @@ app.post('/api/audits', (req, res) => {
   const primaryStandard = standardsArray[0] || 'ISO 9001';
 
   const createAudit = db.transaction(() => {
+    // Create the first audit
     const result = db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null
     );
@@ -779,6 +793,35 @@ app.post('/api/audits', (req, res) => {
         if (req) {
           insertCl.run(auditId, req.clause, req.title, req.standard, order++);
         }
+      }
+    }
+
+    // Create recurring audit events if recurrence is set
+    if (recurrence && recurrence !== 'none' && planned_date && recurrence_end_date) {
+      let nextDate = getNextRecurrenceDate(planned_date, recurrence);
+      const endDate = new Date(recurrence_end_date);
+      let instanceNum = 2;
+
+      while (nextDate && new Date(nextDate) <= endDate) {
+        const recurResult = db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          `${title} (#${instanceNum})`, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date
+        );
+
+        // Copy checklist items to recurring audit
+        if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
+          const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
+          const getReq = db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
+          let order = 1;
+          for (const reqId of requirement_ids) {
+            const req = getReq.get(reqId);
+            if (req) {
+              insertCl.run(recurResult.lastInsertRowid, req.clause, req.title, req.standard, order++);
+            }
+          }
+        }
+
+        nextDate = getNextRecurrenceDate(nextDate, recurrence);
+        instanceNum++;
       }
     }
 
@@ -995,7 +1038,7 @@ app.post('/api/checklist/:id/evidence-link', (req, res) => {
 // List NCs (optionally filter by audit)
 app.get('/api/ncrs', (req, res) => {
   const { audit_id, status } = req.query;
-  let sql = `SELECT n.*, a.title as audit_title FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE 1=1`;
+  let sql = `SELECT n.*, a.title as audit_title, a.standard as audit_standard FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE 1=1`;
   const params = [];
   if (audit_id) { sql += ' AND n.audit_id = ?'; params.push(audit_id); }
   if (status) { sql += ' AND n.status = ?'; params.push(status); }

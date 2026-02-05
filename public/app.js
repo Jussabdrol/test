@@ -1682,29 +1682,6 @@ async function loadAuditExecution(auditId) {
     }
   }
 
-  // Show NCs for this audit
-  if (audit.non_conformities.length > 0) {
-    html += '<h3 class="section-title" style="margin-top:20px">Non-Conformities for this Audit</h3>';
-    html += audit.non_conformities.map(n => {
-      const sevBadge = n.severity === 'major' ? 'badge-critical' : 'badge-high';
-      const stBadge = n.status === 'open' ? 'badge-high' : n.status === 'in_progress' ? 'badge-medium' : 'badge-low';
-      return `<div class="ncr-card">
-        <div style="display:flex;justify-content:space-between;align-items:start">
-          <div>
-            <span class="badge ${sevBadge}">${n.severity}</span>
-            ${n.clause ? `<strong>Clause ${esc(n.clause)}</strong>` : ''}
-            <span class="badge ${stBadge}">${n.status}</span>
-          </div>
-          ${actionMenu([
-            { label: '&#9998; Edit NCR', onclick: `openNcrModal(${n.id})` },
-          ])}
-        </div>
-        <p style="margin:8px 0;font-size:13px">${esc(n.description)}</p>
-        ${n.responsible ? `<div class="ncr-meta">Responsible: ${esc(n.responsible)}${n.due_date ? ' | Due: ' + n.due_date : ''}</div>` : ''}
-      </div>`;
-    }).join('');
-  }
-
   content.innerHTML = html;
 }
 
@@ -1803,7 +1780,7 @@ async function loadChecklistLinkOptions() {
   const optionsContainer = document.getElementById('checklist-link-options');
   const selectedType = typeSelect.value;
 
-  const items = await api(`/api/cross-link-items?type=${selectedType}`);
+  const items = await api(`/api/linkable/${selectedType}`);
   optionsContainer.innerHTML = items.length === 0
     ? '<div style="color:var(--text-muted);font-style:italic">No items available</div>'
     : items.map(item => `
@@ -1948,7 +1925,7 @@ function renderNcrTable(ncrs) {
   const tbody = document.getElementById('ncr-table-body');
   const today = new Date().toISOString().split('T')[0];
   if (ncrs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No non-conformities found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No non-conformities found</td></tr>';
     return;
   }
   tbody.innerHTML = ncrs.map(n => {
@@ -1959,6 +1936,7 @@ function renderNcrTable(ncrs) {
       <td><strong>${esc(n.description.substring(0, 80))}${n.description.length > 80 ? '...' : ''}</strong>
         <div id="ncr-links-${n.id}"></div>
       </td>
+      <td><span class="badge badge-inactive" style="font-size:11px">${esc(n.audit_standard || '-')}</span></td>
       <td>${esc(n.audit_title)}</td>
       <td>${esc(n.clause || '-')}</td>
       <td><span class="badge ${sevBadge}">${n.severity}</span></td>
@@ -3468,16 +3446,12 @@ async function populateTreatmentRoles() {
   sel.innerHTML = '<option value="">-- Select Role --</option>' + roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
 }
 
-let currentTreatmentLinks = []; // Temporary storage for treatment links being edited
-
 async function openTreatmentModalForRisk(riskId) {
   document.getElementById('treatment-form').reset();
   document.getElementById('treatment-id').value = '';
   document.getElementById('treatment-risk-id').value = riskId;
   document.getElementById('treatment-modal-title').textContent = 'New Treatment';
   document.getElementById('treatment-status-group').classList.add('hidden');
-  document.getElementById('treatment-links-group').style.display = 'none';
-  currentTreatmentLinks = [];
   await populateTreatmentRoles();
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
@@ -3492,6 +3466,7 @@ async function openTreatmentModal(id) {
   document.getElementById('treatment-modal-title').textContent = 'Edit Treatment';
   document.getElementById('treatment-type').value = t.treatment_type;
   document.getElementById('treatment-description').value = t.description;
+  document.getElementById('treatment-control-ref').value = t.control_reference || '';
   document.getElementById('treatment-due-date').value = t.due_date || '';
   document.getElementById('treatment-res-likelihood').value = t.residual_likelihood || '';
   document.getElementById('treatment-res-impact').value = t.residual_impact || '';
@@ -3500,116 +3475,7 @@ async function openTreatmentModal(id) {
   document.getElementById('treatment-status-group').classList.remove('hidden');
   await populateTreatmentRoles();
   document.getElementById('treatment-responsible').value = t.responsible || '';
-
-  // Load existing links
-  const links = await api(`/api/cross-links/treatment/${id}`);
-  currentTreatmentLinks = links.map(l => ({ link_id: l.link_id, type: l.type, id: l.id, name: l.name }));
-  document.getElementById('treatment-links-group').style.display = 'block';
-  renderTreatmentLinksInModal();
-
   document.getElementById('treatment-modal').classList.remove('hidden');
-}
-
-function renderTreatmentLinksInModal() {
-  const container = document.getElementById('treatment-links-container');
-  if (currentTreatmentLinks.length === 0) {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12px">No links yet.</span>';
-    return;
-  }
-  const typeLabels = {};
-  for (const [k, v] of Object.entries(linkableTypes)) typeLabels[k] = v.label;
-
-  container.innerHTML = currentTreatmentLinks.map((l, idx) => `
-    <div class="treatment-link-item" style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:#f1f5f9;border-radius:var(--radius);margin-bottom:4px;font-size:12px">
-      <span><strong>${typeLabels[l.type] || l.type}:</strong> ${esc(l.name)}</span>
-      <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 6px;font-size:10px" onclick="removeTreatmentLinkFromModal(${idx})">&times;</button>
-    </div>
-  `).join('');
-}
-
-function removeTreatmentLinkFromModal(idx) {
-  const removed = currentTreatmentLinks.splice(idx, 1)[0];
-  if (removed.link_id) {
-    api(`/api/cross-links/${removed.link_id}`, { method: 'DELETE' });
-  }
-  renderTreatmentLinksInModal();
-}
-
-async function openTreatmentLinkPicker() {
-  const treatmentId = document.getElementById('treatment-id').value;
-  if (!treatmentId) {
-    alert('Please save the treatment first before adding links.');
-    return;
-  }
-
-  const allowed = linkableTypes['treatment']?.canLink || [];
-  let existing = document.getElementById('treatment-link-picker-modal');
-  if (!existing) {
-    existing = document.createElement('div');
-    existing.id = 'treatment-link-picker-modal';
-    existing.className = 'modal hidden';
-    document.body.appendChild(existing);
-  }
-  existing.innerHTML = `
-    <div class="modal-overlay" onclick="closeTreatmentLinkPicker()"></div>
-    <div class="modal-content modal-sm">
-      <div class="modal-header">
-        <h3>Add Link</h3>
-        <button class="modal-close" onclick="closeTreatmentLinkPicker()">&times;</button>
-      </div>
-      <div class="form-group">
-        <label>Type</label>
-        <select id="treatment-link-pick-type" onchange="loadTreatmentLinkOptions()">
-          <option value="">-- Select type --</option>
-          ${allowed.map(t => `<option value="${t}">${linkableTypes[t]?.label || t}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Item</label>
-        <select id="treatment-link-pick-item"><option value="">-- Select type first --</option></select>
-      </div>
-      <div class="form-actions">
-        <button class="btn btn-secondary" onclick="closeTreatmentLinkPicker()">Cancel</button>
-        <button class="btn btn-primary" onclick="addTreatmentLinkFromModal()">Add Link</button>
-      </div>
-    </div>`;
-  existing.classList.remove('hidden');
-}
-
-function closeTreatmentLinkPicker() {
-  const m = document.getElementById('treatment-link-picker-modal');
-  if (m) m.classList.add('hidden');
-}
-
-async function loadTreatmentLinkOptions() {
-  const type = document.getElementById('treatment-link-pick-type').value;
-  const sel = document.getElementById('treatment-link-pick-item');
-  if (!type) { sel.innerHTML = '<option value="">-- Select type first --</option>'; return; }
-  const items = await api(`/api/linkable/${type}`);
-  sel.innerHTML = '<option value="">-- Select --</option>' + items.map(i => `<option value="${i.id}" data-name="${esc(i.name)}">${esc(i.name)}</option>`).join('');
-}
-
-async function addTreatmentLinkFromModal() {
-  const treatmentId = document.getElementById('treatment-id').value;
-  const targetType = document.getElementById('treatment-link-pick-type').value;
-  const targetIdStr = document.getElementById('treatment-link-pick-item').value;
-  const targetSel = document.getElementById('treatment-link-pick-item');
-  const targetName = targetSel.options[targetSel.selectedIndex]?.dataset.name || '';
-
-  if (!targetType || !targetIdStr) return alert('Please select a type and item');
-
-  if (currentTreatmentLinks.some(l => l.type === targetType && l.id === parseInt(targetIdStr))) {
-    alert('This item is already linked.');
-    return;
-  }
-
-  await api('/api/cross-links', { method: 'POST', body: { source_type: 'treatment', source_id: parseInt(treatmentId), target_type: targetType, target_id: parseInt(targetIdStr) } });
-
-  const links = await api(`/api/cross-links/treatment/${treatmentId}`);
-  currentTreatmentLinks = links.map(l => ({ link_id: l.link_id, type: l.type, id: l.id, name: l.name }));
-
-  closeTreatmentLinkPicker();
-  renderTreatmentLinksInModal();
 }
 
 function closeTreatmentModal() { document.getElementById('treatment-modal').classList.add('hidden'); }
@@ -3621,32 +3487,19 @@ async function saveTreatment(e) {
     risk_id: parseInt(document.getElementById('treatment-risk-id').value),
     treatment_type: document.getElementById('treatment-type').value,
     description: document.getElementById('treatment-description').value,
+    control_reference: document.getElementById('treatment-control-ref').value,
     responsible: document.getElementById('treatment-responsible').value,
     due_date: document.getElementById('treatment-due-date').value || null,
     residual_likelihood: document.getElementById('treatment-res-likelihood').value ? parseInt(document.getElementById('treatment-res-likelihood').value) : null,
     residual_impact: document.getElementById('treatment-res-impact').value ? parseInt(document.getElementById('treatment-res-impact').value) : null,
     notes: document.getElementById('treatment-notes').value,
   };
-  let treatmentId = id;
   if (id) {
     body.status = document.getElementById('treatment-status-field').value;
     await api(`/api/treatments/${id}`, { method: 'PUT', body });
   } else {
-    const result = await api('/api/treatments', { method: 'POST', body });
-    treatmentId = result.id;
+    await api('/api/treatments', { method: 'POST', body });
   }
-
-  // Show links section for newly created treatment so user can add links
-  if (!id && treatmentId) {
-    document.getElementById('treatment-id').value = treatmentId;
-    document.getElementById('treatment-links-group').style.display = 'block';
-    document.getElementById('treatment-modal-title').textContent = 'Edit Treatment';
-    document.getElementById('treatment-status-group').classList.remove('hidden');
-    document.getElementById('treatment-status-field').value = 'planned';
-    renderTreatmentLinksInModal();
-    return;
-  }
-
   closeTreatmentModal();
   refreshCurrentView();
 }
@@ -4106,26 +3959,59 @@ function buildArchTableRow(item, meta, links, archType) {
     detailCol = item.description ? `<span style="font-size:12px">${esc(item.description.substring(0, 50))}${item.description.length > 50 ? '...' : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>';
   }
 
-  return `<div class="arch-table-row">
-    <div class="arch-col-name">
-      <span class="arch-name">${esc(item.name)}</span>
-      ${archType === 'role' && item.description ? `<span class="arch-desc">${esc(item.description)}</span>` : ''}
+  // Build links detail section
+  const linksDetailId = `arch-links-${archType}-${item.id}`;
+  let linksDetail = '';
+  if (linkCount > 0) {
+    const typeIcons = { role: '&#128100;', process: '&#9881;', system: '&#128187;', asset: '&#128230;', facility: '&#127970;', document: '&#128196;', risk: '&#9888;', task: '&#9745;', requirement: '&#128203;' };
+    const grouped = {};
+    for (const l of links) {
+      if (!grouped[l.type]) grouped[l.type] = [];
+      grouped[l.type].push(l);
+    }
+    linksDetail = Object.entries(grouped).map(([type, items]) => `
+      <div class="arch-link-group">
+        <span class="arch-link-type">${typeIcons[type] || '&#128279;'} ${type}s</span>
+        ${items.map(l => `<span class="arch-link-item">${esc(l.name)}</span>`).join('')}
+      </div>
+    `).join('');
+  }
+
+  return `<div class="arch-table-row-wrap">
+    <div class="arch-table-row">
+      <div class="arch-col-name">
+        <span class="arch-name">${esc(item.name)}</span>
+        ${archType === 'role' && item.description ? `<span class="arch-desc">${esc(item.description)}</span>` : ''}
+      </div>
+      <div class="arch-col-detail">${detailCol}</div>
+      <div class="arch-col-detail"><span style="font-size:12px">${item.owner ? esc(item.owner) : '-'}</span></div>
+      <div class="arch-col-detail"><span class="badge ${stBadge}">${item.status}</span></div>
+      <div class="arch-col-detail arch-col-links">
+        ${linkCount > 0 ? `<span class="arch-link-toggle" onclick="toggleArchLinks('${linksDetailId}')">${linkCount} link${linkCount !== 1 ? 's' : ''} <span class="arch-link-arrow" id="${linksDetailId}-arrow">&#9660;</span></span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
+      </div>
+      <div class="arch-col-actions">
+        ${actionMenu([
+          { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('${archType}',${item.id},'arch-expand-${item.id}')` },
+          { label: '&#9998; Edit', onclick: `openArchModal(${item.id})` },
+          'sep',
+          { label: '&#128465; Delete', onclick: `deleteArch(${item.id})`, cls: 'danger' },
+        ])}
+      </div>
     </div>
-    <div class="arch-col-detail">${detailCol}</div>
-    <div class="arch-col-detail"><span style="font-size:12px">${item.owner ? esc(item.owner) : '-'}</span></div>
-    <div class="arch-col-detail"><span class="badge ${stBadge}">${item.status}</span></div>
-    <div class="arch-col-detail">
-      ${linkCount > 0 ? `<span style="font-size:12px;color:var(--primary)">${linkCount} link${linkCount !== 1 ? 's' : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
-    </div>
-    <div class="arch-col-actions">
-      ${actionMenu([
-        { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('${archType}',${item.id},'arch-expand-${item.id}')` },
-        { label: '&#9998; Edit', onclick: `openArchModal(${item.id})` },
-        'sep',
-        { label: '&#128465; Delete', onclick: `deleteArch(${item.id})`, cls: 'danger' },
-      ])}
-    </div>
+    ${linkCount > 0 ? `<div class="arch-links-detail collapsed" id="${linksDetailId}">${linksDetail}</div>` : ''}
   </div>`;
+}
+
+function toggleArchLinks(detailId) {
+  const detail = document.getElementById(detailId);
+  const arrow = document.getElementById(detailId + '-arrow');
+  if (detail.classList.contains('collapsed')) {
+    detail.classList.remove('collapsed');
+    arrow.innerHTML = '&#9650;';
+  } else {
+    detail.classList.add('collapsed');
+    arrow.innerHTML = '&#9660;';
+  }
 }
 
 async function openArchModal(id) {
@@ -4134,7 +4020,14 @@ async function openArchModal(id) {
   document.getElementById('arch-modal-title').textContent = 'New Item';
   document.getElementById('arch-type').value = currentArchTab;
 
+  // Populate owner dropdown with roles
+  const roles = await api('/api/architecture?arch_type=role');
+  const ownerSelect = document.getElementById('arch-owner');
+  ownerSelect.innerHTML = '<option value="">-- Select Owner --</option>' +
+    roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+
   let metadata = {};
+  let savedOwner = '';
   if (id) {
     const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
     const item = items.find(x => x.id === id);
@@ -4144,11 +4037,13 @@ async function openArchModal(id) {
       document.getElementById('arch-type').value = item.arch_type;
       document.getElementById('arch-name').value = item.name;
       document.getElementById('arch-description').value = item.description;
-      document.getElementById('arch-owner').value = item.owner;
+      savedOwner = item.owner;
       document.getElementById('arch-status').value = item.status;
       try { metadata = JSON.parse(item.metadata || '{}'); } catch(e) { metadata = {}; }
     }
   }
+  // Set owner after dropdown is populated
+  document.getElementById('arch-owner').value = savedOwner;
 
   // Render type-specific fields
   const extraFields = document.getElementById('arch-extra-fields');
