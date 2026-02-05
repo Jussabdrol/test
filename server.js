@@ -321,6 +321,19 @@ try { db.exec("ALTER TABLE soa_entries ADD COLUMN linked_processes TEXT DEFAULT 
 // Migration: add auditee column to audits
 try { db.exec("ALTER TABLE audits ADD COLUMN auditee TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
 
+// Migration: add recurrence fields to audits
+try { db.exec("ALTER TABLE audits ADD COLUMN recurrence TEXT DEFAULT 'none'"); } catch(e) { /* already exists */ }
+try { db.exec("ALTER TABLE audits ADD COLUMN recurrence_end_date TEXT DEFAULT NULL"); } catch(e) { /* already exists */ }
+
+// Migration: add standards field (JSON array) to audits for multi-standard audits
+try { db.exec("ALTER TABLE audits ADD COLUMN standards TEXT DEFAULT '[]'"); } catch(e) { /* already exists */ }
+
+// Migration: add standard field to audit_checklist to track which standard each item belongs to
+try { db.exec("ALTER TABLE audit_checklist ADD COLUMN standard TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
+
+// Migration: add evidence_files field (JSON array) to audit_checklist for file evidence
+try { db.exec("ALTER TABLE audit_checklist ADD COLUMN evidence_files TEXT DEFAULT '[]'"); } catch(e) { /* already exists */ }
+
 // Migration: add regulatory column to soa_entries
 try { db.exec("ALTER TABLE soa_entries ADD COLUMN regulatory INTEGER DEFAULT 0"); } catch(e) { /* already exists */ }
 
@@ -743,24 +756,28 @@ app.get('/api/audits/:id', (req, res) => {
 
 // Create audit
 app.post('/api/audits', (req, res) => {
-  const { title, standard, scope, lead_auditor, audit_team, auditee, planned_date, requirement_ids } = req.body;
+  const { title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, requirement_ids, recurrence, recurrence_end_date } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
 
+  // Support both single standard (legacy) and multiple standards
+  const standardsArray = standards && Array.isArray(standards) ? standards : (standard ? [standard] : ['ISO 9001']);
+  const primaryStandard = standardsArray[0] || 'ISO 9001';
+
   const createAudit = db.transaction(() => {
-    const result = db.prepare(`INSERT INTO audits (title, standard, scope, lead_auditor, audit_team, auditee, planned_date) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-      title, standard || 'ISO 9001', scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null
+    const result = db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null
     );
     const auditId = result.lastInsertRowid;
 
-    // Auto-create checklist items from selected requirements
+    // Auto-create checklist items from selected requirements, including the standard
     if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
-      const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)');
+      const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
       const getReq = db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
       let order = 1;
       for (const reqId of requirement_ids) {
         const req = getReq.get(reqId);
         if (req) {
-          insertCl.run(auditId, req.clause, req.title, order++);
+          insertCl.run(auditId, req.clause, req.title, req.standard, order++);
         }
       }
     }
@@ -776,7 +793,14 @@ app.post('/api/audits', (req, res) => {
 app.put('/api/audits/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Audit not found' });
-  const fields = ['title', 'standard', 'scope', 'lead_auditor', 'audit_team', 'auditee', 'status', 'planned_date', 'completed_date', 'summary'];
+  const fields = ['title', 'standard', 'scope', 'lead_auditor', 'audit_team', 'auditee', 'status', 'planned_date', 'completed_date', 'summary', 'recurrence', 'recurrence_end_date'];
+
+  // Handle standards array
+  if (req.body.standards && Array.isArray(req.body.standards)) {
+    req.body.standards = JSON.stringify(req.body.standards);
+    req.body.standard = req.body.standards[0] || existing.standard;
+    fields.push('standards');
+  }
   const updates = [];
   const params = [];
   for (const f of fields) {
@@ -829,7 +853,7 @@ app.post('/api/audits/:id/checklist', (req, res) => {
 app.put('/api/checklist/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Checklist item not found' });
-  const fields = ['clause', 'requirement', 'evidence', 'finding', 'rating', 'notes', 'sort_order'];
+  const fields = ['clause', 'requirement', 'evidence', 'finding', 'rating', 'notes', 'sort_order', 'evidence_files'];
   const updates = [];
   const params = [];
   for (const f of fields) {
@@ -872,6 +896,98 @@ app.delete('/api/checklist/:id', (req, res) => {
   const result = db.prepare('DELETE FROM audit_checklist WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Item not found' });
   res.json({ success: true });
+});
+
+// Upload evidence file to checklist item
+app.post('/api/checklist/:id/evidence', upload.single('file'), (req, res) => {
+  const item = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Checklist item not found' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  // Parse existing evidence_files array
+  let evidenceFiles = [];
+  try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
+
+  // Add new file to array
+  evidenceFiles.push({
+    id: Date.now(),
+    type: 'file',
+    name: req.file.originalname,
+    path: req.file.filename,
+    size: req.file.size,
+    mime: req.file.mimetype,
+    uploaded_at: new Date().toISOString()
+  });
+
+  // Update the checklist item
+  db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
+  res.json(db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
+});
+
+// Download evidence file from checklist item
+app.get('/api/checklist/:id/evidence/:fileId/download', (req, res) => {
+  const item = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Checklist item not found' });
+
+  let evidenceFiles = [];
+  try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
+
+  const file = evidenceFiles.find(f => f.id == req.params.fileId);
+  if (!file || file.type !== 'file') return res.status(404).json({ error: 'File not found' });
+
+  const filePath = path.join(uploadsDir, file.path);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+  res.download(filePath, file.name);
+});
+
+// Delete evidence file from checklist item
+app.delete('/api/checklist/:id/evidence/:fileId', (req, res) => {
+  const item = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Checklist item not found' });
+
+  let evidenceFiles = [];
+  try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
+
+  const fileIndex = evidenceFiles.findIndex(f => f.id == req.params.fileId);
+  if (fileIndex === -1) return res.status(404).json({ error: 'Evidence item not found' });
+
+  const file = evidenceFiles[fileIndex];
+  // Delete actual file if it's a file type
+  if (file.type === 'file' && file.path) {
+    const filePath = path.join(uploadsDir, file.path);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  }
+
+  // Remove from array
+  evidenceFiles.splice(fileIndex, 1);
+  db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
+  res.json({ success: true });
+});
+
+// Add link evidence to checklist item
+app.post('/api/checklist/:id/evidence-link', (req, res) => {
+  const item = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Checklist item not found' });
+  const { link_type, link_id, link_name } = req.body;
+  if (!link_type || !link_id) return res.status(400).json({ error: 'Link type and id required' });
+
+  // Parse existing evidence_files array
+  let evidenceFiles = [];
+  try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
+
+  // Add new link to array
+  evidenceFiles.push({
+    id: Date.now(),
+    type: 'link',
+    link_type,
+    link_id,
+    link_name: link_name || `${link_type} #${link_id}`,
+    added_at: new Date().toISOString()
+  });
+
+  // Update the checklist item
+  db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
+  res.json(db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
 });
 
 // --- Non-Conformity API ---
@@ -1356,8 +1472,13 @@ app.get('/api/kpis/auto', (req, res) => {
     total_risks: db.prepare('SELECT COUNT(*) as v FROM risks').get().v,
     high_risks: db.prepare('SELECT COUNT(*) as v FROM risks WHERE inherent_score >= 15').get().v,
     open_treatments: db.prepare("SELECT COUNT(*) as v FROM risk_treatments WHERE status IN ('planned','in_progress')").get().v,
-    soa_applicable: db.prepare('SELECT COUNT(*) as v FROM soa_entries WHERE applicable = 1').get().v,
-    soa_implemented: db.prepare("SELECT COUNT(*) as v FROM soa_entries WHERE applicable = 1 AND implementation_status = 'implemented'").get().v,
+    // SoA counts from Annex A requirements (applicable by default unless explicitly set to 0)
+    soa_applicable: db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
+      LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
+      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1)`).get().v,
+    soa_implemented: db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
+      LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
+      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1) AND soa.implementation_status = 'implemented'`).get().v,
     threat_items_new: db.prepare("SELECT COUNT(*) as v FROM threat_items WHERE status = 'new'").get().v,
     // Document Control
     total_documents: db.prepare('SELECT COUNT(*) as v FROM documents').get().v,

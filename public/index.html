@@ -463,22 +463,28 @@
           <label for="audit-title">Audit Title *</label>
           <input type="text" id="audit-title" required placeholder="e.g. Q1 2026 Internal Audit">
         </div>
+        <div class="form-group">
+          <label>Standards <span style="font-weight:400;color:var(--text-muted)">(select one or more)</span></label>
+          <div id="audit-standards-picker" class="arch-picker-wrap" style="max-height:120px;overflow-y:auto"></div>
+        </div>
         <div class="form-row">
-          <div class="form-group">
-            <label for="audit-standard">Standard</label>
-            <select id="audit-standard">
-              <option value="ISO 9001">ISO 9001</option>
-              <option value="ISO 14001">ISO 14001</option>
-              <option value="ISO 45001">ISO 45001</option>
-              <option value="ISO 27001">ISO 27001</option>
-              <option value="ISO 22000">ISO 22000</option>
-              <option value="Custom">Custom</option>
-            </select>
-          </div>
           <div class="form-group">
             <label for="audit-planned-date">Planned Date</label>
             <input type="date" id="audit-planned-date">
           </div>
+          <div class="form-group">
+            <label for="audit-recurrence">Recurrence</label>
+            <select id="audit-recurrence" onchange="toggleAuditRecurrenceEnd()">
+              <option value="none">None (One-time)</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="semiannual">Semi-Annual</option>
+              <option value="annual">Annual</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group hidden" id="audit-recurrence-end-group">
+          <label for="audit-recurrence-end">Recurrence End Date</label>
+          <input type="date" id="audit-recurrence-end">
         </div>
         <div class="form-group">
           <label>Scope — Processes</label>
@@ -703,6 +709,82 @@
           <button type="submit" class="btn btn-primary">Add Item</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Checklist Evidence Link Picker Modal -->
+  <div id="checklist-link-picker" class="modal hidden">
+    <div class="modal-overlay" onclick="closeChecklistLinkPicker()"></div>
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h3>Link Evidence Item</h3>
+        <button class="modal-close" onclick="closeChecklistLinkPicker()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>Item Type</label>
+        <select id="checklist-link-type" onchange="loadChecklistLinkOptions()">
+          <option value="document">Document</option>
+          <option value="process">Process</option>
+          <option value="system">System</option>
+          <option value="asset">Asset</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Select Item</label>
+        <div id="checklist-link-options" class="link-options-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:8px">
+          <div style="color:var(--text-muted);font-style:italic">Select a type above</div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeChecklistLinkPicker()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Checklist Item Edit Modal -->
+  <div id="checklist-edit-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeChecklistEditModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Edit Checklist Item</h3>
+        <button class="modal-close" onclick="closeChecklistEditModal()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>Clause</label>
+        <div id="checklist-edit-clause" style="font-weight:600;padding:8px 0"></div>
+      </div>
+      <div class="form-group">
+        <label>Requirement</label>
+        <div id="checklist-edit-requirement" style="font-size:13px;color:var(--text-muted);padding:4px 0"></div>
+      </div>
+      <div class="form-group">
+        <label>Evidence Notes</label>
+        <textarea id="checklist-edit-evidence" rows="3" placeholder="Evidence observed"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Finding</label>
+        <textarea id="checklist-edit-finding" rows="3" placeholder="Audit finding"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Rating</label>
+          <select id="checklist-edit-rating">
+            <option value="not_assessed">Not Assessed</option>
+            <option value="conforming">Conforming</option>
+            <option value="observation">Observation</option>
+            <option value="minor_nc">Minor NC</option>
+            <option value="major_nc">Major NC</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <input type="text" id="checklist-edit-notes" placeholder="Additional notes">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeChecklistEditModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveChecklistEdit()">Save Changes</button>
+      </div>
     </div>
   </div>
 
@@ -1022,17 +1104,10 @@
           <label for="treatment-description">Description *</label>
           <textarea id="treatment-description" rows="3" required placeholder="Describe the treatment plan"></textarea>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for="treatment-control-ref">Control Reference</label>
-            <input type="text" id="treatment-control-ref" placeholder="e.g. A.8.2">
-          </div>
-          <div class="form-group">
-            <label for="treatment-requirement">Linked Requirement</label>
-            <select id="treatment-requirement">
-              <option value="">-- None --</option>
-            </select>
-          </div>
+        <div class="form-group" id="treatment-links-group" style="display:none">
+          <label>Links</label>
+          <div id="treatment-links-container" class="treatment-links-edit-container"></div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="openTreatmentLinkPicker()">+ Add Link</button>
         </div>
         <div class="form-row">
           <div class="form-group">

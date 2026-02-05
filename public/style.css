@@ -265,6 +265,25 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .cl-ncr-link { display: flex; gap: 8px; align-items: center; padding: 8px 10px; margin-bottom: 8px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 4px; font-size: 13px; }
 .checklist-nc { border-left: 4px solid var(--danger); }
 
+/* Assessed Items Section */
+.cl-assessed-section { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 16px; overflow: hidden; }
+.cl-assessed-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #f0fdf4; border-bottom: 1px solid #bbf7d0; cursor: pointer; user-select: none; }
+.cl-assessed-header:hover { background: #dcfce7; }
+.cl-assessed-summary { display: flex; flex-direction: column; gap: 4px; }
+.cl-assessed-summary strong { font-size: 14px; color: var(--text); }
+.cl-assessed-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.cl-assessed-toggle { font-size: 12px; color: var(--text-muted); }
+.cl-assessed-body { padding: 0; }
+.cl-assessed-body.collapsed { display: none; }
+.cl-assessed-body .checklist-item { border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--border); padding: 12px 16px; }
+.cl-assessed-body .checklist-item:last-child { border-bottom: none; }
+.checklist-assessed { background: #fafffe; }
+.checklist-assessed .cl-fields { display: none; }
+.cl-assessed-detail { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.cl-detail-row { margin-bottom: 4px; }
+.cl-detail-label { font-weight: 600; color: var(--text); }
+.cl-section-title { font-size: 14px; font-weight: 600; color: var(--text-muted); }
+
 .ncr-card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; margin-bottom: 10px; border-left: 4px solid var(--danger); }
 .ncr-meta { font-size: 12px; color: var(--text-muted); }
 
@@ -439,6 +458,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .arch-item-main { flex: 1; min-width: 0; }
 .arch-item-main h4 { font-size: 15px; font-weight: 700; }
 
+/* Architecture Table */
+.arch-table { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.arch-table-head { display: grid; grid-template-columns: 1.5fr 1fr 100px 80px 80px 50px; padding: 10px 16px; background: #eef1f6; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }
+.arch-table-row { display: grid; grid-template-columns: 1.5fr 1fr 100px 80px 80px 50px; padding: 10px 16px; background: var(--card-bg); border-bottom: 1px solid var(--border); align-items: center; }
+.arch-table-row:hover { background: #f8fafc; }
+.arch-table-row:last-child { border-bottom: none; }
+.arch-col-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.arch-name { font-size: 13px; font-weight: 600; }
+.arch-desc { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arch-col-detail { font-size: 12px; }
+.arch-col-actions { display: flex; justify-content: flex-end; }
+
 .empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-size: 14px; }
 
 /* Responsive */
@@ -486,3 +517,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .task-inline-links .cross-links { margin-top: 8px; font-size: 12px; }
 .cross-links-body.collapsed { display: none; }
 .cl-toggle-icon { font-size: 14px; margin-left: 4px; }
+
+/* Checklist Evidence Items */
+.cl-evidence-container { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.evidence-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg); border-radius: var(--radius); border: 1px solid var(--border); font-size: 12px; }
+.evidence-item:hover { background: #f0f4f8; }
+.evidence-icon { font-size: 14px; flex-shrink: 0; }
+.evidence-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evidence-remove { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 0; line-height: 1; flex-shrink: 0; }
+.evidence-remove:hover { color: var(--danger); }
+
+/* Link picker options */
+.link-options-list { display: flex; flex-direction: column; gap: 2px; }
+.link-option { padding: 8px 10px; border-radius: var(--radius); cursor: pointer; font-size: 13px; transition: background .15s; }
+.link-option:hover { background: var(--bg); }

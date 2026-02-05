@@ -106,6 +106,8 @@ const linkableTypes = {
   facility: { label: 'Facility', icon: '&#127970;', canLink: ['risk','task','asset','document'] },
   document: { label: 'Document', icon: '&#128196;', canLink: ['risk','task','audit','requirement','role','process','system','asset','facility'] },
   ncr: { label: 'NCR', icon: '&#9888;', canLink: ['risk','requirement','document','role'] },
+  treatment: { label: 'Treatment', icon: '&#128737;', canLink: ['requirement','document','role','process','system','asset'] },
+  checklist: { label: 'Checklist Item', icon: '&#9745;', canLink: ['document','process','system','asset'] },
 };
 
 async function renderCrossLinks(entityType, entityId, containerId) {
@@ -1210,15 +1212,21 @@ async function openAuditModal(id) {
   document.getElementById('audit-modal-title').textContent = 'New Audit';
   document.getElementById('audit-status-group').classList.add('hidden');
   document.getElementById('audit-summary-group').classList.add('hidden');
+  document.getElementById('audit-recurrence-end-group').classList.add('hidden');
 
-  // Dynamically populate standard dropdown from active requirements
+  // Dynamically populate standards and other dropdowns
   const [activeStandards, archRoles, archProcesses] = await Promise.all([
     api('/api/requirements/standards'),
     api('/api/architecture?arch_type=role'),
     api('/api/architecture?arch_type=process'),
   ]);
-  const stdSelect = document.getElementById('audit-standard');
-  let editStandard = null;
+  let editStandards = [];
+
+  // Populate standards picker with checkboxes
+  const stdPicker = document.getElementById('audit-standards-picker');
+  stdPicker.innerHTML = activeStandards.length === 0
+    ? '<span style="font-size:12px;color:var(--text-muted)">No standards imported. Import templates in Requirements view first.</span>'
+    : activeStandards.map(s => `<label class="arch-picker-item"><input type="checkbox" name="audit-std" value="${esc(s)}" onchange="onAuditStandardsChange()"> ${esc(s)}</label>`).join('');
 
   // Populate lead auditor dropdown from roles
   const leadSel = document.getElementById('audit-lead');
@@ -1236,12 +1244,18 @@ async function openAuditModal(id) {
 
   if (id) {
     const a = await api(`/api/audits/${id}`);
-    editStandard = a.standard;
+    try { editStandards = JSON.parse(a.standards || '[]'); } catch(e) { editStandards = a.standard ? [a.standard] : []; }
     document.getElementById('audit-modal-title').textContent = 'Edit Audit';
     document.getElementById('audit-id').value = a.id;
     document.getElementById('audit-title').value = a.title;
     leadSel.value = a.lead_auditor || '';
     auditeeSel.value = a.auditee || '';
+
+    // Check standards
+    editStandards.forEach(s => {
+      const cb = stdPicker.querySelector(`input[value="${s}"]`);
+      if (cb) cb.checked = true;
+    });
 
     // Check scope processes from cross-links
     const auditLinks = await api(`/api/cross-links/audit/${id}`);
@@ -1250,39 +1264,63 @@ async function openAuditModal(id) {
       if (cb) cb.checked = true;
     });
     document.getElementById('audit-planned-date').value = a.planned_date || '';
+    document.getElementById('audit-recurrence').value = a.recurrence || 'none';
+    if (a.recurrence && a.recurrence !== 'none') {
+      document.getElementById('audit-recurrence-end-group').classList.remove('hidden');
+      document.getElementById('audit-recurrence-end').value = a.recurrence_end_date || '';
+    }
     document.getElementById('audit-status-field').value = a.status;
     document.getElementById('audit-summary').value = a.summary || '';
     document.getElementById('audit-status-group').classList.remove('hidden');
     document.getElementById('audit-summary-group').classList.remove('hidden');
+  } else if (activeStandards.length > 0) {
+    // Default to first standard for new audits
+    const firstCb = stdPicker.querySelector('input[name="audit-std"]');
+    if (firstCb) firstCb.checked = true;
   }
 
-  // Build options: active standards + the audit's own standard if retired
-  const optionStandards = [...activeStandards];
-  if (editStandard && !optionStandards.includes(editStandard)) {
-    optionStandards.push(editStandard);
-  }
-  stdSelect.innerHTML = optionStandards.length === 0
-    ? '<option value="">No standards available</option>'
-    : optionStandards.map(s => `<option value="${esc(s)}"${!activeStandards.includes(s) ? ' disabled' : ''}>${esc(s)}${!activeStandards.includes(s) ? ' (retired)' : ''}</option>`).join('');
-
-  if (editStandard) stdSelect.value = editStandard;
-
-  // Load requirements picker based on selected standard
+  // Load requirements picker based on selected standards
   await populateAuditReqPicker(id);
 
   modal.classList.remove('hidden');
 }
 
+function toggleAuditRecurrenceEnd() {
+  const recurrence = document.getElementById('audit-recurrence').value;
+  if (recurrence === 'none') {
+    document.getElementById('audit-recurrence-end-group').classList.add('hidden');
+  } else {
+    document.getElementById('audit-recurrence-end-group').classList.remove('hidden');
+  }
+}
+
+function onAuditStandardsChange() {
+  const auditId = document.getElementById('audit-id').value;
+  populateAuditReqPicker(auditId || null);
+}
+
 async function populateAuditReqPicker(auditId) {
-  const standard = document.getElementById('audit-standard').value;
-  const reqs = await api(`/api/requirements?standard=${encodeURIComponent(standard)}`);
+  // Get all selected standards
+  const selectedStandards = [...document.querySelectorAll('#audit-standards-picker input[name="audit-std"]:checked')].map(cb => cb.value);
+  if (selectedStandards.length === 0) {
+    document.getElementById('audit-req-checklist').innerHTML = '<div class="empty-state" style="padding:12px;font-size:13px">Select at least one standard to see requirements.</div>';
+    document.getElementById('audit-req-count').textContent = '';
+    auditReqProcessMap = {};
+    return;
+  }
+
+  // Fetch requirements for all selected standards
+  const allReqs = await api('/api/requirements');
+  const reqs = allReqs.filter(r => selectedStandards.includes(r.standard));
   const container = document.getElementById('audit-req-checklist');
 
   // If editing, find which clauses already have checklist items
   let existingClauses = [];
+  let existingStandards = [];
   if (auditId) {
     const audit = await api(`/api/audits/${auditId}`);
     existingClauses = audit.checklist.map(c => c.clause);
+    existingStandards = audit.checklist.map(c => c.standard);
   }
 
   if (reqs.length === 0) {
@@ -1303,28 +1341,36 @@ async function populateAuditReqPicker(auditId) {
   });
   await Promise.all(linkPromises);
 
-  // Group by category
-  const groups = {};
+  // Group by standard first, then by category
+  const standardGroups = {};
   for (const r of reqs) {
+    if (!standardGroups[r.standard]) standardGroups[r.standard] = {};
     const cat = r.category || 'Uncategorized';
-    if (!groups[cat]) groups[cat] = [];
-    groups[cat].push(r);
+    if (!standardGroups[r.standard][cat]) standardGroups[r.standard][cat] = [];
+    standardGroups[r.standard][cat].push(r);
   }
 
   let html = '';
-  for (const [cat, items] of Object.entries(groups)) {
-    html += `<div class="req-picker-category">${esc(cat)}</div>`;
-    for (const r of items) {
-      const alreadyAdded = existingClauses.includes(r.clause);
-      const linkedProcesses = auditReqProcessMap[r.id] || [];
-      const processHint = linkedProcesses.length > 0 ? ` data-processes="${linkedProcesses.join(',')}"` : '';
-      html += `<label class="req-picker-item${alreadyAdded ? ' already-added' : ''}"${processHint}>
-        <input type="checkbox" name="audit_req_ids" value="${r.id}" ${alreadyAdded ? 'disabled checked' : ''} onchange="updateAuditReqCount()">
-        <span class="req-picker-clause">${esc(r.clause)}</span>
-        <span class="req-picker-title">${esc(r.title)}</span>
-        ${linkedProcesses.length > 0 ? `<span style="font-size:10px;color:var(--primary);flex-shrink:0" title="Linked to process(es)">&#128260;</span>` : ''}
-        ${alreadyAdded ? '<span class="badge badge-low" style="font-size:10px;flex-shrink:0">already added</span>' : ''}
-      </label>`;
+  for (const [std, catGroups] of Object.entries(standardGroups)) {
+    // Add standard header if multiple standards selected
+    if (selectedStandards.length > 1) {
+      html += `<div class="req-picker-standard" style="font-size:12px;font-weight:700;padding:8px 12px;background:var(--primary);color:#fff;position:sticky;top:0;z-index:2">${esc(std)}</div>`;
+    }
+    for (const [cat, items] of Object.entries(catGroups)) {
+      html += `<div class="req-picker-category">${esc(cat)}</div>`;
+      for (const r of items) {
+        const alreadyAdded = existingClauses.includes(r.clause) && existingStandards.includes(r.standard);
+        const linkedProcesses = auditReqProcessMap[r.id] || [];
+        const processHint = linkedProcesses.length > 0 ? ` data-processes="${linkedProcesses.join(',')}"` : '';
+        html += `<label class="req-picker-item${alreadyAdded ? ' already-added' : ''}"${processHint} data-standard="${esc(r.standard)}">
+          <input type="checkbox" name="audit_req_ids" value="${r.id}" ${alreadyAdded ? 'disabled checked' : ''} onchange="updateAuditReqCount()">
+          <span class="req-picker-clause">${esc(r.clause)}</span>
+          <span class="req-picker-title">${esc(r.title)}</span>
+          ${selectedStandards.length > 1 ? `<span style="font-size:9px;color:var(--text-muted);flex-shrink:0">[${esc(r.standard.replace('ISO ',''))}]</span>` : ''}
+          ${linkedProcesses.length > 0 ? `<span style="font-size:10px;color:var(--primary);flex-shrink:0" title="Linked to process(es)">&#128260;</span>` : ''}
+          ${alreadyAdded ? '<span class="badge badge-low" style="font-size:10px;flex-shrink:0">already added</span>' : ''}
+        </label>`;
+      }
     }
   }
   container.innerHTML = html;
@@ -1349,11 +1395,6 @@ function auditReqSelectAll(select) {
   updateAuditReqCount();
 }
 
-// Re-populate requirements when standard changes
-document.getElementById('audit-standard').addEventListener('change', () => {
-  const auditId = document.getElementById('audit-id').value;
-  populateAuditReqPicker(auditId || null);
-});
 
 // Store requirement-to-process mapping for auto-selection
 let auditReqProcessMap = {}; // { reqId: [processId, ...] }
@@ -1384,12 +1425,20 @@ function closeAuditModal() {
 async function saveAudit(e) {
   e.preventDefault();
   const id = document.getElementById('audit-id').value;
+  const selectedStandards = [...document.querySelectorAll('#audit-standards-picker input[name="audit-std"]:checked')].map(cb => cb.value);
+  if (selectedStandards.length === 0) {
+    alert('Please select at least one standard.');
+    return;
+  }
   const body = {
     title: document.getElementById('audit-title').value,
-    standard: document.getElementById('audit-standard').value,
+    standards: selectedStandards,
+    standard: selectedStandards[0], // Primary standard for backwards compatibility
     lead_auditor: document.getElementById('audit-lead').value,
     auditee: document.getElementById('audit-auditee').value,
     planned_date: document.getElementById('audit-planned-date').value || null,
+    recurrence: document.getElementById('audit-recurrence').value,
+    recurrence_end_date: document.getElementById('audit-recurrence-end').value || null,
   };
 
   // Collect selected requirement IDs (only non-disabled = new selections)
@@ -1448,12 +1497,16 @@ async function loadAuditExecution(auditId) {
   const minorNc = audit.checklist.filter(c => c.rating === 'minor_nc').length;
   const majorNc = audit.checklist.filter(c => c.rating === 'major_nc').length;
 
+  let auditStandards = [];
+  try { auditStandards = JSON.parse(audit.standards || '[]'); } catch(e) { auditStandards = audit.standard ? [audit.standard] : []; }
+  if (auditStandards.length === 0 && audit.standard) auditStandards = [audit.standard];
+
   let html = `
     <div class="audit-exec-info">
-      <div><strong>Standard:</strong> ${esc(audit.standard)}</div>
+      <div><strong>Standard${auditStandards.length > 1 ? 's' : ''}:</strong> ${auditStandards.map(s => esc(s)).join(', ')}</div>
       <div><strong>Lead:</strong> ${esc(audit.lead_auditor || 'Unassigned')}</div>
+      <div><strong>Auditee:</strong> ${esc(audit.auditee || 'Unassigned')}</div>
       <div><strong>Status:</strong> <span class="badge ${audit.status === 'completed' ? 'badge-low' : 'badge-medium'}">${audit.status.replace('_',' ')}</span></div>
-      ${audit.scope ? `<div><strong>Scope:</strong> ${esc(audit.scope)}</div>` : ''}
     </div>
     <div class="audit-exec-stats">
       <div class="stat-card"><div class="stat-value">${totalItems}</div><div class="stat-label">Total Items</div></div>
@@ -1479,76 +1532,154 @@ async function loadAuditExecution(auditId) {
       if (nc.checklist_item_id) ncrByChecklist[nc.checklist_item_id] = nc;
     }
 
-    html += '<div class="checklist-list">';
-    for (const item of audit.checklist) {
-      const ratingColors = {
-        not_assessed: 'badge-inactive',
-        conforming: 'badge-low',
-        observation: 'badge-medium',
-        minor_nc: 'badge-high',
-        major_nc: 'badge-critical'
-      };
-      const ratingLabels = {
-        not_assessed: 'Not Assessed',
-        conforming: 'Conforming',
-        observation: 'Observation',
-        minor_nc: 'Minor NC',
-        major_nc: 'Major NC'
-      };
-      const linkedNcr = ncrByChecklist[item.id];
-      const isNc = item.rating === 'minor_nc' || item.rating === 'major_nc';
+    const ratingColors = {
+      not_assessed: 'badge-inactive',
+      conforming: 'badge-low',
+      observation: 'badge-medium',
+      minor_nc: 'badge-high',
+      major_nc: 'badge-critical'
+    };
+    const ratingLabels = {
+      not_assessed: 'Not Assessed',
+      conforming: 'Conforming',
+      observation: 'Observation',
+      minor_nc: 'Minor NC',
+      major_nc: 'Major NC'
+    };
 
-      // NCR status indicator for NC-rated items
-      let ncrIndicator = '';
-      if (isNc && linkedNcr) {
-        const ncrStBadge = linkedNcr.status === 'open' ? 'badge-high' : linkedNcr.status === 'in_progress' ? 'badge-medium' : 'badge-low';
-        ncrIndicator = `<div class="cl-ncr-link">
-          <span class="badge ${ncrStBadge}">NCR: ${linkedNcr.status}</span>
-          <span style="cursor:pointer;color:var(--primary);font-weight:500;font-size:12px" onclick="openNcrModal(${linkedNcr.id})">Edit NCR &rarr;</span>
+    // Separate assessed and unassessed items
+    const assessedItems = audit.checklist.filter(i => i.rating && i.rating !== 'not_assessed');
+    const unassessedItems = audit.checklist.filter(i => !i.rating || i.rating === 'not_assessed');
+
+    // Render assessed items summary (collapsible)
+    if (assessedItems.length > 0) {
+      const conforming = assessedItems.filter(i => i.rating === 'conforming').length;
+      const observations = assessedItems.filter(i => i.rating === 'observation').length;
+      const minorNcs = assessedItems.filter(i => i.rating === 'minor_nc').length;
+      const majorNcs = assessedItems.filter(i => i.rating === 'major_nc').length;
+
+      html += `<div class="cl-assessed-section">
+        <div class="cl-assessed-header" onclick="toggleAssessedItems()">
+          <div class="cl-assessed-summary">
+            <strong>&#9745; Assessed Items (${assessedItems.length})</strong>
+            <div class="cl-assessed-badges">
+              ${conforming > 0 ? `<span class="badge badge-low">${conforming} Conforming</span>` : ''}
+              ${observations > 0 ? `<span class="badge badge-medium">${observations} Observations</span>` : ''}
+              ${minorNcs > 0 ? `<span class="badge badge-high">${minorNcs} Minor NC</span>` : ''}
+              ${majorNcs > 0 ? `<span class="badge badge-critical">${majorNcs} Major NC</span>` : ''}
+            </div>
+          </div>
+          <span class="cl-assessed-toggle" id="assessed-toggle-icon">&#9660;</span>
+        </div>
+        <div class="cl-assessed-body collapsed" id="assessed-items-body">`;
+
+      for (const item of assessedItems) {
+        const linkedNcr = ncrByChecklist[item.id];
+        const isNc = item.rating === 'minor_nc' || item.rating === 'major_nc';
+        let ncrIndicator = '';
+        if (isNc && linkedNcr) {
+          const ncrStBadge = linkedNcr.status === 'open' ? 'badge-high' : linkedNcr.status === 'in_progress' ? 'badge-medium' : 'badge-low';
+          ncrIndicator = `<div class="cl-ncr-link">
+            <span class="badge ${ncrStBadge}">NCR: ${linkedNcr.status}</span>
+            <span style="cursor:pointer;color:var(--primary);font-weight:500;font-size:12px" onclick="openNcrModal(${linkedNcr.id})">Edit NCR &rarr;</span>
+          </div>`;
+        }
+
+        html += `<div class="checklist-item checklist-assessed${isNc ? ' checklist-nc' : ''}" id="cl-item-${item.id}">
+          <div class="cl-header">
+            <div class="cl-clause">
+              <strong>${esc(item.clause)}</strong>
+              ${item.standard ? `<span class="badge badge-inactive" style="font-size:9px;margin-left:6px">${esc(item.standard.replace('ISO ',''))}</span>` : ''}
+            </div>
+            <span class="badge ${ratingColors[item.rating]}">${ratingLabels[item.rating]}</span>
+          </div>
+          ${item.requirement ? `<div class="cl-requirement">${esc(item.requirement)}</div>` : ''}
+          <div class="cl-assessed-detail">
+            ${item.evidence ? `<div class="cl-detail-row"><span class="cl-detail-label">Evidence:</span> ${esc(item.evidence.substring(0, 100))}${item.evidence.length > 100 ? '...' : ''}</div>` : ''}
+            ${item.finding ? `<div class="cl-detail-row"><span class="cl-detail-label">Finding:</span> ${esc(item.finding.substring(0, 100))}${item.finding.length > 100 ? '...' : ''}</div>` : ''}
+          </div>
+          ${ncrIndicator}
+          <div class="cl-actions">
+            ${actionMenu([
+              { label: '&#9998; Edit Item', onclick: `expandChecklistItem(${item.id}, ${auditId})` },
+              { label: '&#128465; Remove Item', onclick: `deleteChecklistItem(${item.id}, ${auditId})`, cls: 'danger' },
+            ])}
+          </div>
         </div>`;
       }
-
-      html += `<div class="checklist-item${isNc ? ' checklist-nc' : ''}" id="cl-item-${item.id}">
-        <div class="cl-header">
-          <div class="cl-clause"><strong>${esc(item.clause)}</strong></div>
-          <span class="badge ${ratingColors[item.rating]}">${ratingLabels[item.rating]}</span>
-        </div>
-        ${item.requirement ? `<div class="cl-requirement">${esc(item.requirement)}</div>` : ''}
-        <div class="cl-fields">
-          <div class="form-group" style="margin-bottom:8px">
-            <label>Evidence</label>
-            <textarea rows="2" onchange="updateChecklistField(${item.id},'evidence',this.value)" placeholder="Evidence observed">${esc(item.evidence)}</textarea>
-          </div>
-          <div class="form-group" style="margin-bottom:8px">
-            <label>Finding</label>
-            <textarea rows="2" onchange="updateChecklistField(${item.id},'finding',this.value)" placeholder="Audit finding">${esc(item.finding)}</textarea>
-          </div>
-          <div class="form-row">
-            <div class="form-group" style="margin-bottom:8px">
-              <label>Rating</label>
-              <select onchange="updateChecklistField(${item.id},'rating',this.value)">
-                <option value="not_assessed" ${item.rating==='not_assessed'?'selected':''}>Not Assessed</option>
-                <option value="conforming" ${item.rating==='conforming'?'selected':''}>Conforming</option>
-                <option value="observation" ${item.rating==='observation'?'selected':''}>Observation</option>
-                <option value="minor_nc" ${item.rating==='minor_nc'?'selected':''}>Minor NC</option>
-                <option value="major_nc" ${item.rating==='major_nc'?'selected':''}>Major NC</option>
-              </select>
-            </div>
-            <div class="form-group" style="margin-bottom:8px">
-              <label>Notes</label>
-              <input type="text" onchange="updateChecklistField(${item.id},'notes',this.value)" value="${esc(item.notes)}" placeholder="Additional notes">
-            </div>
-          </div>
-        </div>
-        ${ncrIndicator}
-        <div class="cl-actions">
-          ${actionMenu([
-            { label: '&#128465; Remove Item', onclick: `deleteChecklistItem(${item.id}, ${auditId})`, cls: 'danger' },
-          ])}
-        </div>
-      </div>`;
+      html += '</div></div>';
     }
-    html += '</div>';
+
+    // Render unassessed items (full form)
+    if (unassessedItems.length > 0) {
+      html += `<h4 class="cl-section-title" style="margin:16px 0 8px">&#9744; Items to Assess (${unassessedItems.length})</h4>`;
+      html += '<div class="checklist-list">';
+      for (const item of unassessedItems) {
+        const linkedNcr = ncrByChecklist[item.id];
+        const isNc = item.rating === 'minor_nc' || item.rating === 'major_nc';
+        let ncrIndicator = '';
+        if (isNc && linkedNcr) {
+          const ncrStBadge = linkedNcr.status === 'open' ? 'badge-high' : linkedNcr.status === 'in_progress' ? 'badge-medium' : 'badge-low';
+          ncrIndicator = `<div class="cl-ncr-link">
+            <span class="badge ${ncrStBadge}">NCR: ${linkedNcr.status}</span>
+            <span style="cursor:pointer;color:var(--primary);font-weight:500;font-size:12px" onclick="openNcrModal(${linkedNcr.id})">Edit NCR &rarr;</span>
+          </div>`;
+        }
+
+        html += `<div class="checklist-item${isNc ? ' checklist-nc' : ''}" id="cl-item-${item.id}">
+          <div class="cl-header">
+            <div class="cl-clause">
+              <strong>${esc(item.clause)}</strong>
+              ${item.standard ? `<span class="badge badge-inactive" style="font-size:9px;margin-left:6px">${esc(item.standard.replace('ISO ',''))}</span>` : ''}
+            </div>
+            <span class="badge ${ratingColors[item.rating]}">${ratingLabels[item.rating]}</span>
+          </div>
+          ${item.requirement ? `<div class="cl-requirement">${esc(item.requirement)}</div>` : ''}
+          <div class="cl-fields">
+            <div class="form-group" style="margin-bottom:8px">
+              <label>Evidence Notes</label>
+              <textarea rows="2" onchange="updateChecklistField(${item.id},'evidence',this.value)" placeholder="Evidence observed">${esc(item.evidence)}</textarea>
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label>Evidence Files & Links</label>
+              <div id="cl-evidence-${item.id}" class="cl-evidence-container">${renderChecklistEvidence(item, auditId)}</div>
+              <div style="display:flex;gap:6px;margin-top:6px">
+                <input type="file" id="cl-evidence-file-${item.id}" style="display:none" onchange="uploadChecklistEvidence(${item.id}, ${auditId})">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('cl-evidence-file-${item.id}').click()">Upload File</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="openChecklistLinkPicker(${item.id}, ${auditId})">Link Item</button>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label>Finding</label>
+              <textarea rows="2" onchange="updateChecklistField(${item.id},'finding',this.value)" placeholder="Audit finding">${esc(item.finding)}</textarea>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="margin-bottom:8px">
+                <label>Rating</label>
+                <select onchange="updateChecklistField(${item.id},'rating',this.value)">
+                  <option value="not_assessed" ${item.rating==='not_assessed'?'selected':''}>Not Assessed</option>
+                  <option value="conforming" ${item.rating==='conforming'?'selected':''}>Conforming</option>
+                  <option value="observation" ${item.rating==='observation'?'selected':''}>Observation</option>
+                  <option value="minor_nc" ${item.rating==='minor_nc'?'selected':''}>Minor NC</option>
+                  <option value="major_nc" ${item.rating==='major_nc'?'selected':''}>Major NC</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:8px">
+                <label>Notes</label>
+                <input type="text" onchange="updateChecklistField(${item.id},'notes',this.value)" value="${esc(item.notes)}" placeholder="Additional notes">
+              </div>
+            </div>
+          </div>
+          ${ncrIndicator}
+          <div class="cl-actions">
+            ${actionMenu([
+              { label: '&#128465; Remove Item', onclick: `deleteChecklistItem(${item.id}, ${auditId})`, cls: 'danger' },
+            ])}
+          </div>
+        </div>`;
+      }
+      html += '</div>';
+    }
   }
 
   // Show NCs for this audit
@@ -1636,6 +1767,155 @@ async function raiseNcrFromChecklist(auditId, checklistItemId, clause, severity)
   document.getElementById('ncr-checklist-item-id').value = checklistItemId;
   document.getElementById('ncr-clause').value = clause;
   document.getElementById('ncr-severity').value = severity;
+}
+
+// --- Checklist Evidence Upload & Links ---
+async function uploadChecklistEvidence(itemId, auditId) {
+  const fileInput = document.getElementById(`cl-evidence-file-${itemId}`);
+  if (!fileInput.files.length) return;
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  await fetch(`/api/checklist/${itemId}/evidence`, { method: 'POST', body: formData });
+  fileInput.value = '';
+  loadAuditExecution(auditId);
+}
+
+let checklistLinkPickerItemId = null;
+let checklistLinkPickerAuditId = null;
+
+async function openChecklistLinkPicker(itemId, auditId) {
+  checklistLinkPickerItemId = itemId;
+  checklistLinkPickerAuditId = auditId;
+  document.getElementById('checklist-link-picker').classList.remove('hidden');
+  await loadChecklistLinkOptions();
+}
+
+function closeChecklistLinkPicker() {
+  document.getElementById('checklist-link-picker').classList.add('hidden');
+  checklistLinkPickerItemId = null;
+  checklistLinkPickerAuditId = null;
+}
+
+async function loadChecklistLinkOptions() {
+  const typeSelect = document.getElementById('checklist-link-type');
+  const optionsContainer = document.getElementById('checklist-link-options');
+  const selectedType = typeSelect.value;
+
+  const items = await api(`/api/cross-link-items?type=${selectedType}`);
+  optionsContainer.innerHTML = items.length === 0
+    ? '<div style="color:var(--text-muted);font-style:italic">No items available</div>'
+    : items.map(item => `
+      <div class="link-option" onclick="addChecklistEvidenceLink('${selectedType}', ${item.id}, '${esc(item.name).replace(/'/g, "\\'")}')">
+        ${esc(item.name)}
+      </div>
+    `).join('');
+}
+
+async function addChecklistEvidenceLink(linkType, linkId, linkName) {
+  await api(`/api/checklist/${checklistLinkPickerItemId}/evidence-link`, {
+    method: 'POST',
+    body: { link_type: linkType, link_id: linkId, link_name: linkName }
+  });
+  closeChecklistLinkPicker();
+  loadAuditExecution(checklistLinkPickerAuditId);
+}
+
+async function removeChecklistEvidence(itemId, evidenceId, auditId) {
+  if (!confirm('Remove this evidence?')) return;
+  await api(`/api/checklist/${itemId}/evidence/${evidenceId}`, { method: 'DELETE' });
+  loadAuditExecution(auditId);
+}
+
+function downloadChecklistEvidence(itemId, evidenceId) {
+  window.open(`/api/checklist/${itemId}/evidence/${evidenceId}/download`, '_blank');
+}
+
+function renderChecklistEvidence(item, auditId) {
+  let evidenceFiles = [];
+  try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
+
+  if (evidenceFiles.length === 0) {
+    return '<div style="color:var(--text-muted);font-size:12px;font-style:italic">No evidence attached</div>';
+  }
+
+  const typeIcons = { document: '&#128196;', process: '&#9881;', system: '&#128187;', asset: '&#128230;' };
+
+  return evidenceFiles.map(ef => {
+    if (ef.type === 'file') {
+      return `<div class="evidence-item evidence-file">
+        <span class="evidence-icon">&#128206;</span>
+        <span class="evidence-name" onclick="downloadChecklistEvidence(${item.id}, ${ef.id})" style="cursor:pointer;text-decoration:underline">${esc(ef.name)}</span>
+        <button class="evidence-remove" onclick="removeChecklistEvidence(${item.id}, ${ef.id}, ${auditId})" title="Remove">&times;</button>
+      </div>`;
+    } else if (ef.type === 'link') {
+      const icon = typeIcons[ef.link_type] || '&#128279;';
+      const viewTarget = getViewForType(ef.link_type, ef.link_id);
+      return `<div class="evidence-item evidence-link">
+        <span class="evidence-icon">${icon}</span>
+        <span class="evidence-name"${viewTarget ? ` onclick="${viewTarget}" style="cursor:pointer;text-decoration:underline"` : ''}>${esc(ef.link_name)}</span>
+        <button class="evidence-remove" onclick="removeChecklistEvidence(${item.id}, ${ef.id}, ${auditId})" title="Remove">&times;</button>
+      </div>`;
+    }
+    return '';
+  }).join('');
+}
+
+// Toggle assessed items visibility
+function toggleAssessedItems() {
+  const body = document.getElementById('assessed-items-body');
+  const icon = document.getElementById('assessed-toggle-icon');
+  if (body.classList.contains('collapsed')) {
+    body.classList.remove('collapsed');
+    icon.innerHTML = '&#9650;';
+  } else {
+    body.classList.add('collapsed');
+    icon.innerHTML = '&#9660;';
+  }
+}
+
+// Expand a checklist item for editing (opens full form in modal)
+let expandedChecklistItem = null;
+
+async function expandChecklistItem(itemId, auditId) {
+  const audit = await api(`/api/audits/${auditId}`);
+  const item = audit.checklist.find(i => i.id === itemId);
+  if (!item) return;
+
+  expandedChecklistItem = { itemId, auditId };
+
+  // Show edit modal
+  document.getElementById('checklist-edit-modal').classList.remove('hidden');
+  document.getElementById('checklist-edit-clause').textContent = item.clause;
+  document.getElementById('checklist-edit-requirement').textContent = item.requirement || '';
+  document.getElementById('checklist-edit-evidence').value = item.evidence || '';
+  document.getElementById('checklist-edit-finding').value = item.finding || '';
+  document.getElementById('checklist-edit-rating').value = item.rating || 'not_assessed';
+  document.getElementById('checklist-edit-notes').value = item.notes || '';
+}
+
+function closeChecklistEditModal() {
+  document.getElementById('checklist-edit-modal').classList.add('hidden');
+  expandedChecklistItem = null;
+}
+
+async function saveChecklistEdit() {
+  if (!expandedChecklistItem) return;
+  const { itemId, auditId } = expandedChecklistItem;
+
+  await api(`/api/checklist/${itemId}`, {
+    method: 'PUT',
+    body: {
+      evidence: document.getElementById('checklist-edit-evidence').value,
+      finding: document.getElementById('checklist-edit-finding').value,
+      rating: document.getElementById('checklist-edit-rating').value,
+      notes: document.getElementById('checklist-edit-notes').value
+    }
+  });
+
+  closeChecklistEditModal();
+  loadAuditExecution(auditId);
 }
 
 // --- Non-Conformities View ---
@@ -3069,6 +3349,13 @@ async function loadRiskTreatmentView() {
   const details = {};
   await Promise.all(risks.map(async r => { details[r.id] = await api(`/api/risks/${r.id}`); }));
 
+  // Fetch treatment links
+  const treatmentLinks = {};
+  const allTreatments = Object.values(details).flatMap(d => d.treatments || []);
+  await Promise.all(allTreatments.map(async t => {
+    treatmentLinks[t.id] = await api(`/api/cross-links/treatment/${t.id}`);
+  }));
+
   const totalTreatments = Object.values(details).reduce((s, d) => s + (d.treatments || []).length, 0);
   const openTreatments = Object.values(details).reduce((s, d) => s + (d.treatments || []).filter(t => t.status === 'planned' || t.status === 'in_progress').length, 0);
 
@@ -3094,11 +3381,12 @@ async function loadRiskTreatmentView() {
     const treatments = detail.treatments || [];
     const cls = riskScoreClass(r.inherent_score);
 
+    // Calculate residual score as average of all treatments with residual values
     let residualScore = r.inherent_score;
-    const implemented = treatments.filter(t => t.status === 'implemented' || t.status === 'verified');
-    if (implemented.length > 0) {
-      const last = implemented[implemented.length - 1];
-      if (last.residual_likelihood && last.residual_impact) residualScore = last.residual_likelihood * last.residual_impact;
+    const treatmentsWithResidual = treatments.filter(t => t.residual_likelihood && t.residual_impact);
+    if (treatmentsWithResidual.length > 0) {
+      const totalResidual = treatmentsWithResidual.reduce((sum, t) => sum + (t.residual_likelihood * t.residual_impact), 0);
+      residualScore = Math.round(totalResidual / treatmentsWithResidual.length);
     }
     const resCls = riskScoreClass(residualScore);
     const done = treatments.filter(t => t.status === 'implemented' || t.status === 'verified').length;
@@ -3126,7 +3414,7 @@ async function loadRiskTreatmentView() {
       </div>
       <div class="treat-expand-row">
         <div id="${collapseId}" class="treat-detail collapsed">
-          ${treatments.length === 0 ? '' : buildTreatmentDetail(treatments)}
+          ${treatments.length === 0 ? '' : buildTreatmentDetail(treatments, treatmentLinks)}
         </div>
       </div>`;
   }
@@ -3134,12 +3422,12 @@ async function loadRiskTreatmentView() {
   document.getElementById('treatment-list').innerHTML = html;
 }
 
-function buildTreatmentDetail(treatments) {
+function buildTreatmentDetail(treatments, treatmentLinks) {
   let html = '<div class="treat-sub-table">';
   html += `<div class="treat-sub-head">
     <div class="treat-sub-type">Type</div>
     <div class="treat-sub-desc">Description</div>
-    <div class="treat-sub-ref">Control Ref</div>
+    <div class="treat-sub-ref">Links</div>
     <div class="treat-sub-resp">Responsible</div>
     <div class="treat-sub-due">Due</div>
     <div class="treat-sub-st">Status</div>
@@ -3147,13 +3435,14 @@ function buildTreatmentDetail(treatments) {
   </div>`;
   for (const t of treatments) {
     const stBadge = t.status === 'verified' ? 'badge-low' : t.status === 'implemented' ? 'badge-low' : t.status === 'in_progress' ? 'badge-medium' : 'badge-high';
+    const links = treatmentLinks[t.id] || [];
+    const linkCount = links.length;
     html += `<div class="treat-sub-row">
       <div class="treat-sub-type"><span class="badge badge-inactive">${t.treatment_type}</span></div>
       <div class="treat-sub-desc">
         <span style="font-size:12px">${esc(t.description)}</span>
-        ${t.requirement_title ? `<span style="font-size:10px;color:var(--text-muted);display:block">${esc(t.clause)} - ${esc(t.requirement_title)}</span>` : ''}
       </div>
-      <div class="treat-sub-ref"><span style="font-size:12px;color:var(--primary)">${t.control_reference ? esc(t.control_reference) : '-'}</span></div>
+      <div class="treat-sub-ref"><span style="font-size:12px;color:var(--primary)">${linkCount > 0 ? `${linkCount} link${linkCount !== 1 ? 's' : ''}` : '-'}</span></div>
       <div class="treat-sub-resp"><span style="font-size:12px">${t.responsible ? esc(t.responsible) : '-'}</span></div>
       <div class="treat-sub-due"><span style="font-size:12px">${t.due_date || '-'}</span></div>
       <div class="treat-sub-st"><span class="badge ${stBadge}">${t.status}</span></div>
@@ -3179,13 +3468,17 @@ async function populateTreatmentRoles() {
   sel.innerHTML = '<option value="">-- Select Role --</option>' + roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
 }
 
+let currentTreatmentLinks = []; // Temporary storage for treatment links being edited
+
 async function openTreatmentModalForRisk(riskId) {
   document.getElementById('treatment-form').reset();
   document.getElementById('treatment-id').value = '';
   document.getElementById('treatment-risk-id').value = riskId;
   document.getElementById('treatment-modal-title').textContent = 'New Treatment';
   document.getElementById('treatment-status-group').classList.add('hidden');
-  await Promise.all([populateTreatmentReqDropdown(), populateTreatmentRoles()]);
+  document.getElementById('treatment-links-group').style.display = 'none';
+  currentTreatmentLinks = [];
+  await populateTreatmentRoles();
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
 
@@ -3199,23 +3492,124 @@ async function openTreatmentModal(id) {
   document.getElementById('treatment-modal-title').textContent = 'Edit Treatment';
   document.getElementById('treatment-type').value = t.treatment_type;
   document.getElementById('treatment-description').value = t.description;
-  document.getElementById('treatment-control-ref').value = t.control_reference || '';
   document.getElementById('treatment-due-date').value = t.due_date || '';
   document.getElementById('treatment-res-likelihood').value = t.residual_likelihood || '';
   document.getElementById('treatment-res-impact').value = t.residual_impact || '';
   document.getElementById('treatment-notes').value = t.notes || '';
   document.getElementById('treatment-status-field').value = t.status;
   document.getElementById('treatment-status-group').classList.remove('hidden');
-  await Promise.all([populateTreatmentReqDropdown(), populateTreatmentRoles()]);
+  await populateTreatmentRoles();
   document.getElementById('treatment-responsible').value = t.responsible || '';
-  document.getElementById('treatment-requirement').value = t.requirement_id || '';
+
+  // Load existing links
+  const links = await api(`/api/cross-links/treatment/${id}`);
+  currentTreatmentLinks = links.map(l => ({ link_id: l.link_id, type: l.type, id: l.id, name: l.name }));
+  document.getElementById('treatment-links-group').style.display = 'block';
+  renderTreatmentLinksInModal();
+
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
 
-async function populateTreatmentReqDropdown() {
-  const reqs = await api('/api/requirements');
-  const sel = document.getElementById('treatment-requirement');
-  sel.innerHTML = '<option value="">-- None --</option>' + reqs.map(r => `<option value="${r.id}">${esc(r.clause)} - ${esc(r.title)} (${esc(r.standard)})</option>`).join('');
+function renderTreatmentLinksInModal() {
+  const container = document.getElementById('treatment-links-container');
+  if (currentTreatmentLinks.length === 0) {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:12px">No links yet.</span>';
+    return;
+  }
+  const typeLabels = {};
+  for (const [k, v] of Object.entries(linkableTypes)) typeLabels[k] = v.label;
+
+  container.innerHTML = currentTreatmentLinks.map((l, idx) => `
+    <div class="treatment-link-item" style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:#f1f5f9;border-radius:var(--radius);margin-bottom:4px;font-size:12px">
+      <span><strong>${typeLabels[l.type] || l.type}:</strong> ${esc(l.name)}</span>
+      <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 6px;font-size:10px" onclick="removeTreatmentLinkFromModal(${idx})">&times;</button>
+    </div>
+  `).join('');
+}
+
+function removeTreatmentLinkFromModal(idx) {
+  const removed = currentTreatmentLinks.splice(idx, 1)[0];
+  if (removed.link_id) {
+    api(`/api/cross-links/${removed.link_id}`, { method: 'DELETE' });
+  }
+  renderTreatmentLinksInModal();
+}
+
+async function openTreatmentLinkPicker() {
+  const treatmentId = document.getElementById('treatment-id').value;
+  if (!treatmentId) {
+    alert('Please save the treatment first before adding links.');
+    return;
+  }
+
+  const allowed = linkableTypes['treatment']?.canLink || [];
+  let existing = document.getElementById('treatment-link-picker-modal');
+  if (!existing) {
+    existing = document.createElement('div');
+    existing.id = 'treatment-link-picker-modal';
+    existing.className = 'modal hidden';
+    document.body.appendChild(existing);
+  }
+  existing.innerHTML = `
+    <div class="modal-overlay" onclick="closeTreatmentLinkPicker()"></div>
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h3>Add Link</h3>
+        <button class="modal-close" onclick="closeTreatmentLinkPicker()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>Type</label>
+        <select id="treatment-link-pick-type" onchange="loadTreatmentLinkOptions()">
+          <option value="">-- Select type --</option>
+          ${allowed.map(t => `<option value="${t}">${linkableTypes[t]?.label || t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Item</label>
+        <select id="treatment-link-pick-item"><option value="">-- Select type first --</option></select>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="closeTreatmentLinkPicker()">Cancel</button>
+        <button class="btn btn-primary" onclick="addTreatmentLinkFromModal()">Add Link</button>
+      </div>
+    </div>`;
+  existing.classList.remove('hidden');
+}
+
+function closeTreatmentLinkPicker() {
+  const m = document.getElementById('treatment-link-picker-modal');
+  if (m) m.classList.add('hidden');
+}
+
+async function loadTreatmentLinkOptions() {
+  const type = document.getElementById('treatment-link-pick-type').value;
+  const sel = document.getElementById('treatment-link-pick-item');
+  if (!type) { sel.innerHTML = '<option value="">-- Select type first --</option>'; return; }
+  const items = await api(`/api/linkable/${type}`);
+  sel.innerHTML = '<option value="">-- Select --</option>' + items.map(i => `<option value="${i.id}" data-name="${esc(i.name)}">${esc(i.name)}</option>`).join('');
+}
+
+async function addTreatmentLinkFromModal() {
+  const treatmentId = document.getElementById('treatment-id').value;
+  const targetType = document.getElementById('treatment-link-pick-type').value;
+  const targetIdStr = document.getElementById('treatment-link-pick-item').value;
+  const targetSel = document.getElementById('treatment-link-pick-item');
+  const targetName = targetSel.options[targetSel.selectedIndex]?.dataset.name || '';
+
+  if (!targetType || !targetIdStr) return alert('Please select a type and item');
+
+  if (currentTreatmentLinks.some(l => l.type === targetType && l.id === parseInt(targetIdStr))) {
+    alert('This item is already linked.');
+    return;
+  }
+
+  await api('/api/cross-links', { method: 'POST', body: { source_type: 'treatment', source_id: parseInt(treatmentId), target_type: targetType, target_id: parseInt(targetIdStr) } });
+
+  const links = await api(`/api/cross-links/treatment/${treatmentId}`);
+  currentTreatmentLinks = links.map(l => ({ link_id: l.link_id, type: l.type, id: l.id, name: l.name }));
+
+  closeTreatmentLinkPicker();
+  renderTreatmentLinksInModal();
 }
 
 function closeTreatmentModal() { document.getElementById('treatment-modal').classList.add('hidden'); }
@@ -3227,20 +3621,32 @@ async function saveTreatment(e) {
     risk_id: parseInt(document.getElementById('treatment-risk-id').value),
     treatment_type: document.getElementById('treatment-type').value,
     description: document.getElementById('treatment-description').value,
-    control_reference: document.getElementById('treatment-control-ref').value,
-    requirement_id: document.getElementById('treatment-requirement').value || null,
     responsible: document.getElementById('treatment-responsible').value,
     due_date: document.getElementById('treatment-due-date').value || null,
     residual_likelihood: document.getElementById('treatment-res-likelihood').value ? parseInt(document.getElementById('treatment-res-likelihood').value) : null,
     residual_impact: document.getElementById('treatment-res-impact').value ? parseInt(document.getElementById('treatment-res-impact').value) : null,
     notes: document.getElementById('treatment-notes').value,
   };
+  let treatmentId = id;
   if (id) {
     body.status = document.getElementById('treatment-status-field').value;
     await api(`/api/treatments/${id}`, { method: 'PUT', body });
   } else {
-    await api('/api/treatments', { method: 'POST', body });
+    const result = await api('/api/treatments', { method: 'POST', body });
+    treatmentId = result.id;
   }
+
+  // Show links section for newly created treatment so user can add links
+  if (!id && treatmentId) {
+    document.getElementById('treatment-id').value = treatmentId;
+    document.getElementById('treatment-links-group').style.display = 'block';
+    document.getElementById('treatment-modal-title').textContent = 'Edit Treatment';
+    document.getElementById('treatment-status-group').classList.remove('hidden');
+    document.getElementById('treatment-status-field').value = 'planned';
+    renderTreatmentLinksInModal();
+    return;
+  }
+
   closeTreatmentModal();
   refreshCurrentView();
 }
@@ -3625,47 +4031,101 @@ function switchArchTab(type) {
 async function loadArchitecture() {
   const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
   const list = document.getElementById('arch-list');
+
   if (items.length === 0) {
     list.innerHTML = `<div class="empty-state">No ${archTypeLabels[currentArchTab].toLowerCase()} defined yet.</div>`;
     return;
   }
-  list.innerHTML = `<div class="arch-items">${items.map(item => {
-    const stBadge = item.status === 'active' ? 'badge-low' : item.status === 'planned' ? 'badge-medium' : 'badge-inactive';
+
+  // Fetch cross-links for all items
+  const allLinks = {};
+  await Promise.all(items.map(async item => {
+    allLinks[item.id] = await api(`/api/cross-links/${currentArchTab}/${item.id}`);
+  }));
+
+  // Summary stats
+  const activeCount = items.filter(i => i.status === 'active').length;
+  const plannedCount = items.filter(i => i.status === 'planned').length;
+  const retiredCount = items.filter(i => i.status === 'retired').length;
+
+  let html = `
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card"><div class="stat-value">${items.length}</div><div class="stat-label">Total</div></div>
+      <div class="stat-card done"><div class="stat-value">${activeCount}</div><div class="stat-label">Active</div></div>
+      <div class="stat-card today"><div class="stat-value">${plannedCount}</div><div class="stat-label">Planned</div></div>
+      <div class="stat-card"><div class="stat-value">${retiredCount}</div><div class="stat-label">Retired</div></div>
+    </div>`;
+
+  // Build table based on architecture type
+  html += '<div class="arch-table">';
+  html += buildArchTableHeader(currentArchTab);
+
+  for (const item of items) {
     let meta = {};
     try { meta = JSON.parse(item.metadata || '{}'); } catch(e) {}
-    let extraHtml = '';
-    if (item.arch_type === 'role' && (meta.contact_name || meta.contact_email || meta.contact_phone)) {
-      extraHtml = `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">
-        ${meta.contact_name ? `<span>&#128100; ${esc(meta.contact_name)}</span>` : ''}
-        ${meta.contact_email ? `<span> &middot; &#9993; ${esc(meta.contact_email)}</span>` : ''}
-        ${meta.contact_phone ? `<span> &middot; &#128222; ${esc(meta.contact_phone)}</span>` : ''}
-      </div>`;
-    } else if (item.arch_type === 'system' && meta.criticality) {
+    const links = allLinks[item.id] || [];
+    html += buildArchTableRow(item, meta, links, currentArchTab);
+  }
+
+  html += '</div>';
+  list.innerHTML = html;
+}
+
+function buildArchTableHeader(archType) {
+  const headers = {
+    role: ['Name', 'Contact', 'Owner', 'Status', 'Links', ''],
+    process: ['Name', 'Description', 'Owner', 'Status', 'Links', ''],
+    system: ['Name', 'Criticality', 'Owner', 'Status', 'Links', ''],
+    asset: ['Name', 'Description', 'Owner', 'Status', 'Links', ''],
+    facility: ['Name', 'Address', 'Owner', 'Status', 'Links', ''],
+  };
+  const cols = headers[archType] || headers.role;
+  return `<div class="arch-table-head">
+    ${cols.map((c, i) => `<div class="arch-col-${i === 0 ? 'name' : i === cols.length - 1 ? 'actions' : 'detail'}">${c}</div>`).join('')}
+  </div>`;
+}
+
+function buildArchTableRow(item, meta, links, archType) {
+  const stBadge = item.status === 'active' ? 'badge-low' : item.status === 'planned' ? 'badge-medium' : 'badge-inactive';
+  const linkCount = links.length;
+
+  let detailCol = '';
+  if (archType === 'role') {
+    const contact = [meta.contact_name, meta.contact_email].filter(Boolean).join(' · ');
+    detailCol = contact ? `<span style="font-size:12px">${esc(contact)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>';
+  } else if (archType === 'system') {
+    if (meta.criticality) {
       const critBadge = meta.criticality === 'critical' ? 'badge-critical' : meta.criticality === 'high' ? 'badge-high' : meta.criticality === 'medium' ? 'badge-medium' : 'badge-low';
-      extraHtml = `<span class="badge ${critBadge}" style="margin-left:6px">${meta.criticality} criticality</span>`;
-    } else if (item.arch_type === 'facility' && meta.address) {
-      extraHtml = `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">&#127968; ${esc(meta.address)}</div>`;
+      detailCol = `<span class="badge ${critBadge}">${meta.criticality}</span>`;
+    } else {
+      detailCol = '<span style="color:var(--text-muted);font-size:11px">-</span>';
     }
-    return `<div class="arch-item">
-      <div class="arch-item-main">
-        <h4>${esc(item.name)}</h4>
-        ${item.description ? `<p style="font-size:13px;color:var(--text-muted);margin:4px 0">${esc(item.description)}</p>` : ''}
-        <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text-muted);flex-wrap:wrap">
-          ${item.owner ? `<span>Owner: ${esc(item.owner)}</span>` : ''}
-          <span class="badge ${stBadge}">${item.status}</span>
-          ${item.arch_type === 'system' ? extraHtml : ''}
-        </div>
-        ${item.arch_type !== 'system' ? extraHtml : ''}
-      </div>
+  } else if (archType === 'facility') {
+    detailCol = meta.address ? `<span style="font-size:12px">${esc(meta.address.substring(0, 40))}${meta.address.length > 40 ? '...' : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>';
+  } else {
+    detailCol = item.description ? `<span style="font-size:12px">${esc(item.description.substring(0, 50))}${item.description.length > 50 ? '...' : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>';
+  }
+
+  return `<div class="arch-table-row">
+    <div class="arch-col-name">
+      <span class="arch-name">${esc(item.name)}</span>
+      ${archType === 'role' && item.description ? `<span class="arch-desc">${esc(item.description)}</span>` : ''}
+    </div>
+    <div class="arch-col-detail">${detailCol}</div>
+    <div class="arch-col-detail"><span style="font-size:12px">${item.owner ? esc(item.owner) : '-'}</span></div>
+    <div class="arch-col-detail"><span class="badge ${stBadge}">${item.status}</span></div>
+    <div class="arch-col-detail">
+      ${linkCount > 0 ? `<span style="font-size:12px;color:var(--primary)">${linkCount} link${linkCount !== 1 ? 's' : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
+    </div>
+    <div class="arch-col-actions">
       ${actionMenu([
+        { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('${archType}',${item.id},'arch-expand-${item.id}')` },
         { label: '&#9998; Edit', onclick: `openArchModal(${item.id})` },
         'sep',
         { label: '&#128465; Delete', onclick: `deleteArch(${item.id})`, cls: 'danger' },
       ])}
-      <div id="arch-links-${item.id}"></div>
-    </div>`;
-  }).join('')}</div>`;
-  for (const item of items) renderCrossLinks(currentArchTab, item.id, `arch-links-${item.id}`);
+    </div>
+  </div>`;
 }
 
 async function openArchModal(id) {
