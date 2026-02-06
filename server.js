@@ -324,6 +324,8 @@ try { db.exec("ALTER TABLE audits ADD COLUMN auditee TEXT DEFAULT ''"); } catch(
 // Migration: add recurrence fields to audits
 try { db.exec("ALTER TABLE audits ADD COLUMN recurrence TEXT DEFAULT 'none'"); } catch(e) { /* already exists */ }
 try { db.exec("ALTER TABLE audits ADD COLUMN recurrence_end_date TEXT DEFAULT NULL"); } catch(e) { /* already exists */ }
+try { db.exec("ALTER TABLE audits ADD COLUMN parent_audit_id INTEGER DEFAULT NULL"); } catch(e) { /* already exists */ }
+try { db.exec("ALTER TABLE audits ADD COLUMN instance_number INTEGER DEFAULT 1"); } catch(e) { /* already exists */ }
 
 // Migration: add standards field (JSON array) to audits for multi-standard audits
 try { db.exec("ALTER TABLE audits ADD COLUMN standards TEXT DEFAULT '[]'"); } catch(e) { /* already exists */ }
@@ -726,23 +728,36 @@ app.delete('/api/actions/:id', (req, res) => {
 
 // --- Audit API ---
 
-// List audits
+// List audits (returns parent audits with child events attached)
 app.get('/api/audits', (req, res) => {
-  const { status } = req.query;
-  let sql = 'SELECT * FROM audits WHERE 1=1';
+  const { status, include_children } = req.query;
+  let sql = 'SELECT * FROM audits WHERE parent_audit_id IS NULL';
   const params = [];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   sql += ' ORDER BY planned_date DESC, created_at DESC';
-  const audits = db.prepare(sql).all(...params);
-  // Attach counts
-  for (const a of audits) {
+  const parentAudits = db.prepare(sql).all(...params);
+
+  // Attach counts and child events for each parent
+  for (const a of parentAudits) {
     a.checklist_count = db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(a.id).c;
     a.assessed_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(a.id).c;
     a.nc_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(a.id).c;
     a.ncr_count = db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(a.id).c;
     a.open_nc_count = db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(a.id).c;
+
+    // Get child events for recurring audits
+    const childAudits = db.prepare('SELECT * FROM audits WHERE parent_audit_id = ? ORDER BY instance_number, planned_date').all(a.id);
+    for (const c of childAudits) {
+      c.checklist_count = db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(c.id).c;
+      c.assessed_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(c.id).c;
+      c.nc_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(c.id).c;
+      c.ncr_count = db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(c.id).c;
+      c.open_nc_count = db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(c.id).c;
+    }
+    a.child_events = childAudits;
+    a.total_instances = 1 + childAudits.length;
   }
-  res.json(audits);
+  res.json(parentAudits);
 });
 
 // Get single audit with checklist and NCs
@@ -777,11 +792,11 @@ app.post('/api/audits', (req, res) => {
   const primaryStandard = standardsArray[0] || 'ISO 9001';
 
   const createAudit = db.transaction(() => {
-    // Create the first audit
-    const result = db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null
+    // Create the parent audit (instance 1)
+    const result = db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1
     );
-    const auditId = result.lastInsertRowid;
+    const parentAuditId = result.lastInsertRowid;
 
     // Auto-create checklist items from selected requirements, including the standard
     if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
@@ -791,20 +806,20 @@ app.post('/api/audits', (req, res) => {
       for (const reqId of requirement_ids) {
         const req = getReq.get(reqId);
         if (req) {
-          insertCl.run(auditId, req.clause, req.title, req.standard, order++);
+          insertCl.run(parentAuditId, req.clause, req.title, req.standard, order++);
         }
       }
     }
 
-    // Create recurring audit events if recurrence is set
+    // Create recurring audit events as child audits if recurrence is set
     if (recurrence && recurrence !== 'none' && planned_date && recurrence_end_date) {
       let nextDate = getNextRecurrenceDate(planned_date, recurrence);
       const endDate = new Date(recurrence_end_date);
       let instanceNum = 2;
 
       while (nextDate && new Date(nextDate) <= endDate) {
-        const recurResult = db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-          `${title} (#${instanceNum})`, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date
+        const recurResult = db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date, parentAuditId, instanceNum
         );
 
         // Copy checklist items to recurring audit
@@ -825,7 +840,7 @@ app.post('/api/audits', (req, res) => {
       }
     }
 
-    return db.prepare('SELECT * FROM audits WHERE id = ?').get(auditId);
+    return db.prepare('SELECT * FROM audits WHERE id = ?').get(parentAuditId);
   });
 
   const audit = createAudit();
@@ -1038,7 +1053,12 @@ app.post('/api/checklist/:id/evidence-link', (req, res) => {
 // List NCs (optionally filter by audit)
 app.get('/api/ncrs', (req, res) => {
   const { audit_id, status } = req.query;
-  let sql = `SELECT n.*, a.title as audit_title, a.standard as audit_standard FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE 1=1`;
+  let sql = `SELECT n.*, a.title as audit_title, a.standard as audit_standard,
+    COALESCE(cl.standard, a.standard) as ncr_standard
+    FROM non_conformities n
+    JOIN audits a ON n.audit_id = a.id
+    LEFT JOIN audit_checklist cl ON n.checklist_item_id = cl.id
+    WHERE 1=1`;
   const params = [];
   if (audit_id) { sql += ' AND n.audit_id = ?'; params.push(audit_id); }
   if (status) { sql += ' AND n.status = ?'; params.push(status); }
@@ -1102,14 +1122,15 @@ app.get('/api/requirements', (req, res) => {
   // Enrich each requirement with audit history
   for (const r of reqs) {
     // Find checklist items matching this requirement's clause and standard
+    // Check both checklist item's standard field and fallback to audit's standard
     const auditHistory = db.prepare(`
       SELECT a.id as audit_id, a.title as audit_title, a.planned_date, a.completed_date, a.status as audit_status,
              cl.rating, cl.id as checklist_item_id
       FROM audit_checklist cl
       JOIN audits a ON cl.audit_id = a.id
-      WHERE cl.clause = ? AND a.standard = ?
+      WHERE cl.clause = ? AND (cl.standard = ? OR (cl.standard = '' AND a.standard = ?))
       ORDER BY COALESCE(a.completed_date, a.planned_date) DESC
-    `).all(r.clause, r.standard);
+    `).all(r.clause, r.standard, r.standard);
 
     // Last audited info
     const completedAudits = auditHistory.filter(h => h.audit_status === 'completed');
@@ -1118,13 +1139,14 @@ app.get('/api/requirements', (req, res) => {
     r.last_rating = completedAudits.length > 0 ? completedAudits[0].rating : null;
     r.times_audited = completedAudits.length;
 
-    // NC info for this clause + standard
+    // NC info for this clause + standard (check checklist item standard or audit standard)
     const ncs = db.prepare(`
       SELECT n.id, n.status, n.severity
       FROM non_conformities n
       JOIN audits a ON n.audit_id = a.id
-      WHERE n.clause = ? AND a.standard = ?
-    `).all(r.clause, r.standard);
+      LEFT JOIN audit_checklist cl ON n.checklist_item_id = cl.id
+      WHERE n.clause = ? AND (COALESCE(cl.standard, a.standard) = ? OR a.standard = ?)
+    `).all(r.clause, r.standard, r.standard);
 
     r.nc_total = ncs.length;
     r.nc_open = ncs.filter(n => n.status === 'open' || n.status === 'in_progress').length;
@@ -1441,10 +1463,19 @@ app.get('/api/soa', (req, res) => {
     FROM standard_requirements sr LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
     WHERE sr.standard = 'ISO 27001 Annex A'
     ORDER BY sr.sort_order, sr.clause`).all();
-  // Attach linked risk treatments
+  // Attach linked risk treatments (via requirement_id OR control_reference)
   const allProcesses = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process'").all();
   for (const r of reqs) {
-    r.linked_treatments = db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ?`).all(r.id);
+    // Get treatments linked by requirement_id
+    const linkedById = db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ?`).all(r.id);
+    // Get treatments linked by control_reference (matching clause)
+    const linkedByRef = db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.control_reference = ? AND rt.control_reference != ''`).all(r.clause);
+    // Combine and dedupe
+    const allLinked = [...linkedById];
+    for (const t of linkedByRef) {
+      if (!allLinked.some(l => l.id === t.id)) allLinked.push(t);
+    }
+    r.linked_treatments = allLinked;
     try { r.linked_process_ids = JSON.parse(r.linked_processes || '[]'); } catch(e) { r.linked_process_ids = []; }
     r.linked_process_names = r.linked_process_ids.map(pid => { const p = allProcesses.find(x => x.id === pid); return p ? p.name : null; }).filter(Boolean);
   }

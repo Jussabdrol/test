@@ -1074,13 +1074,42 @@ async function loadAuditPlan() {
 
   list.innerHTML = audits.map(a => {
     const statusCls = a.status === 'completed' ? 'badge-low' : a.status === 'in_progress' ? 'badge-medium' : a.status === 'cancelled' ? 'badge-inactive' : 'badge-upcoming';
-    return `<div class="audit-card">
+    const hasChildren = a.child_events && a.child_events.length > 0;
+    const recurrenceLabel = { monthly: 'Monthly', quarterly: 'Quarterly', 'semi-annual': 'Semi-Annual', annual: 'Annual' };
+
+    let childEventsHtml = '';
+    if (hasChildren) {
+      childEventsHtml = `<div class="audit-children collapsed" id="audit-children-${a.id}">
+        ${a.child_events.map(c => {
+          const cStatusCls = c.status === 'completed' ? 'badge-low' : c.status === 'in_progress' ? 'badge-medium' : c.status === 'cancelled' ? 'badge-inactive' : 'badge-upcoming';
+          return `<div class="audit-child-event">
+            <div class="audit-child-main">
+              <span class="audit-child-date">${c.planned_date || 'No date'}</span>
+              <span class="audit-child-instance">#${c.instance_number}</span>
+              <span class="badge ${cStatusCls}">${c.status.replace('_', ' ')}</span>
+              <span class="audit-child-stats">${c.assessed_count}/${c.checklist_count} assessed</span>
+            </div>
+            <div class="audit-child-actions">
+              ${c.status === 'planned' ? `<button class="btn btn-secondary btn-sm" onclick="startAudit(${c.id})">Start</button>` : ''}
+              ${c.status === 'in_progress' ? `<button class="btn btn-primary btn-sm" onclick="switchToExecute(${c.id})">Execute</button>` : ''}
+              <button class="btn btn-secondary btn-sm" onclick="openAuditModal(${c.id})">Edit</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+
+    return `<div class="audit-card${hasChildren ? ' audit-recurring' : ''}">
       <div class="audit-card-header">
         <div>
           <h3>${esc(a.title)}</h3>
-          <div class="audit-meta">${esc(a.standard)} &middot; ${a.planned_date || 'No date'} &middot; Lead: ${esc(a.lead_auditor || 'Unassigned')}</div>
+          <div class="audit-meta">
+            ${esc(a.standard)} &middot; ${a.planned_date || 'No date'} &middot; Lead: ${esc(a.lead_auditor || 'Unassigned')}
+            ${hasChildren ? ` &middot; <span class="audit-recurrence-badge">${recurrenceLabel[a.recurrence] || a.recurrence} (${a.total_instances} events)</span>` : ''}
+          </div>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
+          ${hasChildren ? `<button class="btn btn-secondary btn-sm" onclick="toggleAuditChildren(${a.id})"><span id="audit-toggle-${a.id}">&#9660;</span> Events</button>` : ''}
           <span class="badge ${statusCls}">${a.status.replace('_', ' ')}</span>
         </div>
       </div>
@@ -1099,6 +1128,7 @@ async function loadAuditPlan() {
           { label: '&#128465; Delete', onclick: `deleteAudit(${a.id})`, cls: 'danger' },
         ])}
       </div>
+      ${childEventsHtml}
       <div id="audit-links-${a.id}"></div>
     </div>`;
   }).join('');
@@ -1108,6 +1138,18 @@ function toggleAuditLinks(id) {
   const el = document.getElementById(`audit-links-${id}`);
   if (el.innerHTML) { el.innerHTML = ''; return; }
   renderCrossLinks('audit', id, `audit-links-${id}`);
+}
+
+function toggleAuditChildren(id) {
+  const el = document.getElementById(`audit-children-${id}`);
+  const toggle = document.getElementById(`audit-toggle-${id}`);
+  if (el.classList.contains('collapsed')) {
+    el.classList.remove('collapsed');
+    toggle.innerHTML = '&#9650;';
+  } else {
+    el.classList.add('collapsed');
+    toggle.innerHTML = '&#9660;';
+  }
 }
 
 function renderAuditGantt(audits) {
@@ -1586,22 +1628,60 @@ async function loadAuditExecution(auditId) {
         }
 
         html += `<div class="checklist-item checklist-assessed${isNc ? ' checklist-nc' : ''}" id="cl-item-${item.id}">
-          <div class="cl-header">
+          <div class="cl-header" style="cursor:pointer" onclick="toggleChecklistItemExpand(${item.id})">
             <div class="cl-clause">
               <strong>${esc(item.clause)}</strong>
               ${item.standard ? `<span class="badge badge-inactive" style="font-size:9px;margin-left:6px">${esc(item.standard.replace('ISO ',''))}</span>` : ''}
             </div>
-            <span class="badge ${ratingColors[item.rating]}">${ratingLabels[item.rating]}</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="badge ${ratingColors[item.rating]}">${ratingLabels[item.rating]}</span>
+              <span class="cl-item-toggle" id="cl-toggle-${item.id}">&#9660;</span>
+            </div>
           </div>
           ${item.requirement ? `<div class="cl-requirement">${esc(item.requirement)}</div>` : ''}
-          <div class="cl-assessed-detail">
+          <div class="cl-assessed-detail" id="cl-summary-${item.id}">
             ${item.evidence ? `<div class="cl-detail-row"><span class="cl-detail-label">Evidence:</span> ${esc(item.evidence.substring(0, 100))}${item.evidence.length > 100 ? '...' : ''}</div>` : ''}
             ${item.finding ? `<div class="cl-detail-row"><span class="cl-detail-label">Finding:</span> ${esc(item.finding.substring(0, 100))}${item.finding.length > 100 ? '...' : ''}</div>` : ''}
+          </div>
+          <div class="cl-fields collapsed" id="cl-fields-${item.id}">
+            <div class="form-group" style="margin-bottom:8px">
+              <label>Evidence Notes</label>
+              <textarea rows="2" onchange="updateChecklistField(${item.id},'evidence',this.value)" placeholder="Evidence observed">${esc(item.evidence)}</textarea>
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label>Evidence Files & Links</label>
+              <div class="cl-evidence-container">${renderChecklistEvidence(item, auditId)}</div>
+              <div style="display:flex;gap:6px;margin-top:6px">
+                <input type="file" id="cl-evidence-file-a-${item.id}" style="display:none" onchange="uploadChecklistEvidence(${item.id}, ${auditId})">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('cl-evidence-file-a-${item.id}').click()">Upload File</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="openChecklistLinkPicker(${item.id}, ${auditId})">Link Item</button>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label>Finding</label>
+              <textarea rows="2" onchange="updateChecklistField(${item.id},'finding',this.value)" placeholder="Audit finding">${esc(item.finding)}</textarea>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="margin-bottom:8px">
+                <label>Rating</label>
+                <select onchange="updateChecklistField(${item.id},'rating',this.value)">
+                  <option value="not_assessed" ${item.rating==='not_assessed'?'selected':''}>Not Assessed</option>
+                  <option value="conforming" ${item.rating==='conforming'?'selected':''}>Conforming</option>
+                  <option value="observation" ${item.rating==='observation'?'selected':''}>Observation</option>
+                  <option value="minor_nc" ${item.rating==='minor_nc'?'selected':''}>Minor NC</option>
+                  <option value="major_nc" ${item.rating==='major_nc'?'selected':''}>Major NC</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:8px">
+                <label>Notes</label>
+                <input type="text" onchange="updateChecklistField(${item.id},'notes',this.value)" value="${esc(item.notes)}" placeholder="Additional notes">
+              </div>
+            </div>
           </div>
           ${ncrIndicator}
           <div class="cl-actions">
             ${actionMenu([
-              { label: '&#9998; Edit Item', onclick: `expandChecklistItem(${item.id}, ${auditId})` },
+              { label: '&#8635; Reset to Unassessed', onclick: `resetChecklistRating(${item.id}, ${auditId})` },
               { label: '&#128465; Remove Item', onclick: `deleteChecklistItem(${item.id}, ${auditId})`, cls: 'danger' },
             ])}
           </div>
@@ -1852,6 +1932,28 @@ function toggleAssessedItems() {
   }
 }
 
+// Toggle individual checklist item expansion (for inline editing)
+function toggleChecklistItemExpand(itemId) {
+  const fields = document.getElementById(`cl-fields-${itemId}`);
+  const summary = document.getElementById(`cl-summary-${itemId}`);
+  const toggle = document.getElementById(`cl-toggle-${itemId}`);
+  if (fields.classList.contains('collapsed')) {
+    fields.classList.remove('collapsed');
+    summary.classList.add('collapsed');
+    toggle.innerHTML = '&#9650;';
+  } else {
+    fields.classList.add('collapsed');
+    summary.classList.remove('collapsed');
+    toggle.innerHTML = '&#9660;';
+  }
+}
+
+// Reset checklist item rating to unassessed
+async function resetChecklistRating(itemId, auditId) {
+  await api(`/api/checklist/${itemId}`, { method: 'PUT', body: { rating: 'not_assessed' } });
+  loadAuditExecution(auditId);
+}
+
 // Expand a checklist item for editing (opens full form in modal)
 let expandedChecklistItem = null;
 
@@ -1936,7 +2038,7 @@ function renderNcrTable(ncrs) {
       <td><strong>${esc(n.description.substring(0, 80))}${n.description.length > 80 ? '...' : ''}</strong>
         <div id="ncr-links-${n.id}"></div>
       </td>
-      <td><span class="badge badge-inactive" style="font-size:11px">${esc(n.audit_standard || '-')}</span></td>
+      <td><span class="badge badge-inactive" style="font-size:11px">${esc(n.ncr_standard || n.audit_standard || '-')}</span></td>
       <td>${esc(n.audit_title)}</td>
       <td>${esc(n.clause || '-')}</td>
       <td><span class="badge ${sevBadge}">${n.severity}</span></td>
@@ -3446,13 +3548,20 @@ async function populateTreatmentRoles() {
   sel.innerHTML = '<option value="">-- Select Role --</option>' + roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
 }
 
+async function populateTreatmentControls() {
+  const soaData = await api('/api/soa');
+  const select = document.getElementById('treatment-control-ref');
+  select.innerHTML = '<option value="">-- Select Control (optional) --</option>' +
+    soaData.map(c => `<option value="${esc(c.clause)}">${esc(c.clause)} - ${esc(c.title)}</option>`).join('');
+}
+
 async function openTreatmentModalForRisk(riskId) {
   document.getElementById('treatment-form').reset();
   document.getElementById('treatment-id').value = '';
   document.getElementById('treatment-risk-id').value = riskId;
   document.getElementById('treatment-modal-title').textContent = 'New Treatment';
   document.getElementById('treatment-status-group').classList.add('hidden');
-  await populateTreatmentRoles();
+  await Promise.all([populateTreatmentRoles(), populateTreatmentControls()]);
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
 
@@ -3466,15 +3575,15 @@ async function openTreatmentModal(id) {
   document.getElementById('treatment-modal-title').textContent = 'Edit Treatment';
   document.getElementById('treatment-type').value = t.treatment_type;
   document.getElementById('treatment-description').value = t.description;
-  document.getElementById('treatment-control-ref').value = t.control_reference || '';
   document.getElementById('treatment-due-date').value = t.due_date || '';
   document.getElementById('treatment-res-likelihood').value = t.residual_likelihood || '';
   document.getElementById('treatment-res-impact').value = t.residual_impact || '';
   document.getElementById('treatment-notes').value = t.notes || '';
   document.getElementById('treatment-status-field').value = t.status;
   document.getElementById('treatment-status-group').classList.remove('hidden');
-  await populateTreatmentRoles();
+  await Promise.all([populateTreatmentRoles(), populateTreatmentControls()]);
   document.getElementById('treatment-responsible').value = t.responsible || '';
+  document.getElementById('treatment-control-ref').value = t.control_reference || '';
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
 

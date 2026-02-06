@@ -247,6 +247,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .audit-card-footer { display: flex; justify-content: space-between; align-items: center; }
 .audit-stats { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); }
 
+/* Audit recurring events */
+.audit-recurring { border-left-color: var(--primary); }
+.audit-recurrence-badge { color: var(--primary); font-weight: 500; }
+.audit-children { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+.audit-children.collapsed { display: none; }
+.audit-child-event { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; margin-bottom: 6px; background: #f8fafc; border-radius: var(--radius); border-left: 3px solid var(--border); }
+.audit-child-event:last-child { margin-bottom: 0; }
+.audit-child-main { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.audit-child-date { font-weight: 500; }
+.audit-child-instance { color: var(--text-muted); font-size: 11px; }
+.audit-child-stats { color: var(--text-muted); font-size: 12px; }
+.audit-child-actions { display: flex; gap: 6px; }
+
 .audit-exec-info { display: flex; gap: 24px; flex-wrap: wrap; padding: 14px 18px; background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 16px; font-size: 13px; }
 .audit-exec-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .audit-exec-stats .stat-card { padding: 12px; }
@@ -278,11 +291,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .cl-assessed-body .checklist-item { border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--border); padding: 12px 16px; }
 .cl-assessed-body .checklist-item:last-child { border-bottom: none; }
 .checklist-assessed { background: #fafffe; }
-.checklist-assessed .cl-fields { display: none; }
+.checklist-assessed .cl-fields.collapsed { display: none; }
+.checklist-assessed .cl-assessed-detail.collapsed { display: none; }
 .cl-assessed-detail { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
 .cl-detail-row { margin-bottom: 4px; }
 .cl-detail-label { font-weight: 600; color: var(--text); }
 .cl-section-title { font-size: 14px; font-weight: 600; color: var(--text-muted); }
+.cl-item-toggle { font-size: 10px; color: var(--text-muted); }
 
 .ncr-card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; margin-bottom: 10px; border-left: 4px solid var(--danger); }
 .ncr-meta { font-size: 12px; color: var(--text-muted); }
