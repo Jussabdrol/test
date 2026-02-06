@@ -728,7 +728,7 @@ app.delete('/api/actions/:id', (req, res) => {
 
 // --- Audit API ---
 
-// List audits (returns parent audits with child events attached)
+// List audits (returns parent audits with ALL events attached including first instance)
 app.get('/api/audits', (req, res) => {
   const { status, include_children } = req.query;
   let sql = 'SELECT * FROM audits WHERE parent_audit_id IS NULL';
@@ -737,25 +737,43 @@ app.get('/api/audits', (req, res) => {
   sql += ' ORDER BY planned_date DESC, created_at DESC';
   const parentAudits = db.prepare(sql).all(...params);
 
-  // Attach counts and child events for each parent
+  // Helper function to get audit stats
+  const getAuditStats = (auditId) => ({
+    checklist_count: db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(auditId).c,
+    assessed_count: db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(auditId).c,
+    nc_count: db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(auditId).c,
+    ncr_count: db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(auditId).c,
+    open_nc_count: db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(auditId).c
+  });
+
+  // Attach counts and ALL events (including parent as event #1) for each parent
   for (const a of parentAudits) {
-    a.checklist_count = db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(a.id).c;
-    a.assessed_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(a.id).c;
-    a.nc_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(a.id).c;
-    a.ncr_count = db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(a.id).c;
-    a.open_nc_count = db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(a.id).c;
+    const parentStats = getAuditStats(a.id);
+    Object.assign(a, parentStats);
 
     // Get child events for recurring audits
     const childAudits = db.prepare('SELECT * FROM audits WHERE parent_audit_id = ? ORDER BY instance_number, planned_date').all(a.id);
     for (const c of childAudits) {
-      c.checklist_count = db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(c.id).c;
-      c.assessed_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(c.id).c;
-      c.nc_count = db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(c.id).c;
-      c.ncr_count = db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(c.id).c;
-      c.open_nc_count = db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(c.id).c;
+      Object.assign(c, getAuditStats(c.id));
     }
     a.child_events = childAudits;
-    a.total_instances = 1 + childAudits.length;
+
+    // Create all_events array that includes the parent as event #1 PLUS all children
+    // This allows a proper mother-child relationship where all instances are in the events list
+    const parentAsEvent = {
+      id: a.id,
+      title: a.title,
+      standard: a.standard,
+      standards: a.standards,
+      planned_date: a.planned_date,
+      status: a.status,
+      instance_number: a.instance_number || 1,
+      lead_auditor: a.lead_auditor,
+      auditee: a.auditee,
+      ...parentStats
+    };
+    a.all_events = [parentAsEvent, ...childAudits];
+    a.total_instances = a.all_events.length;
   }
   res.json(parentAudits);
 });

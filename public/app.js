@@ -1073,62 +1073,70 @@ async function loadAuditPlan() {
   renderAuditGantt(audits);
 
   list.innerHTML = audits.map(a => {
-    const statusCls = a.status === 'completed' ? 'badge-low' : a.status === 'in_progress' ? 'badge-medium' : a.status === 'cancelled' ? 'badge-inactive' : 'badge-upcoming';
-    const hasChildren = a.child_events && a.child_events.length > 0;
     const recurrenceLabel = { monthly: 'Monthly', quarterly: 'Quarterly', 'semi-annual': 'Semi-Annual', annual: 'Annual' };
+    const hasEvents = a.all_events && a.all_events.length > 0;
+    const isRecurring = a.recurrence && a.recurrence !== 'none';
 
-    let childEventsHtml = '';
-    if (hasChildren) {
-      childEventsHtml = `<div class="audit-children collapsed" id="audit-children-${a.id}">
-        ${a.child_events.map(c => {
-          const cStatusCls = c.status === 'completed' ? 'badge-low' : c.status === 'in_progress' ? 'badge-medium' : c.status === 'cancelled' ? 'badge-inactive' : 'badge-upcoming';
+    // Calculate aggregate stats across all events
+    const totalAssessed = a.all_events ? a.all_events.reduce((sum, e) => sum + (e.assessed_count || 0), 0) : a.assessed_count;
+    const totalChecklist = a.all_events ? a.all_events.reduce((sum, e) => sum + (e.checklist_count || 0), 0) : a.checklist_count;
+    const totalNc = a.all_events ? a.all_events.reduce((sum, e) => sum + (e.nc_count || 0), 0) : a.nc_count;
+    const totalOpenNc = a.all_events ? a.all_events.reduce((sum, e) => sum + (e.open_nc_count || 0), 0) : a.open_nc_count;
+    const completedEvents = a.all_events ? a.all_events.filter(e => e.status === 'completed').length : 0;
+    const inProgressEvents = a.all_events ? a.all_events.filter(e => e.status === 'in_progress').length : 0;
+
+    // Build ALL events section (including event #1 - the parent)
+    let eventsHtml = '';
+    if (hasEvents) {
+      eventsHtml = `<div class="audit-children collapsed" id="audit-children-${a.id}">
+        ${a.all_events.map(ev => {
+          const evStatusCls = ev.status === 'completed' ? 'badge-low' : ev.status === 'in_progress' ? 'badge-medium' : ev.status === 'cancelled' ? 'badge-inactive' : 'badge-upcoming';
           return `<div class="audit-child-event">
             <div class="audit-child-main">
-              <span class="audit-child-date">${c.planned_date || 'No date'}</span>
-              <span class="audit-child-instance">#${c.instance_number}</span>
-              <span class="badge ${cStatusCls}">${c.status.replace('_', ' ')}</span>
-              <span class="audit-child-stats">${c.assessed_count}/${c.checklist_count} assessed</span>
+              <span class="audit-child-date">${ev.planned_date || 'No date'}</span>
+              <span class="audit-child-instance">Event #${ev.instance_number || 1}</span>
+              <span class="badge ${evStatusCls}">${ev.status.replace('_', ' ')}</span>
+              <span class="audit-child-stats">${ev.assessed_count || 0}/${ev.checklist_count || 0} assessed</span>
             </div>
             <div class="audit-child-actions">
-              ${c.status === 'planned' ? `<button class="btn btn-secondary btn-sm" onclick="startAudit(${c.id})">Start</button>` : ''}
-              ${c.status === 'in_progress' ? `<button class="btn btn-primary btn-sm" onclick="switchToExecute(${c.id})">Execute</button>` : ''}
-              <button class="btn btn-secondary btn-sm" onclick="openAuditModal(${c.id})">Edit</button>
+              ${ev.status === 'planned' ? `<button class="btn btn-secondary btn-sm" onclick="startAudit(${ev.id})">Start</button>` : ''}
+              ${ev.status === 'in_progress' ? `<button class="btn btn-primary btn-sm" onclick="switchToExecute(${ev.id})">Execute</button>` : ''}
+              ${ev.status === 'completed' ? `<button class="btn btn-secondary btn-sm" onclick="switchToExecute(${ev.id})">View</button>` : ''}
+              <button class="btn btn-secondary btn-sm" onclick="openAuditModal(${ev.id})">Edit</button>
             </div>
           </div>`;
         }).join('')}
       </div>`;
     }
 
-    return `<div class="audit-card${hasChildren ? ' audit-recurring' : ''}">
+    return `<div class="audit-card${isRecurring ? ' audit-recurring' : ''}">
       <div class="audit-card-header">
         <div>
           <h3>${esc(a.title)}</h3>
           <div class="audit-meta">
-            ${esc(a.standard)} &middot; ${a.planned_date || 'No date'} &middot; Lead: ${esc(a.lead_auditor || 'Unassigned')}
-            ${hasChildren ? ` &middot; <span class="audit-recurrence-badge">${recurrenceLabel[a.recurrence] || a.recurrence} (${a.total_instances} events)</span>` : ''}
+            ${esc(a.standard)} &middot; Lead: ${esc(a.lead_auditor || 'Unassigned')}
+            ${isRecurring ? ` &middot; <span class="audit-recurrence-badge">${recurrenceLabel[a.recurrence] || a.recurrence}</span>` : ''}
           </div>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
-          ${hasChildren ? `<button class="btn btn-secondary btn-sm" onclick="toggleAuditChildren(${a.id})"><span id="audit-toggle-${a.id}">&#9660;</span> Events</button>` : ''}
-          <span class="badge ${statusCls}">${a.status.replace('_', ' ')}</span>
+          ${hasEvents ? `<button class="btn btn-secondary btn-sm" onclick="toggleAuditChildren(${a.id})"><span id="audit-toggle-${a.id}">&#9660;</span> ${a.total_instances} Event${a.total_instances !== 1 ? 's' : ''}</button>` : ''}
         </div>
       </div>
       ${a.scope ? `<div class="audit-scope">${esc(a.scope)}</div>` : ''}
       <div class="audit-card-footer">
         <div class="audit-stats">
-          <span>${a.assessed_count}/${a.checklist_count} assessed</span>
-          <span>${a.nc_count} NC${a.nc_count !== 1 ? 's' : ''}${a.open_nc_count > 0 ? ` (${a.open_nc_count} open)` : ''}</span>
+          <span>${completedEvents}/${a.total_instances} completed</span>
+          <span>${inProgressEvents} in progress</span>
+          <span>${totalNc} NC${totalNc !== 1 ? 's' : ''}${totalOpenNc > 0 ? ` (${totalOpenNc} open)` : ''}</span>
         </div>
         ${actionMenu([
-          ...(a.status === 'planned' ? [{ label: '&#9654; Start Audit', onclick: `startAudit(${a.id})`, cls: 'primary' }] : []),
-          ...(a.status === 'in_progress' ? [{ label: '&#9654; Execute', onclick: `switchToExecute(${a.id})`, cls: 'success' }] : []),
           { label: '&#128279; Links', onclick: `toggleAuditLinks(${a.id})` },
-          { label: '&#9998; Edit', onclick: `openAuditModal(${a.id})` },
+          { label: '&#9998; Edit Config', onclick: `openAuditModal(${a.id})` },
           'sep',
-          { label: '&#128465; Delete', onclick: `deleteAudit(${a.id})`, cls: 'danger' },
+          { label: '&#128465; Delete All', onclick: `deleteAudit(${a.id})`, cls: 'danger' },
         ])}
       </div>
-      ${childEventsHtml}
+      ${eventsHtml}
       <div id="audit-links-${a.id}"></div>
     </div>`;
   }).join('');
@@ -1160,31 +1168,54 @@ function renderAuditGantt(audits) {
   const todayDayOfMonth = todayDate.getDate();
   const shortMonths = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-  // Filter audits that fall within the selected year
-  const yearAudits = audits.filter(a => {
-    const d = a.planned_date || a.created_at?.split(' ')[0];
+  // Flatten all audit events for the timeline (including all instances)
+  const allEvents = [];
+  for (const a of audits) {
+    if (a.all_events && a.all_events.length > 0) {
+      for (const ev of a.all_events) {
+        allEvents.push({
+          ...ev,
+          parent_title: a.title,
+          display_title: a.total_instances > 1 ? `${a.title} #${ev.instance_number || 1}` : a.title
+        });
+      }
+    } else {
+      allEvents.push({
+        ...a,
+        parent_title: a.title,
+        display_title: a.title
+      });
+    }
+  }
+
+  // Filter events that fall within the selected year
+  const yearEvents = allEvents.filter(ev => {
+    const d = ev.planned_date || ev.created_at?.split(' ')[0];
     if (!d) return false;
     return d.startsWith(String(auditYear));
   });
 
-  if (yearAudits.length === 0) {
-    wrap.innerHTML = `<div class="empty-state" style="padding:20px">No audits planned for ${auditYear}</div>`;
+  if (yearEvents.length === 0) {
+    wrap.innerHTML = `<div class="empty-state" style="padding:20px">No audit events planned for ${auditYear}</div>`;
     return;
   }
 
-  let html = '<table class="gantt-table"><thead><tr><th>Audit</th>';
+  // Sort events by planned date
+  yearEvents.sort((a, b) => (a.planned_date || '').localeCompare(b.planned_date || ''));
+
+  let html = '<table class="gantt-table"><thead><tr><th>Audit Event</th>';
   for (let m = 0; m < 12; m++) html += `<th>${shortMonths[m]}</th>`;
   html += '</tr></thead><tbody>';
 
-  for (const a of yearAudits) {
-    const plannedDate = a.planned_date || a.created_at?.split(' ')[0];
+  for (const ev of yearEvents) {
+    const plannedDate = ev.planned_date || ev.created_at?.split(' ')[0];
     const plannedMonth = plannedDate ? parseInt(plannedDate.split('-')[1]) - 1 : -1;
-    const completedDate = a.completed_date;
+    const completedDate = ev.completed_date;
     const completedMonth = completedDate ? parseInt(completedDate.split('-')[1]) - 1 : -1;
 
-    const statusColor = a.status === 'completed' ? 'completed' : a.status === 'in_progress' ? 'due' : a.status === 'cancelled' ? '' : (plannedDate && plannedDate < today ? 'overdue' : 'due');
+    const statusColor = ev.status === 'completed' ? 'completed' : ev.status === 'in_progress' ? 'due' : ev.status === 'cancelled' ? '' : (plannedDate && plannedDate < today ? 'overdue' : 'due');
 
-    html += `<tr><td title="${esc(a.title)}">${esc(a.title)}</td>`;
+    html += `<tr><td title="${esc(ev.display_title)}">${esc(ev.display_title)}</td>`;
     for (let m = 0; m < 12; m++) {
       const daysInMonth = new Date(auditYear, m + 1, 0).getDate();
       html += '<td class="gantt-cell"><div class="gantt-bar">';
@@ -1514,12 +1545,40 @@ async function loadAuditExecuteView() {
   const audits = await api('/api/audits');
   const sel = document.getElementById('audit-exec-select');
   const currentVal = sel.value;
-  sel.innerHTML = '<option value="">Select an audit...</option>' +
-    audits.filter(a => a.status !== 'cancelled').map(a =>
-      `<option value="${a.id}" ${String(a.id) === currentVal ? 'selected' : ''}>${esc(a.title)} (${a.status.replace('_',' ')})</option>`
+
+  // Flatten all events for selection (including all instances from recurring audits)
+  const allExecutableEvents = [];
+  for (const a of audits) {
+    if (a.all_events && a.all_events.length > 0) {
+      for (const ev of a.all_events) {
+        if (ev.status !== 'cancelled') {
+          allExecutableEvents.push({
+            id: ev.id,
+            title: a.total_instances > 1 ? `${a.title} - Event #${ev.instance_number || 1} (${ev.planned_date || 'No date'})` : a.title,
+            status: ev.status,
+            planned_date: ev.planned_date
+          });
+        }
+      }
+    } else if (a.status !== 'cancelled') {
+      allExecutableEvents.push({
+        id: a.id,
+        title: a.title,
+        status: a.status,
+        planned_date: a.planned_date
+      });
+    }
+  }
+
+  // Sort by planned date
+  allExecutableEvents.sort((a, b) => (b.planned_date || '').localeCompare(a.planned_date || ''));
+
+  sel.innerHTML = '<option value="">Select an audit event...</option>' +
+    allExecutableEvents.map(ev =>
+      `<option value="${ev.id}" ${String(ev.id) === currentVal ? 'selected' : ''}>${esc(ev.title)} (${ev.status.replace('_',' ')})</option>`
     ).join('');
   if (currentVal) loadAuditExecution(currentVal);
-  else document.getElementById('audit-exec-content').innerHTML = '<div class="empty-state">Select an audit to begin execution.</div>';
+  else document.getElementById('audit-exec-content').innerHTML = '<div class="empty-state">Select an audit event to begin execution.</div>';
 }
 
 async function loadAuditExecution(auditId) {
@@ -1560,6 +1619,7 @@ async function loadAuditExecution(auditId) {
     <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0">
       <h3 class="section-title" style="margin:0;border:none;padding:0">Audit Checklist</h3>
       <div style="display:flex;gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="exportAuditPDF(${auditId})">&#128196; Export PDF</button>
         <button class="btn btn-primary btn-sm" onclick="openChecklistModal(${auditId})">+ Add Item</button>
         ${audit.status === 'in_progress' ? `<button class="btn btn-success btn-sm" onclick="completeAudit(${auditId})">Complete Audit</button>` : ''}
       </div>
@@ -1771,6 +1831,282 @@ async function updateChecklistField(itemId, field, value) {
   if (field === 'rating' && currentAuditId) {
     loadAuditExecution(currentAuditId);
   }
+}
+
+// PDF Export for Audit Report
+async function exportAuditPDF(auditId) {
+  const audit = await api(`/api/audits/${auditId}`);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  // Colors
+  const primaryColor = [99, 102, 241];
+  const successColor = [16, 185, 129];
+  const warningColor = [245, 158, 11];
+  const dangerColor = [239, 68, 68];
+  const textColor = [26, 26, 46];
+  const mutedColor = [107, 122, 153];
+
+  // Standards
+  let auditStandards = [];
+  try { auditStandards = JSON.parse(audit.standards || '[]'); } catch(e) { auditStandards = audit.standard ? [audit.standard] : []; }
+  if (auditStandards.length === 0 && audit.standard) auditStandards = [audit.standard];
+
+  // Stats
+  const totalItems = audit.checklist.length;
+  const assessed = audit.checklist.filter(c => c.rating !== 'not_assessed').length;
+  const conforming = audit.checklist.filter(c => c.rating === 'conforming').length;
+  const observations = audit.checklist.filter(c => c.rating === 'observation').length;
+  const minorNc = audit.checklist.filter(c => c.rating === 'minor_nc').length;
+  const majorNc = audit.checklist.filter(c => c.rating === 'major_nc').length;
+
+  // Header with gradient-like effect
+  doc.setFillColor(...primaryColor);
+  doc.rect(0, 0, 210, 45, 'F');
+  doc.setFillColor(118, 75, 162);
+  doc.rect(0, 0, 210, 25, 'F');
+
+  // Title
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(24);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Audit Report', 15, 18);
+
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'normal');
+  doc.text(audit.title, 15, 30);
+  doc.setFontSize(10);
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, 15, 38);
+
+  // Company info on right
+  doc.setFontSize(10);
+  doc.text('Let The Frame Work', 195, 18, { align: 'right' });
+  doc.text('Management System', 195, 25, { align: 'right' });
+
+  let yPos = 55;
+
+  // Audit Details Box
+  doc.setDrawColor(...primaryColor);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(15, yPos, 180, 35, 3, 3, 'S');
+
+  doc.setTextColor(...textColor);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Audit Details', 20, yPos + 8);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(...mutedColor);
+  doc.text(`Standard${auditStandards.length > 1 ? 's' : ''}:`, 20, yPos + 17);
+  doc.text('Lead Auditor:', 20, yPos + 25);
+  doc.text('Auditee:', 110, yPos + 17);
+  doc.text('Status:', 110, yPos + 25);
+
+  doc.setTextColor(...textColor);
+  doc.text(auditStandards.join(', '), 55, yPos + 17);
+  doc.text(audit.lead_auditor || 'Unassigned', 55, yPos + 25);
+  doc.text(audit.auditee || 'Unassigned', 135, yPos + 17);
+  doc.text(audit.status.replace('_', ' ').toUpperCase(), 135, yPos + 25);
+
+  yPos += 45;
+
+  // Executive Summary Box
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(15, yPos, 180, 32, 3, 3, 'F');
+  doc.setDrawColor(...primaryColor);
+  doc.roundedRect(15, yPos, 180, 32, 3, 3, 'S');
+
+  doc.setTextColor(...textColor);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Executive Summary', 20, yPos + 8);
+
+  // Stats boxes
+  const boxWidth = 32;
+  const startX = 20;
+  const statY = yPos + 15;
+
+  // Total
+  doc.setFillColor(240, 244, 255);
+  doc.roundedRect(startX, statY, boxWidth, 12, 2, 2, 'F');
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...primaryColor);
+  doc.text(String(totalItems), startX + boxWidth/2, statY + 8, { align: 'center' });
+  doc.setFontSize(7);
+  doc.setTextColor(...mutedColor);
+  doc.text('TOTAL', startX + boxWidth/2, statY + 11.5, { align: 'center' });
+
+  // Conforming
+  doc.setFillColor(209, 250, 229);
+  doc.roundedRect(startX + 36, statY, boxWidth, 12, 2, 2, 'F');
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...successColor);
+  doc.text(String(conforming), startX + 36 + boxWidth/2, statY + 8, { align: 'center' });
+  doc.setFontSize(7);
+  doc.setTextColor(...mutedColor);
+  doc.text('CONFORM', startX + 36 + boxWidth/2, statY + 11.5, { align: 'center' });
+
+  // Observations
+  doc.setFillColor(254, 243, 199);
+  doc.roundedRect(startX + 72, statY, boxWidth, 12, 2, 2, 'F');
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...warningColor);
+  doc.text(String(observations), startX + 72 + boxWidth/2, statY + 8, { align: 'center' });
+  doc.setFontSize(7);
+  doc.setTextColor(...mutedColor);
+  doc.text('OBS', startX + 72 + boxWidth/2, statY + 11.5, { align: 'center' });
+
+  // Minor NC
+  doc.setFillColor(254, 226, 226);
+  doc.roundedRect(startX + 108, statY, boxWidth, 12, 2, 2, 'F');
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...dangerColor);
+  doc.text(String(minorNc), startX + 108 + boxWidth/2, statY + 8, { align: 'center' });
+  doc.setFontSize(7);
+  doc.setTextColor(...mutedColor);
+  doc.text('MINOR NC', startX + 108 + boxWidth/2, statY + 11.5, { align: 'center' });
+
+  // Major NC
+  doc.setFillColor(237, 233, 254);
+  doc.roundedRect(startX + 144, statY, boxWidth, 12, 2, 2, 'F');
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(139, 92, 246);
+  doc.text(String(majorNc), startX + 144 + boxWidth/2, statY + 8, { align: 'center' });
+  doc.setFontSize(7);
+  doc.setTextColor(...mutedColor);
+  doc.text('MAJOR NC', startX + 144 + boxWidth/2, statY + 11.5, { align: 'center' });
+
+  yPos += 42;
+
+  // Findings Table
+  doc.setTextColor(...textColor);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Audit Findings', 15, yPos);
+  yPos += 5;
+
+  const ratingLabels = {
+    not_assessed: 'Not Assessed',
+    conforming: 'Conforming',
+    observation: 'Observation',
+    minor_nc: 'Minor NC',
+    major_nc: 'Major NC'
+  };
+
+  const tableData = audit.checklist.map(item => [
+    item.clause,
+    item.standard || audit.standard,
+    (item.requirement || '').substring(0, 40) + ((item.requirement || '').length > 40 ? '...' : ''),
+    ratingLabels[item.rating] || item.rating,
+    (item.finding || '-').substring(0, 50) + ((item.finding || '').length > 50 ? '...' : '')
+  ]);
+
+  doc.autoTable({
+    startY: yPos,
+    head: [['Clause', 'Standard', 'Requirement', 'Rating', 'Finding']],
+    body: tableData,
+    theme: 'striped',
+    styles: {
+      fontSize: 8,
+      cellPadding: 3,
+      overflow: 'linebreak',
+      textColor: textColor
+    },
+    headStyles: {
+      fillColor: primaryColor,
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8
+    },
+    columnStyles: {
+      0: { cellWidth: 20 },
+      1: { cellWidth: 25 },
+      2: { cellWidth: 45 },
+      3: { cellWidth: 25 },
+      4: { cellWidth: 65 }
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252]
+    },
+    didParseCell: function(data) {
+      if (data.column.index === 3 && data.section === 'body') {
+        const rating = audit.checklist[data.row.index]?.rating;
+        if (rating === 'conforming') data.cell.styles.textColor = successColor;
+        else if (rating === 'observation') data.cell.styles.textColor = warningColor;
+        else if (rating === 'minor_nc') data.cell.styles.textColor = dangerColor;
+        else if (rating === 'major_nc') data.cell.styles.textColor = [139, 92, 246];
+      }
+    }
+  });
+
+  // Non-Conformities Section (if any)
+  if (audit.non_conformities && audit.non_conformities.length > 0) {
+    yPos = doc.lastAutoTable.finalY + 10;
+
+    if (yPos > 250) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    doc.setTextColor(...textColor);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Non-Conformity Reports (NCRs)', 15, yPos);
+    yPos += 5;
+
+    const ncrData = audit.non_conformities.map(nc => [
+      nc.description?.substring(0, 60) + ((nc.description || '').length > 60 ? '...' : '') || '-',
+      nc.root_cause?.substring(0, 40) + ((nc.root_cause || '').length > 40 ? '...' : '') || '-',
+      nc.status?.replace('_', ' ').toUpperCase() || 'OPEN'
+    ]);
+
+    doc.autoTable({
+      startY: yPos,
+      head: [['Description', 'Root Cause', 'Status']],
+      body: ncrData,
+      theme: 'striped',
+      styles: {
+        fontSize: 8,
+        cellPadding: 3,
+        textColor: textColor
+      },
+      headStyles: {
+        fillColor: dangerColor,
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 8
+      },
+      columnStyles: {
+        0: { cellWidth: 80 },
+        1: { cellWidth: 70 },
+        2: { cellWidth: 30 }
+      },
+      alternateRowStyles: {
+        fillColor: [254, 242, 242]
+      }
+    });
+  }
+
+  // Footer
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(...mutedColor);
+    doc.text(`Page ${i} of ${pageCount}`, 105, 290, { align: 'center' });
+    doc.text('Generated by Let The Frame Work', 15, 290);
+    doc.text(new Date().toISOString().split('T')[0], 195, 290, { align: 'right' });
+  }
+
+  // Save
+  const filename = `Audit_Report_${audit.title.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+  doc.save(filename);
 }
 
 async function completeAudit(auditId) {
