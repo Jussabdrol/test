@@ -301,8 +301,8 @@ async function loadDashboard() {
     if (overdueActions.length > 0) {
       overdueActionsList.innerHTML = overdueActions.map(a => `
         <div class="task-card">
-          <div class="task-card-info">
-            <h4>${esc(a.title)}</h4>
+          <div class="task-card-info" style="cursor:pointer" onclick="openActionModal(${a.id})">
+            <h4 style="color:var(--primary)">${esc(a.title)}</h4>
             <div class="meta">From: ${esc(a.task_title)} &middot; ${esc(a.assignee || 'Unassigned')} &middot; Due: ${a.due_date}</div>
           </div>
           ${actionMenu([
@@ -329,8 +329,8 @@ async function loadDashboard() {
 function taskCard(task) {
   return `
     <div class="task-card">
-      <div class="task-card-info">
-        <h4>${esc(task.title)}</h4>
+      <div class="task-card-info" style="cursor:pointer" onclick="openTaskModal(${task.id})">
+        <h4 style="color:var(--primary)">${esc(task.title)}</h4>
         <div class="meta">${esc(task.assignee || 'Unassigned')} &middot; ${task.recurrence} &middot; Due: ${task.next_due}</div>
       </div>
       ${actionMenu([
@@ -343,7 +343,7 @@ function taskCard(task) {
 // --- Tasks View ---
 async function loadTasks() {
   meta = await api('/api/meta');
-  renderFilters();
+  await renderFilters();
 
   const params = new URLSearchParams();
   if (filters.active) params.set('active', filters.active);
@@ -355,8 +355,12 @@ async function loadTasks() {
   renderTaskTable();
 }
 
-function renderFilters() {
+async function renderFilters() {
   const bar = document.getElementById('filters-bar');
+  // Fetch roles and processes from Architecture for filters
+  const roles = await api('/api/architecture?arch_type=role');
+  const processes = await api('/api/architecture?arch_type=process');
+
   bar.innerHTML = `
     <select onchange="filters.active=this.value;loadTasks()">
       <option value="true" ${filters.active==='true'?'selected':''}>Active</option>
@@ -371,12 +375,14 @@ function renderFilters() {
       <option value="Critical" ${filters.priority==='Critical'?'selected':''}>Critical</option>
     </select>
     <select onchange="filters.assignee=this.value;loadTasks()">
-      <option value="">All Assignees</option>
-      ${meta.assignees.map(a => `<option value="${esc(a)}" ${filters.assignee===a?'selected':''}>${esc(a)}</option>`).join('')}
+      <option value="">All Roles</option>
+      ${roles.map(r => `<option value="${esc(r.name)}" ${filters.assignee===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}
+      ${meta.assignees.filter(a => !roles.find(r => r.name === a)).map(a => `<option value="${esc(a)}" ${filters.assignee===a?'selected':''}>${esc(a)}</option>`).join('')}
     </select>
     <select onchange="filters.category=this.value;loadTasks()">
-      <option value="">All Categories</option>
-      ${meta.categories.map(c => `<option value="${esc(c)}" ${filters.category===c?'selected':''}>${esc(c)}</option>`).join('')}
+      <option value="">All Processes</option>
+      ${processes.map(p => `<option value="${esc(p.name)}" ${filters.category===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}
+      ${meta.categories.filter(c => !processes.find(p => p.name === c)).map(c => `<option value="${esc(c)}" ${filters.category===c?'selected':''}>${esc(c)}</option>`).join('')}
     </select>
   `;
 }
@@ -392,7 +398,7 @@ function renderTaskTable() {
     const status = t.next_due < today ? 'overdue' : t.next_due === today ? 'due-today' : 'upcoming';
     const statusLabel = status === 'overdue' ? 'Overdue' : status === 'due-today' ? 'Due Today' : 'Upcoming';
     return `<tr>
-      <td><strong>${esc(t.title)}</strong>${t.description ? '<br><small style="color:var(--text-muted)">' + esc(t.description) + '</small>' : ''}
+      <td><strong style="cursor:pointer;color:var(--primary)" onclick="openTaskModal(${t.id})">${esc(t.title)}</strong>${t.description ? '<br><small style="color:var(--text-muted);cursor:pointer" onclick="openTaskModal(' + t.id + ')">' + esc(t.description) + '</small>' : ''}
         <div id="task-links-${t.id}" class="task-inline-links"></div>
       </td>
       <td>${esc(t.assignee || '-')}</td>
@@ -454,9 +460,17 @@ async function openTaskModal(id) {
   document.getElementById('modal-title').textContent = 'New Task';
   document.getElementById('custom-days-group').classList.add('hidden');
 
-  // populate category datalist
-  const catList = document.getElementById('category-list');
-  catList.innerHTML = meta.categories.map(c => `<option value="${esc(c)}">`).join('');
+  // Populate Role dropdown from Architecture roles
+  const roles = await api('/api/architecture?arch_type=role');
+  const assigneeSelect = document.getElementById('task-assignee');
+  assigneeSelect.innerHTML = '<option value="">-- Select Role --</option>' +
+    roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+
+  // Populate Process dropdown from Architecture processes
+  const processes = await api('/api/architecture?arch_type=process');
+  const categorySelect = document.getElementById('task-category');
+  categorySelect.innerHTML = '<option value="">-- Select Process --</option>' +
+    processes.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
 
   if (id) {
     const task = await api(`/api/tasks/${id}`);
@@ -536,7 +550,7 @@ async function submitComplete(e) {
   invalidateYearlyCache();
   // Show post-completion action prompt
   lastCompletionContext = { completion_id: result.completion_id, task_id: parseInt(taskId) };
-  openPostCompleteModal();
+  await openPostCompleteModal();
 }
 
 // --- Delete ---
@@ -548,12 +562,18 @@ async function deleteTask(id) {
 }
 
 // --- Post-completion Actions ---
-function openPostCompleteModal() {
+async function openPostCompleteModal() {
   document.getElementById('post-complete-actions-list').innerHTML = '';
   document.getElementById('quick-action-title').value = '';
-  document.getElementById('quick-action-assignee').value = '';
   document.getElementById('quick-action-priority').value = 'Medium';
   document.getElementById('quick-action-due').value = '';
+
+  // Populate Role dropdown from Architecture
+  const roles = await api('/api/architecture?arch_type=role');
+  const assigneeSelect = document.getElementById('quick-action-assignee');
+  assigneeSelect.innerHTML = '<option value="">-- Select Role --</option>' +
+    roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+
   document.getElementById('post-complete-modal').classList.remove('hidden');
 }
 
@@ -630,7 +650,7 @@ function renderActionTable(actions) {
     const statusClass = a.status === 'open' ? 'badge-high' : a.status === 'in_progress' ? 'badge-medium' : 'badge-low';
     const statusLabel = a.status.replace('_', ' ');
     return `<tr>
-      <td><strong>${esc(a.title)}</strong>${a.description ? '<br><small style="color:var(--text-muted)">' + esc(a.description) + '</small>' : ''}</td>
+      <td><strong style="cursor:pointer;color:var(--primary)" onclick="openActionModal(${a.id})">${esc(a.title)}</strong>${a.description ? '<br><small style="color:var(--text-muted);cursor:pointer" onclick="openActionModal(' + a.id + ')">' + esc(a.description) + '</small>' : ''}</td>
       <td>${esc(a.task_title)}</td>
       <td>${esc(a.assignee || '-')}</td>
       <td><span class="badge badge-${a.priority.toLowerCase()}">${a.priority}</span></td>
@@ -680,6 +700,12 @@ async function openActionModal(id) {
   document.getElementById('action-id').value = '';
   document.getElementById('action-modal-title').textContent = 'New Follow-up Action';
   document.getElementById('action-resolved-by-group').classList.add('hidden');
+
+  // Populate Role dropdown from Architecture
+  const roles = await api('/api/architecture?arch_type=role');
+  const assigneeSelect = document.getElementById('action-assignee');
+  assigneeSelect.innerHTML = '<option value="">-- Select Role --</option>' +
+    roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
 
   if (id) {
     const action = await api(`/api/actions/${id}`);
@@ -2371,7 +2397,7 @@ function renderNcrTable(ncrs) {
     const stBadge = n.status === 'open' ? 'badge-high' : n.status === 'in_progress' ? 'badge-medium' : 'badge-low';
     const isOverdue = n.due_date && n.due_date < today && (n.status === 'open' || n.status === 'in_progress');
     return `<tr>
-      <td><strong>${esc(n.description.substring(0, 80))}${n.description.length > 80 ? '...' : ''}</strong>
+      <td><strong style="cursor:pointer;color:var(--primary)" onclick="openNcrModal(${n.id})">${esc(n.description.substring(0, 80))}${n.description.length > 80 ? '...' : ''}</strong>
         <div id="ncr-links-${n.id}"></div>
       </td>
       <td><span class="badge badge-inactive" style="font-size:11px">${esc(n.ncr_standard || n.audit_standard || '-')}</span></td>
@@ -2647,9 +2673,9 @@ async function loadRequirements() {
       }
 
       html += `<div class="req-table-row">
-          <div class="req-col-clause"><span class="req-clause">${esc(r.clause)}</span></div>
-          <div class="req-col-title">
-            <span class="req-title">${esc(r.title)}</span>
+          <div class="req-col-clause" style="cursor:pointer" onclick="openRequirementModal(${r.id})"><span class="req-clause">${esc(r.clause)}</span></div>
+          <div class="req-col-title" style="cursor:pointer" onclick="openRequirementModal(${r.id})">
+            <span class="req-title" style="color:var(--primary)">${esc(r.title)}</span>
             ${r.description ? `<span class="req-desc">${esc(r.description)}</span>` : ''}
           </div>
           <div class="req-col-audit">${lastAuditLabel}</div>
@@ -3599,8 +3625,8 @@ async function loadRiskIdentification() {
     const collapseId = `risk-cl-${r.id}`;
 
     html += `<div class="risk-table-row">
-        <div class="risk-col-title">
-          <span class="risk-row-title">${esc(r.title)}</span>
+        <div class="risk-col-title" style="cursor:pointer" onclick="openRiskModal(${r.id})">
+          <span class="risk-row-title" style="color:var(--primary)">${esc(r.title)}</span>
           ${r.asset ? `<span class="risk-row-sub">Asset: ${esc(r.asset)}</span>` : ''}
         </div>
         <div class="risk-col-cat"><span style="font-size:12px">${esc(r.category || '-')}</span></div>
@@ -3810,8 +3836,8 @@ async function loadRiskTreatmentView() {
     const collapseId = `treat-expand-${r.id}`;
 
     html += `<div class="treat-table-row">
-        <div class="treat-col-risk">
-          <span class="risk-row-title">${esc(r.title)}</span>
+        <div class="treat-col-risk" style="cursor:pointer" onclick="openRiskModal(${r.id})">
+          <span class="risk-row-title" style="color:var(--primary)">${esc(r.title)}</span>
           <span class="risk-row-sub">${esc(r.category || '')}${r.risk_owner ? ' · ' + esc(r.risk_owner) : ''}</span>
         </div>
         <div class="treat-col-score"><span class="badge risk-score-badge ${cls}">${r.inherent_score}</span></div>
@@ -3855,8 +3881,8 @@ function buildTreatmentDetail(treatments, treatmentLinks) {
     const linkCount = links.length;
     html += `<div class="treat-sub-row">
       <div class="treat-sub-type"><span class="badge badge-inactive">${t.treatment_type}</span></div>
-      <div class="treat-sub-desc">
-        <span style="font-size:12px">${esc(t.description)}</span>
+      <div class="treat-sub-desc" style="cursor:pointer" onclick="openTreatmentModal(${t.id})">
+        <span style="font-size:12px;color:var(--primary)">${esc(t.description)}</span>
       </div>
       <div class="treat-sub-ref"><span style="font-size:12px;color:var(--primary)">${linkCount > 0 ? `${linkCount} link${linkCount !== 1 ? 's' : ''}` : '-'}</span></div>
       <div class="treat-sub-resp"><span style="font-size:12px">${t.responsible ? esc(t.responsible) : '-'}</span></div>
@@ -4216,8 +4242,8 @@ async function loadMissionControl() {
     }).join('')}</div>` : '';
     return `<div class="kpi-card-custom">
       <div class="kpi-card-custom-header">
-        <div>
-          <div class="kpi-header">${esc(k.name)}</div>
+        <div style="cursor:pointer" onclick="openKpiModal(${k.id})">
+          <div class="kpi-header" style="color:var(--primary)">${esc(k.name)}</div>
           ${k.description ? `<div style="font-size:12px;color:var(--text-muted)">${esc(k.description)}</div>` : ''}
         </div>
         ${actionMenu([
@@ -4424,8 +4450,8 @@ function buildArchTableRow(item, meta, links, archType) {
 
   return `<div class="arch-table-row-wrap">
     <div class="arch-table-row">
-      <div class="arch-col-name">
-        <span class="arch-name">${esc(item.name)}</span>
+      <div class="arch-col-name" style="cursor:pointer" onclick="openArchModal(${item.id})">
+        <span class="arch-name" style="color:var(--primary)">${esc(item.name)}</span>
         ${archType === 'role' && item.description ? `<span class="arch-desc">${esc(item.description)}</span>` : ''}
       </div>
       <div class="arch-col-detail">${detailCol}</div>
@@ -4644,8 +4670,8 @@ async function loadDocumentControl() {
       const collapseId = `doc-cl-${d.id}`;
 
       html += `<div class="doc-table-row${d.status === 'obsolete' ? ' doc-obsolete' : ''}">
-          <div class="doc-col-title">
-            <span class="doc-row-title">${esc(d.title)}</span>
+          <div class="doc-col-title" style="cursor:pointer" onclick="openDocModal(${d.id})">
+            <span class="doc-row-title" style="color:var(--primary)">${esc(d.title)}</span>
             ${d.file_name ? `<span class="doc-row-file">${esc(d.file_name)}</span>` : ''}
           </div>
           <div class="doc-col-class">

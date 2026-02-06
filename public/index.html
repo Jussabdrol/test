@@ -50,10 +50,10 @@
           </a>
           <ul class="module-submenu">
             <li><a href="#" class="nav-link" data-view="dashboard">Dashboard</a></li>
-            <li><a href="#" class="nav-link" data-view="tasks">All Tasks</a></li>
             <li><a href="#" class="nav-link" data-view="yearly">Yearly Plan</a></li>
+            <li><a href="#" class="nav-link" data-view="tasks">Manage Tasks</a></li>
             <li><a href="#" class="nav-link" data-view="actions">Actions</a></li>
-            <li><a href="#" class="nav-link" data-view="history">History</a></li>
+            <li><a href="#" class="nav-link" data-view="history">Completion Log</a></li>
           </ul>
         </li>
         <li class="nav-module">
@@ -100,10 +100,10 @@
         </div>
       </section>
 
-      <!-- Tasks View -->
+      <!-- Manage Tasks View -->
       <section id="view-tasks" class="view hidden">
         <div class="view-header">
-          <h2>All Tasks</h2>
+          <h2>Manage Tasks</h2>
           <button class="btn btn-primary" onclick="openTaskModal()">+ New Task</button>
         </div>
         <div class="filters" id="filters-bar"></div>
@@ -112,8 +112,8 @@
             <thead>
               <tr>
                 <th>Title</th>
-                <th>Assignee</th>
-                <th>Category</th>
+                <th>Role</th>
+                <th>Process</th>
                 <th>Priority</th>
                 <th>Recurrence</th>
                 <th>Next Due</th>
@@ -169,7 +169,7 @@
               <tr>
                 <th>Action</th>
                 <th>Source Task</th>
-                <th>Assignee</th>
+                <th>Role</th>
                 <th>Priority</th>
                 <th>Due Date</th>
                 <th>Status</th>
@@ -181,10 +181,10 @@
         </div>
       </section>
 
-      <!-- History View -->
+      <!-- Completion Log View -->
       <section id="view-history" class="view hidden">
         <div class="view-header">
-          <h2>Completion History</h2>
+          <h2>Completion Log</h2>
         </div>
         <div class="history-list" id="history-list"></div>
       </section>
@@ -817,13 +817,16 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label for="task-assignee">Assignee</label>
-            <input type="text" id="task-assignee" placeholder="e.g. John Smith">
+            <label for="task-assignee">Role (Assignee)</label>
+            <select id="task-assignee">
+              <option value="">-- Select Role --</option>
+            </select>
           </div>
           <div class="form-group">
-            <label for="task-category">Category</label>
-            <input type="text" id="task-category" value="General" list="category-list">
-            <datalist id="category-list"></datalist>
+            <label for="task-category">Process</label>
+            <select id="task-category">
+              <option value="">-- Select Process --</option>
+            </select>
           </div>
         </div>
         <div class="form-row">
@@ -913,8 +916,10 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label for="action-assignee">Assignee</label>
-            <input type="text" id="action-assignee" placeholder="Who should handle this?">
+            <label for="action-assignee">Role (Assignee)</label>
+            <select id="action-assignee">
+              <option value="">-- Select Role --</option>
+            </select>
           </div>
           <div class="form-group">
             <label for="action-priority">Priority</label>
@@ -969,7 +974,9 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <input type="text" id="quick-action-assignee" placeholder="Assignee">
+            <select id="quick-action-assignee">
+              <option value="">-- Select Role --</option>
+            </select>
           </div>
           <div class="form-group">
             <select id="quick-action-priority">
