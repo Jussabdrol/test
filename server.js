@@ -1665,12 +1665,13 @@ app.delete('/api/architecture/:id', (req, res) => {
 // --- Document Control API ---
 
 app.get('/api/documents', (req, res) => {
-  const { doc_type, status, linked_module } = req.query;
+  const { doc_type, status, linked_module, classification } = req.query;
   let sql = 'SELECT * FROM documents WHERE 1=1';
   const params = [];
   if (doc_type) { sql += ' AND doc_type = ?'; params.push(doc_type); }
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (linked_module) { sql += ' AND linked_module = ?'; params.push(linked_module); }
+  if (classification) { sql += ' AND classification = ?'; params.push(classification); }
   sql += ' ORDER BY updated_at DESC';
   res.json(db.prepare(sql).all(...params));
 });

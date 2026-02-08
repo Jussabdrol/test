@@ -4469,9 +4469,20 @@ function switchArchTab(type) {
   loadArchitecture();
 }
 
+let orgChartZoom = 1;
+
 async function loadArchitecture() {
   const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
   const list = document.getElementById('arch-list');
+
+  // Show/hide org chart section based on tab
+  const orgChartSection = document.getElementById('org-chart-section');
+  if (currentArchTab === 'role') {
+    orgChartSection.style.display = 'block';
+    renderOrgChart(items);
+  } else {
+    orgChartSection.style.display = 'none';
+  }
 
   if (items.length === 0) {
     list.innerHTML = `<div class="empty-state">No ${archTypeLabels[currentArchTab].toLowerCase()} defined yet.</div>`;
@@ -4512,9 +4523,145 @@ async function loadArchitecture() {
   list.innerHTML = html;
 }
 
+// --- Organization Chart ---
+function renderOrgChart(roles) {
+  const chart = document.getElementById('org-chart');
+
+  if (!roles || roles.length === 0) {
+    chart.innerHTML = `
+      <div class="org-chart-empty">
+        <div class="org-chart-empty-icon">&#128101;</div>
+        <div class="org-chart-empty-text">No roles defined yet. Add roles to see the organizational hierarchy.</div>
+      </div>`;
+    return;
+  }
+
+  // Build hierarchy tree
+  const rolesByName = {};
+  const childrenMap = {}; // parent name -> children
+  const topLevel = []; // roles with no manager or manager not in list
+
+  // Index roles by name
+  for (const r of roles) {
+    rolesByName[r.name] = r;
+    childrenMap[r.name] = [];
+  }
+
+  // Build parent-child relationships using "owner" field (which is now "Reports to")
+  for (const r of roles) {
+    if (r.owner && rolesByName[r.owner]) {
+      childrenMap[r.owner].push(r);
+    } else {
+      topLevel.push(r);
+    }
+  }
+
+  // Sort children alphabetically
+  for (const name of Object.keys(childrenMap)) {
+    childrenMap[name].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  topLevel.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Render the chart
+  let html = '';
+
+  if (topLevel.length === 0) {
+    // Circular reference or all roles report to each other
+    html = `
+      <div class="org-chart-empty">
+        <div class="org-chart-empty-icon">&#9888;</div>
+        <div class="org-chart-empty-text">Unable to determine hierarchy. Check that "Reports to" relationships are correctly configured.</div>
+      </div>`;
+  } else {
+    // Render each top-level node with its subtree
+    html = '<div class="org-level">';
+    for (const role of topLevel) {
+      html += renderOrgNode(role, childrenMap, true);
+    }
+    html += '</div>';
+  }
+
+  chart.innerHTML = html;
+  chart.style.transform = `scale(${orgChartZoom})`;
+}
+
+function renderOrgNode(role, childrenMap, isTopLevel = false, depth = 0) {
+  let meta = {};
+  try { meta = JSON.parse(role.metadata || '{}'); } catch(e) {}
+
+  const children = childrenMap[role.name] || [];
+  const directReports = children.length;
+  const statusClass = role.status !== 'active' ? ` status-${role.status}` : '';
+  const topClass = isTopLevel ? ' top-level' : '';
+
+  // Color variations based on depth
+  const depthColors = [
+    '', // depth 0 - uses top-level or default
+    'background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);', // depth 1 - blue
+    'background: linear-gradient(135deg, #10b981 0%, #059669 100%);', // depth 2 - green
+    'background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);', // depth 3 - amber
+    'background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);', // depth 4 - pink
+    'background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);', // depth 5+ - purple
+  ];
+  const depthStyle = !isTopLevel && depth > 0 ? depthColors[Math.min(depth, 5)] : '';
+
+  let contact = '';
+  if (meta.contact_name || meta.contact_email) {
+    const parts = [meta.contact_name, meta.contact_email].filter(Boolean);
+    contact = `<div class="org-node-contact">${esc(parts.join(' · '))}</div>`;
+  }
+
+  let html = `
+    <div class="org-node-container">
+      <div class="org-node${statusClass}${topClass}" onclick="openArchModal(${role.id})" title="Click to edit"${depthStyle ? ` style="${depthStyle}"` : ''}>
+        ${directReports > 0 ? `<span class="org-node-badge">${directReports}</span>` : ''}
+        <div class="org-node-name">${esc(role.name)}</div>
+        ${role.description ? `<div class="org-node-title">${esc(role.description.substring(0, 50))}${role.description.length > 50 ? '...' : ''}</div>` : ''}
+        ${contact}
+      </div>`;
+
+  if (children.length > 0) {
+    html += '<div class="org-connector-down"></div>';
+    html += `<div class="org-children" data-child-count="${children.length}">`;
+    for (const child of children) {
+      html += renderOrgNode(child, childrenMap, false, depth + 1);
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function toggleOrgChart() {
+  const container = document.getElementById('org-chart-container');
+  const arrow = document.getElementById('org-chart-arrow');
+  if (container.classList.contains('collapsed')) {
+    container.classList.remove('collapsed');
+    arrow.classList.remove('collapsed');
+  } else {
+    container.classList.add('collapsed');
+    arrow.classList.add('collapsed');
+  }
+}
+
+function zoomOrgChart(delta) {
+  orgChartZoom = Math.max(0.3, Math.min(2, orgChartZoom + delta));
+  const chart = document.getElementById('org-chart');
+  chart.style.transform = `scale(${orgChartZoom})`;
+  document.getElementById('org-chart-zoom-level').textContent = Math.round(orgChartZoom * 100) + '%';
+}
+
+function resetOrgChartZoom() {
+  orgChartZoom = 1;
+  const chart = document.getElementById('org-chart');
+  chart.style.transform = `scale(1)`;
+  document.getElementById('org-chart-zoom-level').textContent = '100%';
+}
+
 function buildArchTableHeader(archType) {
   const headers = {
-    role: ['Name', 'Contact', 'Owner', 'Status', 'Links', ''],
+    role: ['Name', 'Contact', 'Reports to', 'Status', 'Links', ''],
     process: ['Name', 'Description', 'Owner', 'Status', 'Links', ''],
     system: ['Name', 'Criticality', 'Owner', 'Status', 'Links', ''],
     asset: ['Name', 'Description', 'Owner', 'Status', 'Links', ''],
@@ -4608,10 +4755,15 @@ async function openArchModal(id) {
   document.getElementById('arch-modal-title').textContent = 'New Item';
   document.getElementById('arch-type').value = currentArchTab;
 
+  // Update owner label and placeholder based on type
+  const isRole = currentArchTab === 'role';
+  document.getElementById('arch-owner-label').textContent = isRole ? 'Reports to' : 'Owner';
+
   // Populate owner dropdown with roles
   const roles = await api('/api/architecture?arch_type=role');
   const ownerSelect = document.getElementById('arch-owner');
-  ownerSelect.innerHTML = '<option value="">-- Select Owner --</option>' +
+  const placeholder = isRole ? '-- Select Manager --' : '-- Select Owner --';
+  ownerSelect.innerHTML = `<option value="">${placeholder}</option>` +
     roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
 
   let metadata = {};
@@ -4663,6 +4815,11 @@ async function openArchModal(id) {
 }
 function closeArchModal() { document.getElementById('arch-modal').classList.add('hidden'); }
 
+function updateArchOwnerLabel() {
+  const isRole = document.getElementById('arch-type').value === 'role';
+  document.getElementById('arch-owner-label').textContent = isRole ? 'Reports to' : 'Owner';
+}
+
 async function saveArch(e) {
   e.preventDefault();
   const id = document.getElementById('arch-id').value;
@@ -4704,13 +4861,14 @@ async function deleteArch(id) {
 }
 
 // --- Document Control ---
-let docFilters = { doc_type: '', status: '' };
+let docFilters = { doc_type: '', status: '', classification: '', process: '', owner: '', search: '' };
 
 async function loadDocumentControl() {
   const params = new URLSearchParams();
   if (docFilters.doc_type) params.set('doc_type', docFilters.doc_type);
   if (docFilters.status) params.set('status', docFilters.status);
-  const docs = await api(`/api/documents?${params}`);
+  if (docFilters.classification) params.set('classification', docFilters.classification);
+  let docs = await api(`/api/documents?${params}`);
 
   // Prefetch all cross-links for documents
   const allLinks = {};
@@ -4718,25 +4876,72 @@ async function loadDocumentControl() {
     allLinks[d.id] = await api(`/api/cross-links/document/${d.id}`);
   }));
 
+  // Fetch processes for filter dropdown
+  const processes = await api('/api/architecture?arch_type=process');
+
+  // Collect unique owners for filter dropdown
+  const uniqueOwners = [...new Set(docs.filter(d => d.owner).map(d => d.owner))].sort();
+
+  // Apply client-side filters for linked items
+  if (docFilters.process) {
+    docs = docs.filter(d => {
+      const links = allLinks[d.id] || [];
+      return links.some(l => l.type === 'process' && l.name === docFilters.process);
+    });
+  }
+  if (docFilters.owner) {
+    docs = docs.filter(d => d.owner === docFilters.owner);
+  }
+  if (docFilters.search) {
+    const searchLower = docFilters.search.toLowerCase();
+    docs = docs.filter(d =>
+      d.title.toLowerCase().includes(searchLower) ||
+      (d.description && d.description.toLowerCase().includes(searchLower)) ||
+      (d.file_name && d.file_name.toLowerCase().includes(searchLower))
+    );
+  }
+
   document.getElementById('doc-filters-bar').innerHTML = `
-    <select onchange="docFilters.doc_type=this.value;loadDocumentControl()">
-      <option value="">All Types</option>
-      <option value="policy" ${docFilters.doc_type==='policy'?'selected':''}>Policy</option>
-      <option value="procedure" ${docFilters.doc_type==='procedure'?'selected':''}>Procedure</option>
-      <option value="work_instruction" ${docFilters.doc_type==='work_instruction'?'selected':''}>Work Instruction</option>
-      <option value="record" ${docFilters.doc_type==='record'?'selected':''}>Record</option>
-      <option value="form" ${docFilters.doc_type==='form'?'selected':''}>Form / Template</option>
-      <option value="report" ${docFilters.doc_type==='report'?'selected':''}>Report</option>
-      <option value="other" ${docFilters.doc_type==='other'?'selected':''}>Other</option>
-    </select>
-    <select onchange="docFilters.status=this.value;loadDocumentControl()">
-      <option value="">All Status</option>
-      <option value="draft" ${docFilters.status==='draft'?'selected':''}>Draft</option>
-      <option value="review" ${docFilters.status==='review'?'selected':''}>Under Review</option>
-      <option value="approved" ${docFilters.status==='approved'?'selected':''}>Approved</option>
-      <option value="obsolete" ${docFilters.status==='obsolete'?'selected':''}>Obsolete</option>
-    </select>
-    <span style="font-size:13px;color:var(--text-muted)">${docs.length} document${docs.length!==1?'s':''}</span>`;
+    <div class="filter-row" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px">
+      <input type="text" placeholder="&#128269; Search documents..." value="${esc(docFilters.search || '')}"
+        style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;min-width:200px"
+        oninput="docFilters.search=this.value;loadDocumentControl()">
+      <select onchange="docFilters.doc_type=this.value;loadDocumentControl()">
+        <option value="">All Types</option>
+        <option value="policy" ${docFilters.doc_type==='policy'?'selected':''}>Policy</option>
+        <option value="procedure" ${docFilters.doc_type==='procedure'?'selected':''}>Procedure</option>
+        <option value="work_instruction" ${docFilters.doc_type==='work_instruction'?'selected':''}>Work Instruction</option>
+        <option value="record" ${docFilters.doc_type==='record'?'selected':''}>Record</option>
+        <option value="form" ${docFilters.doc_type==='form'?'selected':''}>Form / Template</option>
+        <option value="report" ${docFilters.doc_type==='report'?'selected':''}>Report</option>
+        <option value="other" ${docFilters.doc_type==='other'?'selected':''}>Other</option>
+      </select>
+      <select onchange="docFilters.status=this.value;loadDocumentControl()">
+        <option value="">All Status</option>
+        <option value="draft" ${docFilters.status==='draft'?'selected':''}>Draft</option>
+        <option value="review" ${docFilters.status==='review'?'selected':''}>Under Review</option>
+        <option value="approved" ${docFilters.status==='approved'?'selected':''}>Approved</option>
+        <option value="obsolete" ${docFilters.status==='obsolete'?'selected':''}>Obsolete</option>
+      </select>
+      <select onchange="docFilters.classification=this.value;loadDocumentControl()">
+        <option value="">All Classifications</option>
+        <option value="public" ${docFilters.classification==='public'?'selected':''}>Public</option>
+        <option value="internal" ${docFilters.classification==='internal'?'selected':''}>Internal</option>
+        <option value="confidential" ${docFilters.classification==='confidential'?'selected':''}>Confidential</option>
+        <option value="restricted" ${docFilters.classification==='restricted'?'selected':''}>Restricted</option>
+      </select>
+      <select onchange="docFilters.process=this.value;loadDocumentControl()">
+        <option value="">All Processes</option>
+        ${processes.map(p => `<option value="${esc(p.name)}" ${docFilters.process===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}
+      </select>
+      <select onchange="docFilters.owner=this.value;loadDocumentControl()">
+        <option value="">All Owners</option>
+        ${uniqueOwners.map(o => `<option value="${esc(o)}" ${docFilters.owner===o?'selected':''}>${esc(o)}</option>`).join('')}
+      </select>
+      ${(docFilters.doc_type || docFilters.status || docFilters.classification || docFilters.process || docFilters.owner || docFilters.search) ?
+        `<button class="btn btn-secondary btn-sm" onclick="docFilters={doc_type:'',status:'',classification:'',process:'',owner:'',search:''};loadDocumentControl()">Clear Filters</button>` : ''}
+    </div>
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">${docs.length} document${docs.length!==1?'s':''} found</div>`;
 
   const list = document.getElementById('doc-list');
   if (docs.length === 0) {

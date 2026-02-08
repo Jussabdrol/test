@@ -1474,3 +1474,315 @@ body {
 
 /* Selection styling */
 ::selection { background: rgba(99, 102, 241, 0.2); color: var(--text); }
+
+/* ===== ORGANIZATION CHART ===== */
+.org-chart-section {
+  margin-bottom: 24px;
+  background: var(--card-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.org-chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(99, 102, 241, 0.03);
+}
+
+.org-chart-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+  transition: color .15s ease;
+}
+
+.org-chart-toggle:hover {
+  color: var(--primary);
+}
+
+.org-chart-arrow {
+  font-size: 10px;
+  transition: transform .2s ease;
+}
+
+.org-chart-arrow.collapsed {
+  transform: rotate(-90deg);
+}
+
+.org-chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.org-chart-container {
+  overflow: auto;
+  max-height: 600px;
+  padding: 30px;
+  background:
+    linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+    linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+  background-size: 20px 20px;
+  transition: max-height .3s ease;
+}
+
+.org-chart-container.collapsed {
+  max-height: 0;
+  padding: 0 30px;
+  overflow: hidden;
+}
+
+.org-chart {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: max-content;
+  transform-origin: top center;
+  transition: transform .2s ease;
+}
+
+/* Hierarchy levels */
+.org-level {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  position: relative;
+  padding-top: 40px;
+}
+
+.org-level:first-child {
+  padding-top: 0;
+}
+
+/* Node container */
+.org-node-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+/* Individual node */
+.org-node {
+  min-width: 180px;
+  max-width: 220px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s ease;
+  position: relative;
+  z-index: 1;
+}
+
+.org-node:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+}
+
+.org-node-name {
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.org-node-title {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+  word-break: break-word;
+}
+
+.org-node-contact {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Node status variations */
+.org-node.status-planned {
+  background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+  box-shadow: 0 4px 15px rgba(100, 116, 139, 0.3);
+}
+
+.org-node.status-retired {
+  background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%);
+  box-shadow: 0 4px 15px rgba(107, 114, 128, 0.3);
+  opacity: 0.7;
+}
+
+/* Connector lines */
+.org-connector-down {
+  width: 2px;
+  height: 40px;
+  background: linear-gradient(180deg, var(--primary) 0%, rgba(99, 102, 241, 0.3) 100%);
+  position: relative;
+}
+
+.org-connector-horizontal {
+  position: absolute;
+  height: 2px;
+  background: var(--primary);
+  top: 0;
+}
+
+/* Children container */
+.org-children {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  position: relative;
+}
+
+.org-children::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  height: 2px;
+  background: var(--primary);
+  left: calc(50% - var(--connector-width, 0px) / 2);
+  width: var(--connector-width, 0);
+}
+
+/* Top-level node styling */
+.org-node.top-level {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  box-shadow: 0 6px 20px rgba(26, 26, 46, 0.4);
+  min-width: 200px;
+}
+
+.org-node.top-level:hover {
+  box-shadow: 0 10px 30px rgba(26, 26, 46, 0.5);
+}
+
+/* Empty state */
+.org-chart-empty {
+  padding: 60px 40px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.org-chart-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.org-chart-empty-text {
+  font-size: 14px;
+  max-width: 300px;
+  margin: 0 auto;
+}
+
+/* Node badge for direct reports count */
+.org-node-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: var(--success-gradient);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
+}
+
+/* Connector lines using CSS pseudo-elements */
+.org-children > .org-node-container {
+  position: relative;
+}
+
+.org-children > .org-node-container::before {
+  content: '';
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  width: 2px;
+  height: 20px;
+  background: var(--primary);
+}
+
+/* Horizontal connector line spanning all children */
+.org-children {
+  position: relative;
+}
+
+.org-children::after {
+  content: '';
+  position: absolute;
+  top: -20px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--primary);
+}
+
+/* Fix for single child - no horizontal line needed */
+.org-children:has(> .org-node-container:only-child)::after {
+  display: none;
+}
+
+/* Calculate connector width based on number of children */
+.org-children::after {
+  left: calc(50% - 50%);
+  right: calc(50% - 50%);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .org-chart-container {
+    padding: 20px;
+  }
+
+  .org-node {
+    min-width: 140px;
+    max-width: 160px;
+    padding: 12px 16px;
+  }
+
+  .org-node-name {
+    font-size: 12px;
+  }
+
+  .org-children {
+    gap: 20px;
+  }
+
+  .org-level {
+    gap: 20px;
+  }
+}
+
+/* Print styles for org chart */
+@media print {
+  .org-chart-controls {
+    display: none;
+  }
+
+  .org-chart-container {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .org-node {
+    box-shadow: none;
+    border: 1px solid #333;
+  }
+}
