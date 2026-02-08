@@ -1738,6 +1738,7 @@ app.get('/api/documents/:id/download', (req, res) => {
 const entityResolvers = {
   risk: id => db.prepare('SELECT id, title as name FROM risks WHERE id = ?').get(id),
   task: id => db.prepare('SELECT id, title as name FROM tasks WHERE id = ?').get(id),
+  action: id => db.prepare('SELECT id, title as name FROM actions WHERE id = ?').get(id),
   requirement: id => { const r = db.prepare('SELECT id, clause, title, standard FROM standard_requirements WHERE id = ?').get(id); return r ? { id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` } : null; },
   audit: id => db.prepare('SELECT id, title as name FROM audits WHERE id = ?').get(id),
   ncr: id => { const n = db.prepare('SELECT id, clause, description FROM non_conformities WHERE id = ?').get(id); return n ? { id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` } : null; },
@@ -1808,6 +1809,7 @@ app.get('/api/linkable/:type', (req, res) => {
   else if (type === 'document') items = db.prepare('SELECT id, title as name FROM documents ORDER BY title').all();
   else if (type === 'ncr') items = db.prepare("SELECT id, clause || ' - ' || substr(description, 1, 60) as name FROM non_conformities ORDER BY id DESC").all();
   else if (type === 'treatment') items = db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments ORDER BY id DESC").all();
+  else if (type === 'action') items = db.prepare('SELECT id, title as name FROM actions ORDER BY id DESC').all();
   res.json(items);
 });
 

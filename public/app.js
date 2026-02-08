@@ -58,11 +58,21 @@ function switchView(view) {
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   const activeLink = document.querySelector(`[data-view="${view}"]`);
   if (activeLink) activeLink.classList.add('active');
-  // Ensure parent module is expanded
+
+  // Remove active from all module toggles first
+  document.querySelectorAll('.module-toggle').forEach(t => t.classList.remove('active'));
+
+  // Ensure parent module is expanded and marked active
   const parentSubmenu = activeLink?.closest('.module-submenu');
-  if (parentSubmenu && !parentSubmenu.classList.contains('open')) {
-    parentSubmenu.classList.add('open');
-    parentSubmenu.previousElementSibling?.classList.remove('collapsed');
+  if (parentSubmenu) {
+    if (!parentSubmenu.classList.contains('open')) {
+      parentSubmenu.classList.add('open');
+    }
+    const parentToggle = parentSubmenu.previousElementSibling;
+    if (parentToggle) {
+      parentToggle.classList.remove('collapsed');
+      parentToggle.classList.add('active');
+    }
   }
 
   if (view === 'dashboard') loadDashboard();
@@ -95,17 +105,18 @@ async function api(url, options = {}) {
 
 // --- Cross-Link System ---
 const linkableTypes = {
-  risk: { label: 'Risk', icon: '&#9888;', canLink: ['role','process','system','asset','facility','requirement','document','task'] },
-  task: { label: 'Task', icon: '&#9881;', canLink: ['role','process','asset','facility','risk','document','requirement'] },
+  risk: { label: 'Risk', icon: '&#9888;', canLink: ['role','process','system','asset','facility','requirement','document','task','action'] },
+  task: { label: 'Task', icon: '&#9881;', canLink: ['role','process','asset','facility','risk','document','requirement','action'] },
+  action: { label: 'Action', icon: '&#9889;', canLink: ['role','process','task','risk','document','requirement'] },
   audit: { label: 'Audit', icon: '&#9998;', canLink: ['role','process','requirement','risk','document'] },
-  requirement: { label: 'Requirement', icon: '&#128220;', canLink: ['risk','task','audit','document','role','process'] },
-  role: { label: 'Role', icon: '&#128100;', canLink: ['risk','task','audit','process','system','document'] },
-  process: { label: 'Process', icon: '&#128260;', canLink: ['risk','task','audit','role','system','asset','document'] },
+  requirement: { label: 'Requirement', icon: '&#128220;', canLink: ['risk','task','audit','document','role','process','action'] },
+  role: { label: 'Role', icon: '&#128100;', canLink: ['risk','task','audit','process','system','document','action'] },
+  process: { label: 'Process', icon: '&#128260;', canLink: ['risk','task','audit','role','system','asset','document','action'] },
   system: { label: 'System', icon: '&#128187;', canLink: ['risk','process','role','asset','document'] },
   asset: { label: 'Asset', icon: '&#128230;', canLink: ['risk','task','process','facility','document'] },
   facility: { label: 'Facility', icon: '&#127970;', canLink: ['risk','task','asset','document'] },
-  document: { label: 'Document', icon: '&#128196;', canLink: ['risk','task','audit','requirement','role','process','system','asset','facility'] },
-  ncr: { label: 'NCR', icon: '&#9888;', canLink: ['risk','requirement','document','role'] },
+  document: { label: 'Document', icon: '&#128196;', canLink: ['risk','task','audit','requirement','role','process','system','asset','facility','action'] },
+  ncr: { label: 'NCR', icon: '&#9888;', canLink: ['risk','requirement','document','role','action'] },
   treatment: { label: 'Treatment', icon: '&#128737;', canLink: ['requirement','document','role','process','system','asset'] },
   checklist: { label: 'Checklist Item', icon: '&#9745;', canLink: ['document','process','system','asset'] },
 };
@@ -163,6 +174,7 @@ function getViewForType(type, id) {
   const viewMap = {
     risk: 'risk-identification', task: 'tasks', audit: 'audit-plan',
     requirement: 'audit-requirements', document: 'document-control', ncr: 'audit-ncrs',
+    action: 'actions',
   };
   const view = viewMap[type];
   return view ? `switchView('${view}')` : null;
@@ -502,21 +514,49 @@ function toggleCustomDays() {
 async function saveTask(e) {
   e.preventDefault();
   const id = document.getElementById('task-id').value;
+  const assigneeName = document.getElementById('task-assignee').value;
+  const categoryName = document.getElementById('task-category').value || 'General';
   const body = {
     title: document.getElementById('task-title').value,
     description: document.getElementById('task-desc').value,
-    assignee: document.getElementById('task-assignee').value,
-    category: document.getElementById('task-category').value || 'General',
+    assignee: assigneeName,
+    category: categoryName,
     priority: document.getElementById('task-priority').value,
     recurrence: document.getElementById('task-recurrence').value,
     custom_days: parseInt(document.getElementById('task-custom-days').value) || null,
     start_date: document.getElementById('task-start').value,
   };
 
+  let taskId = id;
   if (id) {
     await api(`/api/tasks/${id}`, { method: 'PUT', body });
   } else {
-    await api('/api/tasks', { method: 'POST', body });
+    const result = await api('/api/tasks', { method: 'POST', body });
+    taskId = result.id;
+  }
+
+  // Create cross-links for role and process
+  if (taskId) {
+    // Get existing links to avoid duplicates
+    const existingLinks = await api(`/api/cross-links/task/${taskId}`);
+    const existingTargets = new Set(existingLinks.map(l => `${l.type}:${l.id}`));
+
+    // Link assignee (role) by name lookup
+    if (assigneeName) {
+      const roles = await api('/api/architecture?arch_type=role');
+      const role = roles.find(r => r.name === assigneeName);
+      if (role && !existingTargets.has(`role:${role.id}`)) {
+        await api('/api/cross-links', { method: 'POST', body: { source_type: 'task', source_id: parseInt(taskId), target_type: 'role', target_id: role.id } });
+      }
+    }
+    // Link category (process) by name lookup
+    if (categoryName && categoryName !== 'General') {
+      const processes = await api('/api/architecture?arch_type=process');
+      const proc = processes.find(p => p.name === categoryName);
+      if (proc && !existingTargets.has(`process:${proc.id}`)) {
+        await api('/api/cross-links', { method: 'POST', body: { source_type: 'task', source_id: parseInt(taskId), target_type: 'process', target_id: proc.id } });
+      }
+    }
   }
 
   closeTaskModal();
@@ -587,17 +627,36 @@ async function addQuickAction() {
   const title = document.getElementById('quick-action-title').value.trim();
   if (!title) return alert('Action title is required');
 
+  const assigneeName = document.getElementById('quick-action-assignee').value;
+  const taskId = lastCompletionContext.task_id;
+
   const action = await api('/api/actions', {
     method: 'POST',
     body: {
       completion_id: lastCompletionContext.completion_id,
-      task_id: lastCompletionContext.task_id,
+      task_id: taskId,
       title,
-      assignee: document.getElementById('quick-action-assignee').value,
+      assignee: assigneeName,
       priority: document.getElementById('quick-action-priority').value,
       due_date: document.getElementById('quick-action-due').value || null,
     },
   });
+
+  // Create cross-links for role and source task
+  if (action.id) {
+    // Link assignee (role) by name lookup
+    if (assigneeName) {
+      const roles = await api('/api/architecture?arch_type=role');
+      const role = roles.find(r => r.name === assigneeName);
+      if (role) {
+        await api('/api/cross-links', { method: 'POST', body: { source_type: 'action', source_id: action.id, target_type: 'role', target_id: role.id } });
+      }
+    }
+    // Link source task
+    if (taskId) {
+      await api('/api/cross-links', { method: 'POST', body: { source_type: 'action', source_id: action.id, target_type: 'task', target_id: parseInt(taskId) } });
+    }
+  }
 
   // Add to the visible list
   const list = document.getElementById('post-complete-actions-list');
@@ -744,22 +803,47 @@ function closeActionModal() {
 async function saveAction(e) {
   e.preventDefault();
   const id = document.getElementById('action-id').value;
+  const assigneeName = document.getElementById('action-assignee').value;
   const body = {
     title: document.getElementById('action-title').value,
     description: document.getElementById('action-description').value,
-    assignee: document.getElementById('action-assignee').value,
+    assignee: assigneeName,
     priority: document.getElementById('action-priority').value,
     due_date: document.getElementById('action-due-date').value || null,
     status: document.getElementById('action-status').value,
     resolved_by: document.getElementById('action-resolved-by').value,
   };
 
+  let actionId = id;
+  let taskId = null;
   if (id) {
     await api(`/api/actions/${id}`, { method: 'PUT', body });
   } else {
     body.completion_id = document.getElementById('action-completion-id').value;
-    body.task_id = document.getElementById('action-task-id').value;
-    await api('/api/actions', { method: 'POST', body });
+    taskId = document.getElementById('action-task-id').value;
+    body.task_id = taskId;
+    const result = await api('/api/actions', { method: 'POST', body });
+    actionId = result.id;
+  }
+
+  // Create cross-links for role and source task
+  if (actionId) {
+    // Get existing links to avoid duplicates
+    const existingLinks = await api(`/api/cross-links/action/${actionId}`);
+    const existingTargets = new Set(existingLinks.map(l => `${l.type}:${l.id}`));
+
+    // Link assignee (role) by name lookup
+    if (assigneeName) {
+      const roles = await api('/api/architecture?arch_type=role');
+      const role = roles.find(r => r.name === assigneeName);
+      if (role && !existingTargets.has(`role:${role.id}`)) {
+        await api('/api/cross-links', { method: 'POST', body: { source_type: 'action', source_id: parseInt(actionId), target_type: 'role', target_id: role.id } });
+      }
+    }
+    // Link source task (only for new actions)
+    if (taskId && !existingTargets.has(`task:${taskId}`)) {
+      await api('/api/cross-links', { method: 'POST', body: { source_type: 'action', source_id: parseInt(actionId), target_type: 'task', target_id: parseInt(taskId) } });
+    }
   }
 
   closeActionModal();
@@ -3743,12 +3827,14 @@ function closeRiskModal() { document.getElementById('risk-modal').classList.add(
 async function saveRisk(e) {
   e.preventDefault();
   const id = document.getElementById('risk-id').value;
+  const ownerName = document.getElementById('risk-owner').value;
+  const assetName = document.getElementById('risk-asset').value;
   const body = {
     title: document.getElementById('risk-title').value,
     description: document.getElementById('risk-description').value,
     category: document.getElementById('risk-category').value,
-    risk_owner: document.getElementById('risk-owner').value,
-    asset: document.getElementById('risk-asset').value,
+    risk_owner: ownerName,
+    asset: assetName,
     source: document.getElementById('risk-source').value,
     threat: document.getElementById('risk-threat').value,
     vulnerability: document.getElementById('risk-vulnerability').value,
@@ -3763,15 +3849,46 @@ async function saveRisk(e) {
     const result = await api('/api/risks', { method: 'POST', body });
     riskId = result.id;
   }
-  // Auto-link selected process and facility
+  // Auto-link selected architecture elements
   if (riskId) {
     const procId = document.getElementById('risk-process').value;
     const facId = document.getElementById('risk-facility').value;
-    if (procId) {
+
+    // Get existing links to avoid duplicates
+    const existingLinks = await api(`/api/cross-links/risk/${riskId}`);
+    const existingTargets = new Set(existingLinks.map(l => `${l.type}:${l.id}`));
+
+    // Link process
+    if (procId && !existingTargets.has(`process:${procId}`)) {
       await api('/api/cross-links', { method: 'POST', body: { source_type: 'risk', source_id: parseInt(riskId), target_type: 'process', target_id: parseInt(procId) } });
     }
-    if (facId) {
+    // Link facility
+    if (facId && !existingTargets.has(`facility:${facId}`)) {
       await api('/api/cross-links', { method: 'POST', body: { source_type: 'risk', source_id: parseInt(riskId), target_type: 'facility', target_id: parseInt(facId) } });
+    }
+    // Link owner (role) by name lookup
+    if (ownerName) {
+      const roles = await api('/api/architecture?arch_type=role');
+      const role = roles.find(r => r.name === ownerName);
+      if (role && !existingTargets.has(`role:${role.id}`)) {
+        await api('/api/cross-links', { method: 'POST', body: { source_type: 'risk', source_id: parseInt(riskId), target_type: 'role', target_id: role.id } });
+      }
+    }
+    // Link asset/system by name lookup
+    if (assetName) {
+      const [systems, assets] = await Promise.all([
+        api('/api/architecture?arch_type=system'),
+        api('/api/architecture?arch_type=asset')
+      ]);
+      let arch = systems.find(s => s.name === assetName);
+      let archType = 'system';
+      if (!arch) {
+        arch = assets.find(a => a.name === assetName);
+        archType = 'asset';
+      }
+      if (arch && !existingTargets.has(`${archType}:${arch.id}`)) {
+        await api('/api/cross-links', { method: 'POST', body: { source_type: 'risk', source_id: parseInt(riskId), target_type: archType, target_id: arch.id } });
+      }
     }
   }
   closeRiskModal();
