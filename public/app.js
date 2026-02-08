@@ -91,6 +91,13 @@ function switchView(view) {
   else if (view === 'mission-control') loadMissionControl();
   else if (view === 'architecture') loadArchitecture();
   else if (view === 'document-control') loadDocumentControl();
+  // Admin views
+  else if (view === 'admin-overview') loadAdminOverview();
+  else if (view === 'admin-users') loadAdminUsers();
+  else if (view === 'admin-audit-log') loadAdminAuditLog();
+  else if (view === 'admin-settings') loadAdminSettings();
+  else if (view === 'admin-data') loadAdminData();
+  else if (view === 'admin-integrations') loadAdminIntegrations();
 }
 
 // --- API helpers ---
@@ -5155,6 +5162,790 @@ function esc(str) {
   const d = document.createElement('div');
   d.textContent = str;
   return d.innerHTML;
+}
+
+// ===== ADMIN MODULE =====
+
+let adminUserFilters = { status: '', role: '' };
+let auditLogFilters = { action: '', entity_type: '' };
+let auditLogPage = 0;
+
+// --- Admin: System Overview ---
+async function loadAdminOverview() {
+  const stats = await api('/api/admin/overview');
+
+  // Health grid
+  const healthGrid = document.getElementById('admin-health-grid');
+  const dbSizeMB = (stats.databaseSize / (1024 * 1024)).toFixed(2);
+  const lastBackupDate = stats.lastBackup ? new Date(stats.lastBackup.created_at).toLocaleDateString() : 'Never';
+
+  healthGrid.innerHTML = `
+    <div class="admin-health-card">
+      <div class="health-icon success">&#9889;</div>
+      <div class="health-info">
+        <div class="health-label">System Status</div>
+        <div class="health-value">Operational</div>
+      </div>
+    </div>
+    <div class="admin-health-card">
+      <div class="health-icon info">&#128451;</div>
+      <div class="health-info">
+        <div class="health-label">Database Size</div>
+        <div class="health-value">${dbSizeMB} MB</div>
+      </div>
+    </div>
+    <div class="admin-health-card">
+      <div class="health-icon ${stats.lastBackup ? 'success' : 'warning'}">&#128190;</div>
+      <div class="health-info">
+        <div class="health-label">Last Backup</div>
+        <div class="health-value">${lastBackupDate}</div>
+      </div>
+    </div>
+    <div class="admin-health-card">
+      <div class="health-icon info">&#128100;</div>
+      <div class="health-info">
+        <div class="health-label">Active Users</div>
+        <div class="health-value">${stats.activeUsers} / ${stats.users}</div>
+      </div>
+    </div>
+  `;
+
+  // Module stats
+  const moduleStats = document.getElementById('admin-module-stats');
+  moduleStats.innerHTML = `
+    <div class="module-stat-grid">
+      <div class="module-stat-card">
+        <div class="module-stat-header">
+          <span class="module-stat-icon">&#9881;</span>
+          <span class="module-stat-title">Operational Planning</span>
+        </div>
+        <div class="module-stat-body">
+          <div class="stat-row"><span>Active Tasks</span><strong>${stats.activeTasks}</strong></div>
+          <div class="stat-row"><span>Total Completions</span><strong>${stats.completions}</strong></div>
+          <div class="stat-row ${stats.openActions > 0 ? 'warning' : ''}"><span>Open Actions</span><strong>${stats.openActions}</strong></div>
+        </div>
+      </div>
+      <div class="module-stat-card">
+        <div class="module-stat-header">
+          <span class="module-stat-icon">&#9888;</span>
+          <span class="module-stat-title">Risk Management</span>
+        </div>
+        <div class="module-stat-body">
+          <div class="stat-row"><span>Total Risks</span><strong>${stats.risks}</strong></div>
+          <div class="stat-row ${stats.highRisks > 0 ? 'danger' : ''}"><span>High/Critical Risks</span><strong>${stats.highRisks}</strong></div>
+          <div class="stat-row"><span>Treatments</span><strong>${stats.treatments}</strong></div>
+        </div>
+      </div>
+      <div class="module-stat-card">
+        <div class="module-stat-header">
+          <span class="module-stat-icon">&#9998;</span>
+          <span class="module-stat-title">Audits</span>
+        </div>
+        <div class="module-stat-body">
+          <div class="stat-row"><span>Total Audits</span><strong>${stats.audits}</strong></div>
+          <div class="stat-row"><span>Planned</span><strong>${stats.plannedAudits}</strong></div>
+          <div class="stat-row ${stats.openNcrs > 0 ? 'warning' : ''}"><span>Open NCRs</span><strong>${stats.openNcrs}</strong></div>
+        </div>
+      </div>
+      <div class="module-stat-card">
+        <div class="module-stat-header">
+          <span class="module-stat-icon">&#127970;</span>
+          <span class="module-stat-title">Organization</span>
+        </div>
+        <div class="module-stat-body">
+          <div class="stat-row"><span>Architecture Items</span><strong>${stats.architecture}</strong></div>
+          <div class="stat-row"><span>Requirements</span><strong>${stats.requirements}</strong></div>
+          <div class="stat-row"><span>Documents</span><strong>${stats.documents}</strong></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Recent activity
+  const activityList = document.getElementById('admin-recent-activity');
+  if (stats.recentAuditLogs.length === 0) {
+    activityList.innerHTML = '<div class="empty-state">No recent activity recorded.</div>';
+  } else {
+    activityList.innerHTML = stats.recentAuditLogs.map(log => {
+      const actionIcons = {
+        user_created: '&#128100;', user_updated: '&#128100;', user_deleted: '&#128100;',
+        settings_updated: '&#9881;', data_exported: '&#128229;', backup_created: '&#128190;',
+        api_key_created: '&#128273;', webhook_created: '&#128279;'
+      };
+      const icon = actionIcons[log.action] || '&#128196;';
+      const time = new Date(log.created_at).toLocaleString();
+      return `
+        <div class="activity-item">
+          <div class="activity-icon">${icon}</div>
+          <div class="activity-content">
+            <div class="activity-action">${formatAuditAction(log.action)}${log.entity_name ? `: ${esc(log.entity_name)}` : ''}</div>
+            <div class="activity-meta">${esc(log.user_name)} &middot; ${time}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+}
+
+function formatAuditAction(action) {
+  const map = {
+    user_created: 'User created', user_updated: 'User updated', user_deleted: 'User deleted',
+    settings_updated: 'Settings updated', data_exported: 'Data exported', backup_created: 'Backup created',
+    backup_deleted: 'Backup deleted', data_cleanup: 'Data cleanup', api_key_created: 'API key created',
+    api_key_revoked: 'API key revoked', webhook_created: 'Webhook created', webhook_updated: 'Webhook updated',
+    webhook_deleted: 'Webhook deleted'
+  };
+  return map[action] || action.replace(/_/g, ' ');
+}
+
+// --- Admin: User Management ---
+async function loadAdminUsers() {
+  const params = new URLSearchParams();
+  if (adminUserFilters.status) params.set('status', adminUserFilters.status);
+  if (adminUserFilters.role) params.set('role', adminUserFilters.role);
+
+  const users = await api(`/api/admin/users?${params}`);
+
+  // Stats
+  const statsEl = document.getElementById('admin-users-stats');
+  const totalUsers = users.length;
+  const activeUsers = users.filter(u => u.status === 'active').length;
+  const admins = users.filter(u => u.role === 'admin').length;
+  const pending = users.filter(u => u.status === 'pending').length;
+
+  statsEl.innerHTML = `
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card"><div class="stat-value">${totalUsers}</div><div class="stat-label">Total Users</div></div>
+      <div class="stat-card done"><div class="stat-value">${activeUsers}</div><div class="stat-label">Active</div></div>
+      <div class="stat-card today"><div class="stat-value">${admins}</div><div class="stat-label">Administrators</div></div>
+      <div class="stat-card ${pending > 0 ? 'overdue' : ''}"><div class="stat-value">${pending}</div><div class="stat-label">Pending</div></div>
+    </div>
+  `;
+
+  // Filters
+  const filtersEl = document.getElementById('admin-users-filters');
+  filtersEl.innerHTML = `
+    <select onchange="adminUserFilters.status=this.value;loadAdminUsers()">
+      <option value="">All Status</option>
+      <option value="active" ${adminUserFilters.status==='active'?'selected':''}>Active</option>
+      <option value="pending" ${adminUserFilters.status==='pending'?'selected':''}>Pending</option>
+      <option value="suspended" ${adminUserFilters.status==='suspended'?'selected':''}>Suspended</option>
+      <option value="inactive" ${adminUserFilters.status==='inactive'?'selected':''}>Inactive</option>
+    </select>
+    <select onchange="adminUserFilters.role=this.value;loadAdminUsers()">
+      <option value="">All Roles</option>
+      <option value="viewer" ${adminUserFilters.role==='viewer'?'selected':''}>Viewer</option>
+      <option value="user" ${adminUserFilters.role==='user'?'selected':''}>User</option>
+      <option value="manager" ${adminUserFilters.role==='manager'?'selected':''}>Manager</option>
+      <option value="admin" ${adminUserFilters.role==='admin'?'selected':''}>Administrator</option>
+    </select>
+  `;
+
+  // Table
+  const tbody = document.getElementById('admin-users-body');
+  if (users.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No users found</td></tr>';
+    return;
+  }
+
+  const roleLabels = { viewer: 'Viewer', user: 'User', manager: 'Manager', admin: 'Administrator' };
+  const roleBadge = r => r === 'admin' ? 'badge-critical' : r === 'manager' ? 'badge-high' : r === 'user' ? 'badge-medium' : 'badge-low';
+  const statusBadge = s => s === 'active' ? 'badge-low' : s === 'pending' ? 'badge-medium' : s === 'suspended' ? 'badge-high' : 'badge-inactive';
+
+  tbody.innerHTML = users.map(u => {
+    let permissions = [];
+    try { permissions = JSON.parse(u.permissions || '[]'); } catch(e) {}
+    const permLabels = permissions.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(', ');
+    const lastActive = u.last_active ? new Date(u.last_active).toLocaleDateString() : 'Never';
+
+    return `<tr>
+      <td>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="user-avatar">${u.name.charAt(0).toUpperCase()}</div>
+          <div>
+            <strong style="cursor:pointer;color:var(--primary)" onclick="openUserModal(${u.id})">${esc(u.name)}</strong>
+            ${u.department ? `<div style="font-size:11px;color:var(--text-muted)">${esc(u.department)}</div>` : ''}
+          </div>
+        </div>
+      </td>
+      <td><span style="font-size:13px">${esc(u.email)}</span></td>
+      <td><span class="badge ${roleBadge(u.role)}">${roleLabels[u.role] || u.role}</span></td>
+      <td><span style="font-size:12px;color:var(--text-muted)">${permLabels || '-'}</span></td>
+      <td><span style="font-size:12px">${lastActive}</span></td>
+      <td><span class="badge ${statusBadge(u.status)}">${u.status}</span></td>
+      <td>
+        ${actionMenu([
+          { label: '&#9998; Edit', onclick: `openUserModal(${u.id})` },
+          u.status === 'active' ? { label: '&#128683; Suspend', onclick: `toggleUserStatus(${u.id}, 'suspended')` } : { label: '&#9989; Activate', onclick: `toggleUserStatus(${u.id}, 'active')` },
+          'sep',
+          { label: '&#128465; Delete', onclick: `deleteUser(${u.id})`, cls: 'danger' },
+        ])}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function openUserModal(id) {
+  document.getElementById('user-form').reset();
+  document.getElementById('user-id').value = '';
+  document.getElementById('user-modal-title').textContent = 'Add User';
+
+  // Populate department dropdown from roles
+  api('/api/architecture?arch_type=role').then(roles => {
+    const deptSelect = document.getElementById('user-department');
+    deptSelect.innerHTML = '<option value="">-- Select --</option>' +
+      roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+  });
+
+  if (id) {
+    api(`/api/admin/users`).then(users => {
+      const u = users.find(x => x.id === id);
+      if (u) {
+        document.getElementById('user-modal-title').textContent = 'Edit User';
+        document.getElementById('user-id').value = u.id;
+        document.getElementById('user-name').value = u.name;
+        document.getElementById('user-email').value = u.email;
+        document.getElementById('user-role').value = u.role;
+        document.getElementById('user-department').value = u.department || '';
+        document.getElementById('user-status').value = u.status;
+        document.getElementById('user-expiry').value = u.expiry_date || '';
+        document.getElementById('user-notes').value = u.notes || '';
+
+        // Set permissions
+        let perms = [];
+        try { perms = JSON.parse(u.permissions || '[]'); } catch(e) {}
+        document.getElementById('perm-org').checked = perms.includes('org');
+        document.getElementById('perm-risk').checked = perms.includes('risk');
+        document.getElementById('perm-ops').checked = perms.includes('ops');
+        document.getElementById('perm-audit').checked = perms.includes('audit');
+        document.getElementById('perm-admin').checked = perms.includes('admin');
+      }
+    });
+  }
+
+  document.getElementById('user-modal').classList.remove('hidden');
+}
+
+function closeUserModal() {
+  document.getElementById('user-modal').classList.add('hidden');
+}
+
+async function saveUser(e) {
+  e.preventDefault();
+  const id = document.getElementById('user-id').value;
+
+  const permissions = [];
+  if (document.getElementById('perm-org').checked) permissions.push('org');
+  if (document.getElementById('perm-risk').checked) permissions.push('risk');
+  if (document.getElementById('perm-ops').checked) permissions.push('ops');
+  if (document.getElementById('perm-audit').checked) permissions.push('audit');
+  if (document.getElementById('perm-admin').checked) permissions.push('admin');
+
+  const body = {
+    name: document.getElementById('user-name').value,
+    email: document.getElementById('user-email').value,
+    role: document.getElementById('user-role').value,
+    department: document.getElementById('user-department').value,
+    permissions,
+    status: document.getElementById('user-status').value,
+    expiry_date: document.getElementById('user-expiry').value || null,
+    notes: document.getElementById('user-notes').value,
+  };
+
+  if (id) {
+    await api(`/api/admin/users/${id}`, { method: 'PUT', body });
+  } else {
+    await api('/api/admin/users', { method: 'POST', body });
+  }
+
+  closeUserModal();
+  loadAdminUsers();
+}
+
+async function toggleUserStatus(id, status) {
+  await api(`/api/admin/users/${id}`, { method: 'PUT', body: { status } });
+  loadAdminUsers();
+}
+
+async function deleteUser(id) {
+  if (!confirm('Delete this user? This cannot be undone.')) return;
+  await api(`/api/admin/users/${id}`, { method: 'DELETE' });
+  loadAdminUsers();
+}
+
+// --- Admin: Audit Log ---
+async function loadAdminAuditLog() {
+  const params = new URLSearchParams();
+  if (auditLogFilters.action) params.set('action', auditLogFilters.action);
+  if (auditLogFilters.entity_type) params.set('entity_type', auditLogFilters.entity_type);
+  params.set('limit', '50');
+  params.set('offset', auditLogPage * 50);
+
+  const result = await api(`/api/admin/audit-log?${params}`);
+
+  // Filters
+  document.getElementById('audit-log-filters').innerHTML = `
+    <input type="text" placeholder="&#128269; Search actions..." value="${esc(auditLogFilters.action || '')}"
+      style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;min-width:200px"
+      oninput="auditLogFilters.action=this.value;auditLogPage=0;loadAdminAuditLog()">
+    <select onchange="auditLogFilters.entity_type=this.value;auditLogPage=0;loadAdminAuditLog()">
+      <option value="">All Types</option>
+      <option value="user" ${auditLogFilters.entity_type==='user'?'selected':''}>Users</option>
+      <option value="settings" ${auditLogFilters.entity_type==='settings'?'selected':''}>Settings</option>
+      <option value="api_key" ${auditLogFilters.entity_type==='api_key'?'selected':''}>API Keys</option>
+      <option value="webhook" ${auditLogFilters.entity_type==='webhook'?'selected':''}>Webhooks</option>
+      <option value="backup" ${auditLogFilters.entity_type==='backup'?'selected':''}>Backups</option>
+      <option value="system" ${auditLogFilters.entity_type==='system'?'selected':''}>System</option>
+    </select>
+    <span style="font-size:13px;color:var(--text-muted)">Showing ${result.logs.length} of ${result.total} entries</span>
+  `;
+
+  // Log list
+  const list = document.getElementById('audit-log-list');
+  if (result.logs.length === 0) {
+    list.innerHTML = '<div class="empty-state">No audit log entries found.</div>';
+  } else {
+    list.innerHTML = result.logs.map(log => {
+      const time = new Date(log.created_at).toLocaleString();
+      const typeIcon = {
+        user: '&#128100;', settings: '&#9881;', api_key: '&#128273;', webhook: '&#128279;',
+        backup: '&#128190;', system: '&#128187;'
+      }[log.entity_type] || '&#128196;';
+
+      return `
+        <div class="audit-log-item">
+          <div class="audit-log-icon">${typeIcon}</div>
+          <div class="audit-log-content">
+            <div class="audit-log-action">
+              <strong>${formatAuditAction(log.action)}</strong>
+              ${log.entity_name ? `<span class="audit-log-entity">${esc(log.entity_name)}</span>` : ''}
+            </div>
+            <div class="audit-log-meta">
+              <span class="audit-log-user">${esc(log.user_name)}</span>
+              <span class="audit-log-time">${time}</span>
+              ${log.details ? `<span class="audit-log-details">${esc(log.details.substring(0, 100))}</span>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Pagination
+  const pagination = document.getElementById('audit-log-pagination');
+  const totalPages = Math.ceil(result.total / 50);
+  if (totalPages > 1) {
+    pagination.innerHTML = `
+      <button class="btn btn-secondary btn-sm" ${auditLogPage === 0 ? 'disabled' : ''} onclick="auditLogPage--;loadAdminAuditLog()">Previous</button>
+      <span style="font-size:13px;color:var(--text-muted)">Page ${auditLogPage + 1} of ${totalPages}</span>
+      <button class="btn btn-secondary btn-sm" ${auditLogPage >= totalPages - 1 ? 'disabled' : ''} onclick="auditLogPage++;loadAdminAuditLog()">Next</button>
+    `;
+  } else {
+    pagination.innerHTML = '';
+  }
+}
+
+async function exportAuditLog() {
+  const result = await api('/api/admin/audit-log?limit=10000');
+  const csv = 'Timestamp,User,Action,Entity Type,Entity Name,Details\n' +
+    result.logs.map(l => `"${l.created_at}","${l.user_name}","${l.action}","${l.entity_type || ''}","${l.entity_name || ''}","${(l.details || '').replace(/"/g, '""')}"`).join('\n');
+
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `audit-log-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// --- Admin: System Settings ---
+async function loadAdminSettings() {
+  const settings = await api('/api/admin/settings');
+
+  // Populate form fields
+  if (settings['org-name']) document.getElementById('setting-org-name').value = settings['org-name'];
+  if (settings['language']) document.getElementById('setting-language').value = settings['language'];
+  if (settings['date-format']) document.getElementById('setting-date-format').value = settings['date-format'];
+  if (settings['fiscal-start']) document.getElementById('setting-fiscal-start').value = settings['fiscal-start'];
+
+  document.getElementById('setting-2fa').checked = settings['2fa'] === true || settings['2fa'] === 'true';
+  if (settings['session-timeout']) document.getElementById('setting-session-timeout').value = settings['session-timeout'];
+  if (settings['password-expiry']) document.getElementById('setting-password-expiry').value = settings['password-expiry'];
+  document.getElementById('setting-log-actions').checked = settings['log-actions'] !== false && settings['log-actions'] !== 'false';
+
+  document.getElementById('setting-email-notifications').checked = settings['email-notifications'] !== false;
+  if (settings['overdue-reminder']) document.getElementById('setting-overdue-reminder').value = settings['overdue-reminder'];
+  document.getElementById('setting-audit-alerts').checked = settings['audit-alerts'] !== false;
+  document.getElementById('setting-risk-alerts').checked = settings['risk-alerts'] !== false;
+
+  if (settings['items-per-page']) document.getElementById('setting-items-per-page').value = settings['items-per-page'];
+  if (settings['default-dashboard']) document.getElementById('setting-default-dashboard').value = settings['default-dashboard'];
+  document.getElementById('setting-show-completed').checked = settings['show-completed'] === true;
+  document.getElementById('setting-compact-mode').checked = settings['compact-mode'] === true;
+}
+
+async function saveSystemSettings() {
+  const settings = {
+    'org-name': document.getElementById('setting-org-name').value,
+    'language': document.getElementById('setting-language').value,
+    'date-format': document.getElementById('setting-date-format').value,
+    'fiscal-start': document.getElementById('setting-fiscal-start').value,
+    '2fa': document.getElementById('setting-2fa').checked,
+    'session-timeout': parseInt(document.getElementById('setting-session-timeout').value),
+    'password-expiry': parseInt(document.getElementById('setting-password-expiry').value),
+    'log-actions': document.getElementById('setting-log-actions').checked,
+    'email-notifications': document.getElementById('setting-email-notifications').checked,
+    'overdue-reminder': parseInt(document.getElementById('setting-overdue-reminder').value),
+    'audit-alerts': document.getElementById('setting-audit-alerts').checked,
+    'risk-alerts': document.getElementById('setting-risk-alerts').checked,
+    'items-per-page': document.getElementById('setting-items-per-page').value,
+    'default-dashboard': document.getElementById('setting-default-dashboard').value,
+    'show-completed': document.getElementById('setting-show-completed').checked,
+    'compact-mode': document.getElementById('setting-compact-mode').checked,
+  };
+
+  await api('/api/admin/settings', { method: 'PUT', body: settings });
+  alert('Settings saved successfully!');
+}
+
+// --- Admin: Data Management ---
+async function loadAdminData() {
+  // Load backups
+  const backups = await api('/api/admin/backups');
+  const backupList = document.getElementById('backup-list');
+
+  if (backups.length === 0) {
+    backupList.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:12px 0">No backups available.</div>';
+  } else {
+    backupList.innerHTML = `
+      <table class="task-table" style="margin-top:12px">
+        <thead><tr><th>Filename</th><th>Size</th><th>Type</th><th>Created</th><th></th></tr></thead>
+        <tbody>
+          ${backups.slice(0, 10).map(b => {
+            const sizeMB = (b.size / (1024 * 1024)).toFixed(2);
+            const created = new Date(b.created_at).toLocaleString();
+            return `<tr>
+              <td style="font-size:13px">${esc(b.filename)}</td>
+              <td style="font-size:13px">${sizeMB} MB</td>
+              <td><span class="badge ${b.type === 'scheduled' ? 'badge-low' : 'badge-medium'}">${b.type}</span></td>
+              <td style="font-size:12px">${created}</td>
+              <td>
+                <button class="btn btn-secondary btn-sm" onclick="downloadBackup(${b.id})">&#128229;</button>
+                <button class="btn btn-secondary btn-sm" onclick="deleteBackup(${b.id})" style="color:var(--danger)">&#128465;</button>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  // Import dropzone
+  const dropzone = document.getElementById('import-dropzone');
+  dropzone.onclick = () => document.getElementById('import-file').click();
+  dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add('dragover'); };
+  dropzone.ondragleave = () => dropzone.classList.remove('dragover');
+  dropzone.ondrop = (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleImportFile({ files: e.dataTransfer.files });
+  };
+}
+
+function handleImportFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      const preview = document.getElementById('import-preview');
+
+      let summary = '<strong>Import Preview:</strong><ul style="margin-top:8px;font-size:13px">';
+      if (data.tasks) summary += `<li>${data.tasks.length} tasks</li>`;
+      if (data.risks) summary += `<li>${data.risks.length} risks</li>`;
+      if (data.audits) summary += `<li>${data.audits.length} audits</li>`;
+      if (data.architecture) summary += `<li>${data.architecture.length} architecture items</li>`;
+      if (data.requirements) summary += `<li>${data.requirements.length} requirements</li>`;
+      if (data.documents) summary += `<li>${data.documents.length} documents</li>`;
+      summary += '</ul>';
+
+      preview.innerHTML = summary;
+      preview.classList.remove('hidden');
+      document.getElementById('import-btn').disabled = false;
+      window._importData = data;
+    } catch (err) {
+      alert('Invalid file format. Please upload a valid JSON export file.');
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function executeImport() {
+  if (!window._importData) return alert('No file loaded');
+  if (!confirm('This will import the data. Existing data will not be overwritten. Continue?')) return;
+  // Note: In a real implementation, you'd send this to an import API endpoint
+  alert('Import functionality would process the data here. This is a preview.');
+}
+
+async function exportData(format) {
+  const includes = [];
+  if (document.getElementById('export-tasks').checked) includes.push('tasks');
+  if (document.getElementById('export-risks').checked) includes.push('risks');
+  if (document.getElementById('export-audits').checked) includes.push('audits');
+  if (document.getElementById('export-architecture').checked) includes.push('architecture');
+  if (document.getElementById('export-requirements').checked) includes.push('requirements');
+  if (document.getElementById('export-documents').checked) includes.push('documents');
+
+  if (includes.length === 0) {
+    alert('Please select at least one data type to export.');
+    return;
+  }
+
+  window.open(`/api/admin/export?format=${format}&include=${includes.join(',')}`, '_blank');
+}
+
+async function createBackup() {
+  const result = await api('/api/admin/backups', { method: 'POST', body: { type: 'manual' } });
+  alert(`Backup created: ${result.filename}`);
+  loadAdminData();
+}
+
+function downloadBackup(id) {
+  window.open(`/api/admin/backups/${id}/download`, '_blank');
+}
+
+async function deleteBackup(id) {
+  if (!confirm('Delete this backup?')) return;
+  await api(`/api/admin/backups/${id}`, { method: 'DELETE' });
+  loadAdminData();
+}
+
+async function cleanupData(type) {
+  const messages = {
+    history: 'This will permanently delete completion history older than 1 year.',
+    archive: 'This will archive closed items.',
+    logs: 'This will permanently delete audit logs older than 90 days.'
+  };
+  if (!confirm(messages[type] + ' Continue?')) return;
+
+  const result = await api('/api/admin/cleanup', { method: 'POST', body: { type } });
+  alert(`Cleanup complete. ${result.affected} items affected.`);
+}
+
+// --- Admin: Integrations ---
+async function loadAdminIntegrations() {
+  // Load API keys
+  const apiKeys = await api('/api/admin/api-keys');
+  const keysList = document.getElementById('api-keys-list');
+
+  if (apiKeys.length === 0) {
+    keysList.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No API keys generated yet.</div>';
+  } else {
+    keysList.innerHTML = apiKeys.map(k => {
+      let perms = [];
+      try { perms = JSON.parse(k.permissions || '[]'); } catch(e) {}
+      const lastUsed = k.last_used ? new Date(k.last_used).toLocaleDateString() : 'Never';
+      const statusClass = k.status === 'active' ? 'badge-low' : 'badge-inactive';
+
+      return `
+        <div class="api-key-item">
+          <div class="api-key-info">
+            <strong>${esc(k.name)}</strong>
+            <code class="api-key-prefix">${esc(k.key_prefix)}</code>
+            <span class="badge ${statusClass}">${k.status}</span>
+          </div>
+          <div class="api-key-meta">
+            <span>Permissions: ${perms.join(', ')}</span>
+            <span>Last used: ${lastUsed}</span>
+          </div>
+          ${k.status === 'active' ? `<button class="btn btn-danger btn-sm" onclick="revokeApiKey(${k.id})">Revoke</button>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Load webhooks
+  const webhooks = await api('/api/admin/webhooks');
+  const webhooksList = document.getElementById('webhooks-list');
+
+  if (webhooks.length === 0) {
+    webhooksList.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No webhooks configured yet.</div>';
+  } else {
+    webhooksList.innerHTML = webhooks.map(w => {
+      let events = [];
+      try { events = JSON.parse(w.events || '[]'); } catch(e) {}
+      const statusClass = w.status === 'active' ? 'badge-low' : 'badge-inactive';
+      const lastTriggered = w.last_triggered ? new Date(w.last_triggered).toLocaleDateString() : 'Never';
+
+      return `
+        <div class="webhook-item">
+          <div class="webhook-info">
+            <strong style="cursor:pointer;color:var(--primary)" onclick="openWebhookModal(${w.id})">${esc(w.name)}</strong>
+            <span class="badge ${statusClass}">${w.status}</span>
+            ${w.failure_count > 0 ? `<span class="badge badge-high">${w.failure_count} failures</span>` : ''}
+          </div>
+          <div class="webhook-url">${esc(w.url)}</div>
+          <div class="webhook-meta">
+            <span>Events: ${events.length > 0 ? events.join(', ') : 'None'}</span>
+            <span>Last triggered: ${lastTriggered}</span>
+          </div>
+          <div class="webhook-actions">
+            <button class="btn btn-secondary btn-sm" onclick="openWebhookModal(${w.id})">Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteWebhook(${w.id})">Delete</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+}
+
+async function generateApiKey() {
+  const name = prompt('Enter a name for this API key:');
+  if (!name) return;
+
+  const result = await api('/api/admin/api-keys', { method: 'POST', body: { name, permissions: ['read'] } });
+
+  // Show the key (only shown once!)
+  alert(`API Key created!\n\nKey: ${result.key}\n\nSave this key now - it won't be shown again!`);
+  loadAdminIntegrations();
+}
+
+async function revokeApiKey(id) {
+  if (!confirm('Revoke this API key? Applications using it will stop working.')) return;
+  await api(`/api/admin/api-keys/${id}`, { method: 'DELETE' });
+  loadAdminIntegrations();
+}
+
+function openWebhookModal(id) {
+  document.getElementById('webhook-form').reset();
+  document.getElementById('webhook-id').value = '';
+  document.getElementById('webhook-modal-title').textContent = 'Add Webhook';
+
+  if (id) {
+    api('/api/admin/webhooks').then(webhooks => {
+      const w = webhooks.find(x => x.id === id);
+      if (w) {
+        document.getElementById('webhook-modal-title').textContent = 'Edit Webhook';
+        document.getElementById('webhook-id').value = w.id;
+        document.getElementById('webhook-name').value = w.name;
+        document.getElementById('webhook-url').value = w.url;
+        document.getElementById('webhook-secret').value = w.secret || '';
+        document.getElementById('webhook-status').value = w.status;
+
+        let events = [];
+        try { events = JSON.parse(w.events || '[]'); } catch(e) {}
+        document.getElementById('hook-task-complete').checked = events.includes('task_complete');
+        document.getElementById('hook-task-overdue').checked = events.includes('task_overdue');
+        document.getElementById('hook-risk-high').checked = events.includes('risk_high');
+        document.getElementById('hook-audit-complete').checked = events.includes('audit_complete');
+        document.getElementById('hook-ncr-created').checked = events.includes('ncr_created');
+        document.getElementById('hook-doc-approved').checked = events.includes('doc_approved');
+      }
+    });
+  }
+
+  document.getElementById('webhook-modal').classList.remove('hidden');
+}
+
+function closeWebhookModal() {
+  document.getElementById('webhook-modal').classList.add('hidden');
+}
+
+async function saveWebhook(e) {
+  e.preventDefault();
+  const id = document.getElementById('webhook-id').value;
+
+  const events = [];
+  if (document.getElementById('hook-task-complete').checked) events.push('task_complete');
+  if (document.getElementById('hook-task-overdue').checked) events.push('task_overdue');
+  if (document.getElementById('hook-risk-high').checked) events.push('risk_high');
+  if (document.getElementById('hook-audit-complete').checked) events.push('audit_complete');
+  if (document.getElementById('hook-ncr-created').checked) events.push('ncr_created');
+  if (document.getElementById('hook-doc-approved').checked) events.push('doc_approved');
+
+  const body = {
+    name: document.getElementById('webhook-name').value,
+    url: document.getElementById('webhook-url').value,
+    events,
+    secret: document.getElementById('webhook-secret').value,
+    status: document.getElementById('webhook-status').value,
+  };
+
+  if (id) {
+    await api(`/api/admin/webhooks/${id}`, { method: 'PUT', body });
+  } else {
+    await api('/api/admin/webhooks', { method: 'POST', body });
+  }
+
+  closeWebhookModal();
+  loadAdminIntegrations();
+}
+
+async function deleteWebhook(id) {
+  if (!confirm('Delete this webhook?')) return;
+  await api(`/api/admin/webhooks/${id}`, { method: 'DELETE' });
+  loadAdminIntegrations();
+}
+
+function configureService(service) {
+  const modal = document.getElementById('service-modal');
+  const content = document.getElementById('service-modal-content');
+  document.getElementById('service-modal-title').textContent = 'Configure ' + service.toUpperCase();
+
+  const configs = {
+    smtp: `
+      <form id="smtp-form" onsubmit="saveServiceConfig('smtp', event)">
+        <div class="form-group"><label>SMTP Server</label><input type="text" id="smtp-server" placeholder="smtp.example.com"></div>
+        <div class="form-row">
+          <div class="form-group"><label>Port</label><input type="number" id="smtp-port" value="587"></div>
+          <div class="form-group"><label>Encryption</label><select id="smtp-encryption"><option value="tls">TLS</option><option value="ssl">SSL</option><option value="none">None</option></select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Username</label><input type="text" id="smtp-user" placeholder="Email or username"></div>
+          <div class="form-group"><label>Password</label><input type="password" id="smtp-pass"></div>
+        </div>
+        <div class="form-group"><label>From Address</label><input type="email" id="smtp-from" placeholder="noreply@example.com"></div>
+        <div class="form-actions"><button type="button" class="btn btn-secondary" onclick="closeServiceModal()">Cancel</button><button type="submit" class="btn btn-primary">Save Configuration</button></div>
+      </form>`,
+    slack: `
+      <form id="slack-form" onsubmit="saveServiceConfig('slack', event)">
+        <div class="form-group"><label>Slack Webhook URL</label><input type="url" id="slack-webhook" placeholder="https://hooks.slack.com/services/..."></div>
+        <div class="form-group"><label>Default Channel</label><input type="text" id="slack-channel" placeholder="#notifications"></div>
+        <div class="form-actions"><button type="button" class="btn btn-secondary" onclick="closeServiceModal()">Cancel</button><button type="submit" class="btn btn-primary">Connect Slack</button></div>
+      </form>`,
+    m365: `<div style="text-align:center;padding:40px"><p style="color:var(--text-muted);margin-bottom:20px">Microsoft 365 integration requires OAuth setup.</p><button class="btn btn-primary" onclick="alert('OAuth flow would start here')">Sign in with Microsoft</button></div>`,
+    powerbi: `<div style="text-align:center;padding:40px"><p style="color:var(--text-muted);margin-bottom:20px">Power BI integration requires OAuth setup.</p><button class="btn btn-primary" onclick="alert('OAuth flow would start here')">Connect Power BI</button></div>`,
+  };
+
+  content.innerHTML = configs[service] || '<p>Configuration not available.</p>';
+  modal.classList.remove('hidden');
+}
+
+function closeServiceModal() {
+  document.getElementById('service-modal').classList.add('hidden');
+}
+
+async function saveServiceConfig(service, e) {
+  e.preventDefault();
+  // Save configuration to system settings
+  const settings = {};
+  if (service === 'smtp') {
+    settings['smtp-server'] = document.getElementById('smtp-server').value;
+    settings['smtp-port'] = document.getElementById('smtp-port').value;
+    settings['smtp-encryption'] = document.getElementById('smtp-encryption').value;
+    settings['smtp-user'] = document.getElementById('smtp-user').value;
+    settings['smtp-from'] = document.getElementById('smtp-from').value;
+  } else if (service === 'slack') {
+    settings['slack-webhook'] = document.getElementById('slack-webhook').value;
+    settings['slack-channel'] = document.getElementById('slack-channel').value;
+  }
+
+  await api('/api/admin/settings', { method: 'PUT', body: settings });
+  closeServiceModal();
+  alert('Configuration saved!');
 }
 
 // --- Init ---

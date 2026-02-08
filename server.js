@@ -284,6 +284,79 @@ db.exec(`
     FOREIGN KEY (feed_id) REFERENCES threat_feeds(id) ON DELETE CASCADE,
     UNIQUE(feed_id, guid)
   );
+
+  -- Admin: Users table
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    role TEXT DEFAULT 'user' CHECK(role IN ('viewer','user','manager','admin')),
+    department TEXT DEFAULT '',
+    permissions TEXT DEFAULT '["org","risk","ops","audit"]',
+    status TEXT DEFAULT 'active' CHECK(status IN ('active','pending','suspended','inactive')),
+    last_active TEXT DEFAULT NULL,
+    expiry_date TEXT DEFAULT NULL,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- Admin: System settings
+  CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- Admin: Audit log
+  CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER DEFAULT NULL,
+    user_name TEXT DEFAULT 'System',
+    action TEXT NOT NULL,
+    entity_type TEXT DEFAULT NULL,
+    entity_id INTEGER DEFAULT NULL,
+    entity_name TEXT DEFAULT NULL,
+    details TEXT DEFAULT '',
+    ip_address TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- Admin: API keys
+  CREATE TABLE IF NOT EXISTS api_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    key_hash TEXT NOT NULL,
+    key_prefix TEXT NOT NULL,
+    permissions TEXT DEFAULT '["read"]',
+    last_used TEXT DEFAULT NULL,
+    expires_at TEXT DEFAULT NULL,
+    status TEXT DEFAULT 'active' CHECK(status IN ('active','revoked')),
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- Admin: Webhooks
+  CREATE TABLE IF NOT EXISTS webhooks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    events TEXT DEFAULT '[]',
+    secret TEXT DEFAULT '',
+    status TEXT DEFAULT 'active' CHECK(status IN ('active','paused')),
+    last_triggered TEXT DEFAULT NULL,
+    failure_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- Admin: Backups
+  CREATE TABLE IF NOT EXISTS backups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT NOT NULL,
+    size INTEGER DEFAULT 0,
+    type TEXT DEFAULT 'manual' CHECK(type IN ('manual','scheduled')),
+    status TEXT DEFAULT 'completed' CHECK(status IN ('in_progress','completed','failed')),
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // Seed default threat feeds if none exist
@@ -1830,6 +1903,399 @@ app.get('/api/link-references', (req, res) => {
   }
   res.json(refs);
 });
+
+// ===== ADMIN API ENDPOINTS =====
+
+// Admin: System Overview Stats
+app.get('/api/admin/overview', (req, res) => {
+  const stats = {
+    // Database stats
+    databaseSize: fs.statSync(path.join(__dirname, 'tasks.db')).size,
+
+    // Module counts
+    tasks: db.prepare('SELECT COUNT(*) as c FROM tasks').get().c,
+    activeTasks: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1').get().c,
+    completions: db.prepare('SELECT COUNT(*) as c FROM completions').get().c,
+    actions: db.prepare('SELECT COUNT(*) as c FROM actions').get().c,
+    openActions: db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open', 'in_progress')").get().c,
+
+    risks: db.prepare('SELECT COUNT(*) as c FROM risks').get().c,
+    highRisks: db.prepare('SELECT COUNT(*) as c FROM risks WHERE (likelihood * impact) >= 15').get().c,
+    treatments: db.prepare('SELECT COUNT(*) as c FROM risk_treatments').get().c,
+
+    audits: db.prepare('SELECT COUNT(*) as c FROM audits').get().c,
+    plannedAudits: db.prepare("SELECT COUNT(*) as c FROM audits WHERE status = 'planned'").get().c,
+    ncrs: db.prepare('SELECT COUNT(*) as c FROM non_conformities').get().c,
+    openNcrs: db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE status IN ('open', 'in_progress')").get().c,
+
+    requirements: db.prepare('SELECT COUNT(*) as c FROM standard_requirements').get().c,
+    documents: db.prepare('SELECT COUNT(*) as c FROM documents').get().c,
+    architecture: db.prepare('SELECT COUNT(*) as c FROM org_architecture').get().c,
+
+    users: db.prepare('SELECT COUNT(*) as c FROM users').get().c,
+    activeUsers: db.prepare("SELECT COUNT(*) as c FROM users WHERE status = 'active'").get().c,
+
+    // Recent activity
+    recentCompletions: db.prepare(`
+      SELECT c.*, t.title as task_title
+      FROM completions c JOIN tasks t ON c.task_id = t.id
+      ORDER BY c.completed_at DESC LIMIT 10
+    `).all(),
+
+    recentAuditLogs: db.prepare(`
+      SELECT * FROM admin_audit_log ORDER BY created_at DESC LIMIT 20
+    `).all(),
+
+    // System health
+    lastBackup: db.prepare("SELECT * FROM backups WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1").get(),
+  };
+
+  res.json(stats);
+});
+
+// Admin: Users CRUD
+app.get('/api/admin/users', (req, res) => {
+  const { status, role } = req.query;
+  let sql = 'SELECT * FROM users WHERE 1=1';
+  const params = [];
+  if (status) { sql += ' AND status = ?'; params.push(status); }
+  if (role) { sql += ' AND role = ?'; params.push(role); }
+  sql += ' ORDER BY name';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/admin/users', (req, res) => {
+  const { name, email, role, department, permissions, status, expiry_date, notes } = req.body;
+  if (!name || !email) return res.status(400).json({ error: 'Name and email required' });
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO users (name, email, role, department, permissions, status, expiry_date, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, email, role || 'user', department || '', JSON.stringify(permissions || ['org','risk','ops','audit']),
+           status || 'active', expiry_date || null, notes || '');
+
+    logAuditAction(null, 'System', 'user_created', 'user', result.lastInsertRowid, name);
+    res.status(201).json(db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Email already exists' });
+    throw e;
+  }
+});
+
+app.put('/api/admin/users/:id', (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const fields = ['name', 'email', 'role', 'department', 'permissions', 'status', 'expiry_date', 'notes'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) {
+      updates.push(`${f} = ?`);
+      params.push(f === 'permissions' ? JSON.stringify(req.body[f]) : req.body[f]);
+    }
+  }
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.id);
+
+  db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  logAuditAction(null, 'System', 'user_updated', 'user', user.id, user.name);
+  res.json(db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/admin/users/:id', (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  logAuditAction(null, 'System', 'user_deleted', 'user', user.id, user.name);
+  res.json({ success: true });
+});
+
+// Admin: Audit Log
+app.get('/api/admin/audit-log', (req, res) => {
+  const { action, entity_type, user_name, limit = 100, offset = 0 } = req.query;
+  let sql = 'SELECT * FROM admin_audit_log WHERE 1=1';
+  const params = [];
+  if (action) { sql += ' AND action LIKE ?'; params.push(`%${action}%`); }
+  if (entity_type) { sql += ' AND entity_type = ?'; params.push(entity_type); }
+  if (user_name) { sql += ' AND user_name LIKE ?'; params.push(`%${user_name}%`); }
+  sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+  params.push(parseInt(limit), parseInt(offset));
+
+  const logs = db.prepare(sql).all(...params);
+  const total = db.prepare('SELECT COUNT(*) as c FROM admin_audit_log').get().c;
+  res.json({ logs, total, limit: parseInt(limit), offset: parseInt(offset) });
+});
+
+// Helper function to log audit actions
+function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '') {
+  db.prepare(`
+    INSERT INTO admin_audit_log (user_id, user_name, action, entity_type, entity_id, entity_name, details)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(userId, userName, action, entityType, entityId, entityName, details);
+}
+
+// Admin: System Settings
+app.get('/api/admin/settings', (req, res) => {
+  const settings = db.prepare('SELECT * FROM system_settings').all();
+  const result = {};
+  for (const s of settings) {
+    try { result[s.key] = JSON.parse(s.value); }
+    catch { result[s.key] = s.value; }
+  }
+  res.json(result);
+});
+
+app.put('/api/admin/settings', (req, res) => {
+  const settings = req.body;
+  const upsert = db.prepare(`
+    INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+  `);
+
+  for (const [key, value] of Object.entries(settings)) {
+    upsert.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+  }
+
+  logAuditAction(null, 'System', 'settings_updated', 'settings', null, null, JSON.stringify(Object.keys(settings)));
+  res.json({ success: true });
+});
+
+// Admin: API Keys
+app.get('/api/admin/api-keys', (req, res) => {
+  res.json(db.prepare("SELECT id, name, key_prefix, permissions, last_used, expires_at, status, created_at FROM api_keys ORDER BY created_at DESC").all());
+});
+
+app.post('/api/admin/api-keys', (req, res) => {
+  const { name, permissions, expires_at } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name required' });
+
+  // Generate a random API key
+  const crypto = require('crypto');
+  const key = 'ltfw_' + crypto.randomBytes(24).toString('hex');
+  const keyHash = crypto.createHash('sha256').update(key).digest('hex');
+  const keyPrefix = key.substring(0, 12) + '...';
+
+  const result = db.prepare(`
+    INSERT INTO api_keys (name, key_hash, key_prefix, permissions, expires_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(name, keyHash, keyPrefix, JSON.stringify(permissions || ['read']), expires_at || null);
+
+  logAuditAction(null, 'System', 'api_key_created', 'api_key', result.lastInsertRowid, name);
+
+  // Return the full key only once (won't be stored/retrievable later)
+  res.status(201).json({
+    id: result.lastInsertRowid,
+    name,
+    key, // Full key shown only once!
+    key_prefix: keyPrefix,
+    permissions: permissions || ['read'],
+    created_at: new Date().toISOString()
+  });
+});
+
+app.delete('/api/admin/api-keys/:id', (req, res) => {
+  const key = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(req.params.id);
+  if (!key) return res.status(404).json({ error: 'API key not found' });
+
+  db.prepare("UPDATE api_keys SET status = 'revoked' WHERE id = ?").run(req.params.id);
+  logAuditAction(null, 'System', 'api_key_revoked', 'api_key', key.id, key.name);
+  res.json({ success: true });
+});
+
+// Admin: Webhooks
+app.get('/api/admin/webhooks', (req, res) => {
+  res.json(db.prepare('SELECT * FROM webhooks ORDER BY created_at DESC').all());
+});
+
+app.post('/api/admin/webhooks', (req, res) => {
+  const { name, url, events, secret, status } = req.body;
+  if (!name || !url) return res.status(400).json({ error: 'Name and URL required' });
+
+  const result = db.prepare(`
+    INSERT INTO webhooks (name, url, events, secret, status)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(name, url, JSON.stringify(events || []), secret || '', status || 'active');
+
+  logAuditAction(null, 'System', 'webhook_created', 'webhook', result.lastInsertRowid, name);
+  res.status(201).json(db.prepare('SELECT * FROM webhooks WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.put('/api/admin/webhooks/:id', (req, res) => {
+  const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+  if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
+
+  const { name, url, events, secret, status } = req.body;
+  db.prepare(`
+    UPDATE webhooks SET name = ?, url = ?, events = ?, secret = ?, status = ? WHERE id = ?
+  `).run(name || webhook.name, url || webhook.url, JSON.stringify(events || JSON.parse(webhook.events)),
+         secret !== undefined ? secret : webhook.secret, status || webhook.status, req.params.id);
+
+  logAuditAction(null, 'System', 'webhook_updated', 'webhook', webhook.id, webhook.name);
+  res.json(db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/admin/webhooks/:id', (req, res) => {
+  const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+  if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
+
+  db.prepare('DELETE FROM webhooks WHERE id = ?').run(req.params.id);
+  logAuditAction(null, 'System', 'webhook_deleted', 'webhook', webhook.id, webhook.name);
+  res.json({ success: true });
+});
+
+// Admin: Data Export
+app.get('/api/admin/export', (req, res) => {
+  const { format = 'json', include } = req.query;
+  const includes = include ? include.split(',') : ['tasks', 'risks', 'audits', 'architecture', 'requirements', 'documents'];
+
+  const data = {
+    exportedAt: new Date().toISOString(),
+    version: '1.0',
+  };
+
+  if (includes.includes('tasks')) {
+    data.tasks = db.prepare('SELECT * FROM tasks').all();
+    data.completions = db.prepare('SELECT * FROM completions').all();
+    data.actions = db.prepare('SELECT * FROM actions').all();
+  }
+  if (includes.includes('risks')) {
+    data.risks = db.prepare('SELECT * FROM risks').all();
+    data.treatments = db.prepare('SELECT * FROM risk_treatments').all();
+  }
+  if (includes.includes('audits')) {
+    data.audits = db.prepare('SELECT * FROM audits').all();
+    data.auditChecklist = db.prepare('SELECT * FROM audit_checklist').all();
+    data.ncrs = db.prepare('SELECT * FROM non_conformities').all();
+  }
+  if (includes.includes('architecture')) {
+    data.architecture = db.prepare('SELECT * FROM org_architecture').all();
+    data.kpis = db.prepare('SELECT * FROM kpis').all();
+  }
+  if (includes.includes('requirements')) {
+    data.requirements = db.prepare('SELECT * FROM standard_requirements').all();
+    data.soaEntries = db.prepare('SELECT * FROM soa_entries').all();
+  }
+  if (includes.includes('documents')) {
+    data.documents = db.prepare('SELECT id, title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at FROM documents').all();
+  }
+
+  // Cross-links
+  data.crossLinks = db.prepare('SELECT * FROM cross_links').all();
+
+  logAuditAction(null, 'System', 'data_exported', 'system', null, null, `Format: ${format}, Includes: ${includes.join(',')}`);
+
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="ltfw-export-${new Date().toISOString().split('T')[0]}.json"`);
+  res.json(data);
+});
+
+// Admin: Create Backup
+app.post('/api/admin/backups', (req, res) => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filename = `backup-${timestamp}.json`;
+
+  // Get all data
+  const data = {
+    exportedAt: new Date().toISOString(),
+    version: '1.0',
+    tasks: db.prepare('SELECT * FROM tasks').all(),
+    completions: db.prepare('SELECT * FROM completions').all(),
+    actions: db.prepare('SELECT * FROM actions').all(),
+    risks: db.prepare('SELECT * FROM risks').all(),
+    treatments: db.prepare('SELECT * FROM risk_treatments').all(),
+    audits: db.prepare('SELECT * FROM audits').all(),
+    auditChecklist: db.prepare('SELECT * FROM audit_checklist').all(),
+    ncrs: db.prepare('SELECT * FROM non_conformities').all(),
+    architecture: db.prepare('SELECT * FROM org_architecture').all(),
+    requirements: db.prepare('SELECT * FROM standard_requirements').all(),
+    soaEntries: db.prepare('SELECT * FROM soa_entries').all(),
+    documents: db.prepare('SELECT * FROM documents').all(),
+    kpis: db.prepare('SELECT * FROM kpis').all(),
+    kpiValues: db.prepare('SELECT * FROM kpi_values').all(),
+    crossLinks: db.prepare('SELECT * FROM cross_links').all(),
+    threatFeeds: db.prepare('SELECT * FROM threat_feeds').all(),
+    users: db.prepare('SELECT * FROM users').all(),
+    settings: db.prepare('SELECT * FROM system_settings').all(),
+  };
+
+  const content = JSON.stringify(data, null, 2);
+  const size = Buffer.byteLength(content, 'utf8');
+
+  // Save backup record
+  const result = db.prepare(`
+    INSERT INTO backups (filename, size, type, status) VALUES (?, ?, ?, 'completed')
+  `).run(filename, size, req.body.type || 'manual');
+
+  // Save backup file
+  const backupsDir = path.join(__dirname, 'backups');
+  if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir);
+  fs.writeFileSync(path.join(backupsDir, filename), content);
+
+  logAuditAction(null, 'System', 'backup_created', 'backup', result.lastInsertRowid, filename);
+  res.status(201).json(db.prepare('SELECT * FROM backups WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.get('/api/admin/backups', (req, res) => {
+  res.json(db.prepare("SELECT * FROM backups ORDER BY created_at DESC").all());
+});
+
+app.get('/api/admin/backups/:id/download', (req, res) => {
+  const backup = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+  if (!backup) return res.status(404).json({ error: 'Backup not found' });
+
+  const filePath = path.join(__dirname, 'backups', backup.filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Backup file not found' });
+
+  res.download(filePath, backup.filename);
+});
+
+app.delete('/api/admin/backups/:id', (req, res) => {
+  const backup = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+  if (!backup) return res.status(404).json({ error: 'Backup not found' });
+
+  // Delete file
+  const filePath = path.join(__dirname, 'backups', backup.filename);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+  db.prepare('DELETE FROM backups WHERE id = ?').run(req.params.id);
+  logAuditAction(null, 'System', 'backup_deleted', 'backup', backup.id, backup.filename);
+  res.json({ success: true });
+});
+
+// Admin: Data Cleanup
+app.post('/api/admin/cleanup', (req, res) => {
+  const { type } = req.body;
+  let result = { affected: 0 };
+
+  if (type === 'history') {
+    // Delete completions older than 1 year
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const r = db.prepare("DELETE FROM completions WHERE completed_at < ?").run(oneYearAgo.toISOString());
+    result.affected = r.changes;
+  } else if (type === 'logs') {
+    // Delete audit logs older than 90 days
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const r = db.prepare("DELETE FROM admin_audit_log WHERE created_at < ?").run(ninetyDaysAgo.toISOString());
+    result.affected = r.changes;
+  }
+
+  logAuditAction(null, 'System', 'data_cleanup', 'system', null, null, `Type: ${type}, Affected: ${result.affected}`);
+  res.json(result);
+});
+
+// Seed default admin user if none exist
+const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+if (userCount === 0) {
+  db.prepare(`
+    INSERT INTO users (name, email, role, permissions, status)
+    VALUES ('System Administrator', 'admin@example.com', 'admin', '["org","risk","ops","audit","admin"]', 'active')
+  `).run();
+}
 
 // SPA fallback
 app.get('*', (req, res) => {

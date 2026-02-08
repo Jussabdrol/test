@@ -69,6 +69,21 @@
             <li><a href="#" class="nav-link" data-view="audit-ncrs">Non-Conformities</a></li>
           </ul>
         </li>
+        <li class="nav-module admin-module">
+          <a href="#" class="module-toggle" data-module="admin" title="Administration">
+            <span class="module-icon">&#9881;</span>
+            <span class="module-text">Administration</span>
+            <span class="module-arrow">&#9662;</span>
+          </a>
+          <ul class="module-submenu">
+            <li><a href="#" class="nav-link" data-view="admin-overview">System Overview</a></li>
+            <li><a href="#" class="nav-link" data-view="admin-users">User Management</a></li>
+            <li><a href="#" class="nav-link" data-view="admin-audit-log">Audit Log</a></li>
+            <li><a href="#" class="nav-link" data-view="admin-settings">System Settings</a></li>
+            <li><a href="#" class="nav-link" data-view="admin-data">Data Management</a></li>
+            <li><a href="#" class="nav-link" data-view="admin-integrations">Integrations</a></li>
+          </ul>
+        </li>
       </ul>
       <button class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse sidebar">
         &#9776;
@@ -469,6 +484,388 @@
         <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">Manage policies, procedures, and documented information per ISO 7.5 requirements. Upload files and cross-link them to relevant modules.</p>
         <div class="filters" id="doc-filters-bar"></div>
         <div id="doc-list"></div>
+      </section>
+
+      <!-- ===== ADMIN MODULE VIEWS ===== -->
+
+      <!-- Admin: System Overview -->
+      <section id="view-admin-overview" class="view hidden">
+        <div class="view-header">
+          <h2>System Overview</h2>
+          <div class="admin-badge">&#128272; Admin</div>
+        </div>
+        <p style="margin-bottom:20px;color:var(--text-muted);font-size:13px">Monitor system health, usage statistics, and key metrics across all modules.</p>
+
+        <!-- System Health Cards -->
+        <div class="admin-health-grid" id="admin-health-grid"></div>
+
+        <!-- Module Statistics -->
+        <h3 class="section-title" style="margin-top:28px">Module Statistics</h3>
+        <div class="admin-module-stats" id="admin-module-stats"></div>
+
+        <!-- Recent System Activity -->
+        <h3 class="section-title" style="margin-top:28px">Recent Activity</h3>
+        <div class="admin-recent-activity" id="admin-recent-activity"></div>
+      </section>
+
+      <!-- Admin: User Management -->
+      <section id="view-admin-users" class="view hidden">
+        <div class="view-header">
+          <h2>User Management</h2>
+          <button class="btn btn-primary" onclick="openUserModal()">+ Add User</button>
+        </div>
+        <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">Manage user accounts, roles, and permissions. Control access to different modules and features.</p>
+
+        <div class="admin-users-stats" id="admin-users-stats"></div>
+        <div class="filters" id="admin-users-filters"></div>
+        <div class="admin-users-table-wrap">
+          <table class="task-table" id="admin-users-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Permissions</th>
+                <th>Last Active</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="admin-users-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Admin: Audit Log -->
+      <section id="view-admin-audit-log" class="view hidden">
+        <div class="view-header">
+          <h2>Audit Log</h2>
+          <button class="btn btn-secondary" onclick="exportAuditLog()">&#128229; Export Log</button>
+        </div>
+        <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">Track all system activity including user actions, data changes, and security events.</p>
+
+        <div class="filters" id="audit-log-filters"></div>
+        <div class="audit-log-list" id="audit-log-list"></div>
+        <div class="pagination" id="audit-log-pagination"></div>
+      </section>
+
+      <!-- Admin: System Settings -->
+      <section id="view-admin-settings" class="view hidden">
+        <div class="view-header">
+          <h2>System Settings</h2>
+          <button class="btn btn-primary" onclick="saveSystemSettings()">Save Changes</button>
+        </div>
+        <p style="margin-bottom:20px;color:var(--text-muted);font-size:13px">Configure application settings, defaults, and preferences.</p>
+
+        <div class="admin-settings-grid">
+          <!-- General Settings -->
+          <div class="settings-section">
+            <h3 class="settings-section-title">&#9881; General Settings</h3>
+            <div class="settings-form" id="settings-general">
+              <div class="setting-item">
+                <label>Organization Name</label>
+                <input type="text" id="setting-org-name" placeholder="Your Organization">
+              </div>
+              <div class="setting-item">
+                <label>Default Language</label>
+                <select id="setting-language">
+                  <option value="en">English</option>
+                  <option value="nl">Nederlands</option>
+                  <option value="de">Deutsch</option>
+                  <option value="fr">Français</option>
+                </select>
+              </div>
+              <div class="setting-item">
+                <label>Date Format</label>
+                <select id="setting-date-format">
+                  <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                  <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                </select>
+              </div>
+              <div class="setting-item">
+                <label>Fiscal Year Start</label>
+                <select id="setting-fiscal-start">
+                  <option value="1">January</option>
+                  <option value="4">April</option>
+                  <option value="7">July</option>
+                  <option value="10">October</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Security Settings -->
+          <div class="settings-section">
+            <h3 class="settings-section-title">&#128274; Security Settings</h3>
+            <div class="settings-form" id="settings-security">
+              <div class="setting-item toggle">
+                <label>Require Two-Factor Authentication</label>
+                <input type="checkbox" id="setting-2fa" class="toggle-checkbox">
+              </div>
+              <div class="setting-item">
+                <label>Session Timeout (minutes)</label>
+                <input type="number" id="setting-session-timeout" value="60" min="5" max="480">
+              </div>
+              <div class="setting-item">
+                <label>Password Expiry (days)</label>
+                <input type="number" id="setting-password-expiry" value="90" min="0" max="365">
+              </div>
+              <div class="setting-item toggle">
+                <label>Log All User Actions</label>
+                <input type="checkbox" id="setting-log-actions" class="toggle-checkbox" checked>
+              </div>
+            </div>
+          </div>
+
+          <!-- Notification Settings -->
+          <div class="settings-section">
+            <h3 class="settings-section-title">&#128276; Notification Settings</h3>
+            <div class="settings-form" id="settings-notifications">
+              <div class="setting-item toggle">
+                <label>Email Notifications</label>
+                <input type="checkbox" id="setting-email-notifications" class="toggle-checkbox" checked>
+              </div>
+              <div class="setting-item">
+                <label>Overdue Task Reminder (days before)</label>
+                <input type="number" id="setting-overdue-reminder" value="3" min="0" max="30">
+              </div>
+              <div class="setting-item toggle">
+                <label>Audit Due Date Alerts</label>
+                <input type="checkbox" id="setting-audit-alerts" class="toggle-checkbox" checked>
+              </div>
+              <div class="setting-item toggle">
+                <label>Risk Threshold Alerts</label>
+                <input type="checkbox" id="setting-risk-alerts" class="toggle-checkbox" checked>
+              </div>
+            </div>
+          </div>
+
+          <!-- Display Settings -->
+          <div class="settings-section">
+            <h3 class="settings-section-title">&#127912; Display Settings</h3>
+            <div class="settings-form" id="settings-display">
+              <div class="setting-item">
+                <label>Items Per Page</label>
+                <select id="setting-items-per-page">
+                  <option value="10">10</option>
+                  <option value="25" selected>25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+              <div class="setting-item">
+                <label>Default Dashboard</label>
+                <select id="setting-default-dashboard">
+                  <option value="mission-control">Mission Control</option>
+                  <option value="dashboard">Operational Dashboard</option>
+                  <option value="risk-identification">Risk Dashboard</option>
+                </select>
+              </div>
+              <div class="setting-item toggle">
+                <label>Show Completed Tasks in Lists</label>
+                <input type="checkbox" id="setting-show-completed" class="toggle-checkbox">
+              </div>
+              <div class="setting-item toggle">
+                <label>Compact View Mode</label>
+                <input type="checkbox" id="setting-compact-mode" class="toggle-checkbox">
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Admin: Data Management -->
+      <section id="view-admin-data" class="view hidden">
+        <div class="view-header">
+          <h2>Data Management</h2>
+        </div>
+        <p style="margin-bottom:20px;color:var(--text-muted);font-size:13px">Import, export, and manage your organization's data. Create backups and restore from previous states.</p>
+
+        <div class="admin-data-grid">
+          <!-- Export Section -->
+          <div class="data-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">&#128229;</span>
+              <h3>Export Data</h3>
+            </div>
+            <p class="data-section-desc">Export your data to various formats for backup or migration purposes.</p>
+            <div class="data-export-options">
+              <div class="export-option">
+                <label><input type="checkbox" id="export-tasks" checked> Tasks & Actions</label>
+              </div>
+              <div class="export-option">
+                <label><input type="checkbox" id="export-risks" checked> Risks & Treatments</label>
+              </div>
+              <div class="export-option">
+                <label><input type="checkbox" id="export-audits" checked> Audits & NCRs</label>
+              </div>
+              <div class="export-option">
+                <label><input type="checkbox" id="export-architecture" checked> Architecture</label>
+              </div>
+              <div class="export-option">
+                <label><input type="checkbox" id="export-documents" checked> Documents (metadata only)</label>
+              </div>
+              <div class="export-option">
+                <label><input type="checkbox" id="export-requirements" checked> Standard Requirements</label>
+              </div>
+            </div>
+            <div class="data-actions">
+              <button class="btn btn-primary" onclick="exportData('json')">Export as JSON</button>
+              <button class="btn btn-secondary" onclick="exportData('csv')">Export as CSV</button>
+            </div>
+          </div>
+
+          <!-- Import Section -->
+          <div class="data-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">&#128228;</span>
+              <h3>Import Data</h3>
+            </div>
+            <p class="data-section-desc">Import data from a previously exported backup or from other systems.</p>
+            <div class="import-dropzone" id="import-dropzone">
+              <span class="dropzone-icon">&#128193;</span>
+              <p>Drag & drop your file here or click to browse</p>
+              <span class="dropzone-formats">Supported formats: JSON</span>
+              <input type="file" id="import-file" accept=".json" style="display:none" onchange="handleImportFile(this)">
+            </div>
+            <div id="import-preview" class="import-preview hidden"></div>
+            <div class="data-actions">
+              <button class="btn btn-primary" id="import-btn" onclick="executeImport()" disabled>Import Data</button>
+            </div>
+          </div>
+
+          <!-- Backup Section -->
+          <div class="data-section">
+            <div class="data-section-header">
+              <span class="data-section-icon">&#128451;</span>
+              <h3>Backups</h3>
+            </div>
+            <p class="data-section-desc">Manage automatic and manual backups of your data.</p>
+            <div class="backup-schedule">
+              <div class="setting-item">
+                <label>Automatic Backup</label>
+                <select id="backup-schedule">
+                  <option value="daily">Daily</option>
+                  <option value="weekly" selected>Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="never">Disabled</option>
+                </select>
+              </div>
+              <div class="setting-item">
+                <label>Keep Backups For</label>
+                <select id="backup-retention">
+                  <option value="7">7 days</option>
+                  <option value="30" selected>30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="365">1 year</option>
+                </select>
+              </div>
+            </div>
+            <div class="backup-list" id="backup-list"></div>
+            <div class="data-actions">
+              <button class="btn btn-primary" onclick="createBackup()">Create Backup Now</button>
+            </div>
+          </div>
+
+          <!-- Data Cleanup Section -->
+          <div class="data-section danger-zone">
+            <div class="data-section-header">
+              <span class="data-section-icon">&#128465;</span>
+              <h3>Data Cleanup</h3>
+            </div>
+            <p class="data-section-desc">Clean up old or unnecessary data. These actions cannot be undone.</p>
+            <div class="cleanup-options">
+              <div class="cleanup-option">
+                <div class="cleanup-info">
+                  <strong>Clear Completion History</strong>
+                  <span>Remove task completion records older than 1 year</span>
+                </div>
+                <button class="btn btn-danger btn-sm" onclick="cleanupData('history')">Clean Up</button>
+              </div>
+              <div class="cleanup-option">
+                <div class="cleanup-info">
+                  <strong>Archive Closed Items</strong>
+                  <span>Archive closed risks, NCRs, and completed audits</span>
+                </div>
+                <button class="btn btn-danger btn-sm" onclick="cleanupData('archive')">Archive</button>
+              </div>
+              <div class="cleanup-option">
+                <div class="cleanup-info">
+                  <strong>Purge Audit Logs</strong>
+                  <span>Remove audit log entries older than 90 days</span>
+                </div>
+                <button class="btn btn-danger btn-sm" onclick="cleanupData('logs')">Purge</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Admin: Integrations -->
+      <section id="view-admin-integrations" class="view hidden">
+        <div class="view-header">
+          <h2>Integrations</h2>
+          <button class="btn btn-primary" onclick="openIntegrationModal()">+ Add Integration</button>
+        </div>
+        <p style="margin-bottom:20px;color:var(--text-muted);font-size:13px">Manage API keys, webhooks, and connections to external services.</p>
+
+        <!-- API Access -->
+        <div class="integration-section">
+          <h3 class="section-title">&#128273; API Access</h3>
+          <div class="api-keys-info">
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Use API keys to integrate with external services and automate workflows.</p>
+          </div>
+          <div class="api-keys-list" id="api-keys-list"></div>
+          <button class="btn btn-secondary" onclick="generateApiKey()" style="margin-top:12px">Generate New API Key</button>
+        </div>
+
+        <!-- Webhooks -->
+        <div class="integration-section" style="margin-top:28px">
+          <h3 class="section-title">&#128279; Webhooks</h3>
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Configure webhooks to send real-time notifications to external systems when events occur.</p>
+          <div class="webhooks-list" id="webhooks-list"></div>
+          <button class="btn btn-secondary" onclick="openWebhookModal()" style="margin-top:12px">+ Add Webhook</button>
+        </div>
+
+        <!-- Connected Services -->
+        <div class="integration-section" style="margin-top:28px">
+          <h3 class="section-title">&#128268; Connected Services</h3>
+          <div class="connected-services" id="connected-services">
+            <div class="service-card available">
+              <div class="service-icon">&#128231;</div>
+              <div class="service-info">
+                <h4>Email (SMTP)</h4>
+                <p>Send notifications via your email server</p>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="configureService('smtp')">Configure</button>
+            </div>
+            <div class="service-card available">
+              <div class="service-icon">&#128196;</div>
+              <div class="service-info">
+                <h4>Microsoft 365</h4>
+                <p>Sync with SharePoint and Teams</p>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="configureService('m365')">Connect</button>
+            </div>
+            <div class="service-card available">
+              <div class="service-icon">&#128203;</div>
+              <div class="service-info">
+                <h4>Slack</h4>
+                <p>Send alerts to Slack channels</p>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="configureService('slack')">Connect</button>
+            </div>
+            <div class="service-card available">
+              <div class="service-icon">&#128200;</div>
+              <div class="service-info">
+                <h4>Power BI</h4>
+                <p>Export data to Power BI dashboards</p>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="configureService('powerbi')">Connect</button>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   </div>
@@ -1410,6 +1807,144 @@
           <button type="submit" class="btn btn-primary">Save Document</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ===== ADMIN MODALS ===== -->
+
+  <!-- User Modal -->
+  <div id="user-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeUserModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="user-modal-title">Add User</h3>
+        <button class="modal-close" onclick="closeUserModal()">&times;</button>
+      </div>
+      <form id="user-form" onsubmit="saveUser(event)">
+        <input type="hidden" id="user-id">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="user-name">Full Name *</label>
+            <input type="text" id="user-name" required placeholder="John Doe">
+          </div>
+          <div class="form-group">
+            <label for="user-email">Email *</label>
+            <input type="email" id="user-email" required placeholder="john@example.com">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="user-role">Role</label>
+            <select id="user-role">
+              <option value="viewer">Viewer</option>
+              <option value="user" selected>User</option>
+              <option value="manager">Manager</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="user-department">Department</label>
+            <select id="user-department">
+              <option value="">-- Select --</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Module Permissions</label>
+          <div class="permissions-grid">
+            <label class="permission-item"><input type="checkbox" id="perm-org" checked> Organizational Planning</label>
+            <label class="permission-item"><input type="checkbox" id="perm-risk" checked> Risk Management</label>
+            <label class="permission-item"><input type="checkbox" id="perm-ops" checked> Operational Planning</label>
+            <label class="permission-item"><input type="checkbox" id="perm-audit" checked> Audits</label>
+            <label class="permission-item"><input type="checkbox" id="perm-admin"> Administration</label>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="user-status">Status</label>
+            <select id="user-status">
+              <option value="active">Active</option>
+              <option value="pending">Pending Activation</option>
+              <option value="suspended">Suspended</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="user-expiry">Account Expiry</label>
+            <input type="date" id="user-expiry" placeholder="Optional">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="user-notes">Notes</label>
+          <textarea id="user-notes" rows="2" placeholder="Internal notes about this user"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeUserModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Webhook Modal -->
+  <div id="webhook-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeWebhookModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="webhook-modal-title">Add Webhook</h3>
+        <button class="modal-close" onclick="closeWebhookModal()">&times;</button>
+      </div>
+      <form id="webhook-form" onsubmit="saveWebhook(event)">
+        <input type="hidden" id="webhook-id">
+        <div class="form-group">
+          <label for="webhook-name">Webhook Name *</label>
+          <input type="text" id="webhook-name" required placeholder="e.g. Slack Notifications">
+        </div>
+        <div class="form-group">
+          <label for="webhook-url">Endpoint URL *</label>
+          <input type="url" id="webhook-url" required placeholder="https://hooks.example.com/webhook">
+        </div>
+        <div class="form-group">
+          <label>Trigger Events</label>
+          <div class="permissions-grid">
+            <label class="permission-item"><input type="checkbox" id="hook-task-complete"> Task Completed</label>
+            <label class="permission-item"><input type="checkbox" id="hook-task-overdue"> Task Overdue</label>
+            <label class="permission-item"><input type="checkbox" id="hook-risk-high"> High Risk Created</label>
+            <label class="permission-item"><input type="checkbox" id="hook-audit-complete"> Audit Completed</label>
+            <label class="permission-item"><input type="checkbox" id="hook-ncr-created"> NCR Created</label>
+            <label class="permission-item"><input type="checkbox" id="hook-doc-approved"> Document Approved</label>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="webhook-secret">Secret Key (optional)</label>
+            <input type="text" id="webhook-secret" placeholder="For signature verification">
+          </div>
+          <div class="form-group">
+            <label for="webhook-status">Status</label>
+            <select id="webhook-status">
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeWebhookModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Webhook</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Service Configuration Modal -->
+  <div id="service-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeServiceModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="service-modal-title">Configure Service</h3>
+        <button class="modal-close" onclick="closeServiceModal()">&times;</button>
+      </div>
+      <div id="service-modal-content"></div>
     </div>
   </div>
 
