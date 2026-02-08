@@ -69,10 +69,10 @@
             <li><a href="#" class="nav-link" data-view="audit-ncrs">Non-Conformities</a></li>
           </ul>
         </li>
-        <li class="nav-module admin-module">
-          <a href="#" class="module-toggle" data-module="admin" title="Administration">
-            <span class="module-icon">&#9881;</span>
-            <span class="module-text">Administration</span>
+        <li class="nav-module">
+          <a href="#" class="module-toggle" data-module="admin" title="Admin">
+            <span class="module-icon">&#128736;</span>
+            <span class="module-text">Admin</span>
             <span class="module-arrow">&#9662;</span>
           </a>
           <ul class="module-submenu">
@@ -806,7 +806,7 @@
       <section id="view-admin-integrations" class="view hidden">
         <div class="view-header">
           <h2>Integrations</h2>
-          <button class="btn btn-primary" onclick="openIntegrationModal()">+ Add Integration</button>
+          <button class="btn btn-secondary" onclick="loadAdminIntegrations()">&#8635; Refresh</button>
         </div>
         <p style="margin-bottom:20px;color:var(--text-muted);font-size:13px">Manage API keys, webhooks, and connections to external services.</p>
 
@@ -1945,6 +1945,45 @@
         <button class="modal-close" onclick="closeServiceModal()">&times;</button>
       </div>
       <div id="service-modal-content"></div>
+    </div>
+  </div>
+
+  <!-- API Key Modal -->
+  <div id="api-key-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeApiKeyModal()"></div>
+    <div class="modal-content" style="max-width:480px">
+      <div class="modal-header">
+        <h3>Generate API Key</h3>
+        <button class="modal-close" onclick="closeApiKeyModal()">&times;</button>
+      </div>
+      <form id="api-key-form" onsubmit="createApiKey(event)">
+        <div class="form-group">
+          <label for="api-key-name">Key Name *</label>
+          <input type="text" id="api-key-name" required placeholder="e.g. Production Integration">
+        </div>
+        <div class="form-group">
+          <label>Permissions</label>
+          <div class="permissions-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px">
+            <label class="checkbox-label"><input type="checkbox" id="api-perm-read" checked> Read Data</label>
+            <label class="checkbox-label"><input type="checkbox" id="api-perm-write"> Write Data</label>
+            <label class="checkbox-label"><input type="checkbox" id="api-perm-delete"> Delete Data</label>
+            <label class="checkbox-label"><input type="checkbox" id="api-perm-admin"> Admin Access</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="api-key-expiry">Expiry Date (optional)</label>
+          <input type="date" id="api-key-expiry">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeApiKeyModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Generate Key</button>
+        </div>
+      </form>
+      <div id="api-key-result" class="hidden" style="margin-top:16px;padding:16px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius)">
+        <p style="color:var(--warning);font-weight:600;margin-bottom:8px">&#9888; Save this key now - it won't be shown again!</p>
+        <code id="api-key-display" style="display:block;padding:12px;background:var(--bg);border-radius:var(--radius-sm);word-break:break-all;font-size:13px"></code>
+        <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="copyApiKey()">&#128203; Copy to Clipboard</button>
+      </div>
     </div>
   </div>
 

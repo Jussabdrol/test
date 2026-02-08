@@ -1800,10 +1800,22 @@ body {
   letter-spacing: 0.5px;
 }
 
-/* Admin module highlight in sidebar */
-.admin-module .module-toggle {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(168, 85, 247, 0.1) 100%);
-  border-left: 3px solid var(--primary);
+/* Module styling in sidebar - enhanced look for all modules */
+.nav-module .module-toggle {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.06) 100%);
+  border-left: 3px solid transparent;
+  transition: all 0.25s ease;
+}
+
+.nav-module .module-toggle:hover {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.12) 100%);
+  border-left-color: rgba(99, 102, 241, 0.5);
+}
+
+.nav-module .module-toggle.active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(168, 85, 247, 0.15) 100%);
+  border-left-color: var(--primary);
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
 }
 
 /* Health grid */
@@ -2320,4 +2332,15 @@ body {
 
 .service-info { flex: 1; min-width: 0; }
 .service-info h4 { font-size: 14px; margin: 0 0 2px 0; }
-.service-info p { font-size: 11px; color: var(--text-muted); margin: 0; }
+.service-info p { font-size: 11px; color: var(--text-muted); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.service-status {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.service-status.connected {
+  color: var(--success);
+}

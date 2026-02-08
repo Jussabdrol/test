@@ -2288,6 +2288,192 @@ app.post('/api/admin/cleanup', (req, res) => {
   res.json(result);
 });
 
+// Admin: Data Import
+app.post('/api/admin/import', (req, res) => {
+  const data = req.body;
+  const result = { imported: {}, errors: [] };
+
+  try {
+    // Import tasks
+    if (data.tasks && Array.isArray(data.tasks)) {
+      let count = 0;
+      const insertTask = db.prepare(`
+        INSERT OR IGNORE INTO tasks (title, description, assignee, category, priority, recurrence, next_due, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `);
+      for (const task of data.tasks) {
+        try {
+          insertTask.run(task.title, task.description || '', task.assignee || '', task.category || '',
+            task.priority || 'medium', task.recurrence || 'monthly', task.next_due || null, task.is_active !== false ? 1 : 0);
+          count++;
+        } catch (e) { /* Skip duplicates */ }
+      }
+      result.imported.tasks = count;
+    }
+
+    // Import risks
+    if (data.risks && Array.isArray(data.risks)) {
+      let count = 0;
+      const insertRisk = db.prepare(`
+        INSERT OR IGNORE INTO risks (title, description, category, status, owner, threat, vulnerability, asset_system, likelihood, impact, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `);
+      for (const risk of data.risks) {
+        try {
+          insertRisk.run(risk.title, risk.description || '', risk.category || '', risk.status || 'identified',
+            risk.owner || '', risk.threat || '', risk.vulnerability || '', risk.asset_system || '',
+            risk.likelihood || 3, risk.impact || 3);
+          count++;
+        } catch (e) { /* Skip duplicates */ }
+      }
+      result.imported.risks = count;
+    }
+
+    // Import architecture items
+    if (data.architecture && Array.isArray(data.architecture)) {
+      let count = 0;
+      const insertArch = db.prepare(`
+        INSERT OR IGNORE INTO org_architecture (arch_type, name, description, owner, parent_id, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      `);
+      for (const item of data.architecture) {
+        try {
+          insertArch.run(item.arch_type || 'role', item.name, item.description || '', item.owner || '',
+            item.parent_id || null, item.status || 'active');
+          count++;
+        } catch (e) { /* Skip duplicates */ }
+      }
+      result.imported.architecture = count;
+    }
+
+    // Import requirements
+    if (data.requirements && Array.isArray(data.requirements)) {
+      let count = 0;
+      const insertReq = db.prepare(`
+        INSERT OR IGNORE INTO standard_requirements (standard, clause, title, description, guidance, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      `);
+      for (const req of data.requirements) {
+        try {
+          insertReq.run(req.standard || '', req.clause || '', req.title, req.description || '',
+            req.guidance || '', req.status || 'not_started');
+          count++;
+        } catch (e) { /* Skip duplicates */ }
+      }
+      result.imported.requirements = count;
+    }
+
+    // Import documents
+    if (data.documents && Array.isArray(data.documents)) {
+      let count = 0;
+      const insertDoc = db.prepare(`
+        INSERT OR IGNORE INTO documents (title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `);
+      for (const doc of data.documents) {
+        try {
+          insertDoc.run(doc.title, doc.description || '', doc.doc_type || 'policy', doc.version || '1.0',
+            doc.owner || '', doc.status || 'draft', doc.classification || 'internal',
+            doc.linked_module || '', doc.review_date || null);
+          count++;
+        } catch (e) { /* Skip duplicates */ }
+      }
+      result.imported.documents = count;
+    }
+
+    // Import audits
+    if (data.audits && Array.isArray(data.audits)) {
+      let count = 0;
+      const insertAudit = db.prepare(`
+        INSERT OR IGNORE INTO audits (title, type, standard, lead_auditor, scope, status, scheduled_date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `);
+      for (const audit of data.audits) {
+        try {
+          insertAudit.run(audit.title, audit.type || 'internal', audit.standard || '', audit.lead_auditor || '',
+            audit.scope || '', audit.status || 'planned', audit.scheduled_date || null);
+          count++;
+        } catch (e) { /* Skip duplicates */ }
+      }
+      result.imported.audits = count;
+    }
+
+    logAuditAction(null, 'System', 'data_imported', 'system', null, null, JSON.stringify(result.imported));
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Test Webhook
+app.post('/api/admin/webhooks/:id/test', async (req, res) => {
+  const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+  if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
+
+  const testPayload = {
+    event: 'test',
+    timestamp: new Date().toISOString(),
+    message: 'This is a test webhook from Let The Frame Work',
+    webhook_id: webhook.id,
+    webhook_name: webhook.name
+  };
+
+  try {
+    const https = require('https');
+    const http = require('http');
+    const url = new URL(webhook.url);
+    const client = url.protocol === 'https:' ? https : http;
+
+    const payload = JSON.stringify(testPayload);
+    const options = {
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        'User-Agent': 'LetTheFrameWork/1.0',
+        ...(webhook.secret ? { 'X-Webhook-Secret': webhook.secret } : {})
+      },
+      timeout: 10000
+    };
+
+    const result = await new Promise((resolve, reject) => {
+      const request = client.request(options, (response) => {
+        let data = '';
+        response.on('data', chunk => data += chunk);
+        response.on('end', () => {
+          resolve({ statusCode: response.statusCode, body: data.substring(0, 500) });
+        });
+      });
+
+      request.on('error', reject);
+      request.on('timeout', () => { request.destroy(); reject(new Error('Timeout')); });
+      request.write(payload);
+      request.end();
+    });
+
+    // Update last triggered
+    db.prepare("UPDATE webhooks SET last_triggered = datetime('now') WHERE id = ?").run(webhook.id);
+
+    res.json({ success: true, statusCode: result.statusCode, response: result.body });
+  } catch (err) {
+    // Increment failure count
+    db.prepare("UPDATE webhooks SET failure_count = failure_count + 1 WHERE id = ?").run(webhook.id);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Reset Webhook Failures
+app.post('/api/admin/webhooks/:id/reset-failures', (req, res) => {
+  const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+  if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
+
+  db.prepare("UPDATE webhooks SET failure_count = 0 WHERE id = ?").run(req.params.id);
+  res.json({ success: true });
+});
+
 // Seed default admin user if none exist
 const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
 if (userCount === 0) {

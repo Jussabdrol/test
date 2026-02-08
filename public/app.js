@@ -5166,7 +5166,7 @@ function esc(str) {
 
 // ===== ADMIN MODULE =====
 
-let adminUserFilters = { status: '', role: '' };
+let adminUserFilters = { status: '', role: '', search: '' };
 let auditLogFilters = { action: '', entity_type: '' };
 let auditLogPage = 0;
 
@@ -5325,6 +5325,9 @@ async function loadAdminUsers() {
   // Filters
   const filtersEl = document.getElementById('admin-users-filters');
   filtersEl.innerHTML = `
+    <input type="text" placeholder="&#128269; Search users..." value="${esc(adminUserFilters.search || '')}"
+      style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;min-width:180px"
+      oninput="adminUserFilters.search=this.value;loadAdminUsers()">
     <select onchange="adminUserFilters.status=this.value;loadAdminUsers()">
       <option value="">All Status</option>
       <option value="active" ${adminUserFilters.status==='active'?'selected':''}>Active</option>
@@ -5341,9 +5344,20 @@ async function loadAdminUsers() {
     </select>
   `;
 
+  // Apply search filter on client side
+  let filteredUsers = users;
+  if (adminUserFilters.search) {
+    const searchLower = adminUserFilters.search.toLowerCase();
+    filteredUsers = users.filter(u =>
+      u.name.toLowerCase().includes(searchLower) ||
+      u.email.toLowerCase().includes(searchLower) ||
+      (u.department && u.department.toLowerCase().includes(searchLower))
+    );
+  }
+
   // Table
   const tbody = document.getElementById('admin-users-body');
-  if (users.length === 0) {
+  if (filteredUsers.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No users found</td></tr>';
     return;
   }
@@ -5352,7 +5366,7 @@ async function loadAdminUsers() {
   const roleBadge = r => r === 'admin' ? 'badge-critical' : r === 'manager' ? 'badge-high' : r === 'user' ? 'badge-medium' : 'badge-low';
   const statusBadge = s => s === 'active' ? 'badge-low' : s === 'pending' ? 'badge-medium' : s === 'suspended' ? 'badge-high' : 'badge-inactive';
 
-  tbody.innerHTML = users.map(u => {
+  tbody.innerHTML = filteredUsers.map(u => {
     let permissions = [];
     try { permissions = JSON.parse(u.permissions || '[]'); } catch(e) {}
     const permLabels = permissions.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(', ');
@@ -5685,9 +5699,35 @@ function handleImportFile(input) {
 
 async function executeImport() {
   if (!window._importData) return alert('No file loaded');
-  if (!confirm('This will import the data. Existing data will not be overwritten. Continue?')) return;
-  // Note: In a real implementation, you'd send this to an import API endpoint
-  alert('Import functionality would process the data here. This is a preview.');
+  if (!confirm('This will import the data. Existing items will be skipped. Continue?')) return;
+
+  const btn = document.getElementById('import-btn');
+  btn.disabled = true;
+  btn.textContent = 'Importing...';
+
+  try {
+    const result = await api('/api/admin/import', { method: 'POST', body: window._importData });
+
+    let summary = 'Import completed!\n\n';
+    if (result.imported) {
+      for (const [key, count] of Object.entries(result.imported)) {
+        if (count > 0) summary += `- ${key}: ${count} items\n`;
+      }
+    }
+    if (result.errors && result.errors.length > 0) {
+      summary += `\nErrors: ${result.errors.length}`;
+    }
+
+    alert(summary);
+    document.getElementById('import-preview').classList.add('hidden');
+    document.getElementById('import-preview').innerHTML = '';
+    window._importData = null;
+    btn.textContent = 'Import Data';
+  } catch (err) {
+    alert('Import failed: ' + err.message);
+    btn.textContent = 'Import Data';
+  }
+  btn.disabled = true;
 }
 
 async function exportData(format) {
@@ -5737,8 +5777,11 @@ async function cleanupData(type) {
 
 // --- Admin: Integrations ---
 async function loadAdminIntegrations() {
-  // Load API keys
-  const apiKeys = await api('/api/admin/api-keys');
+  // Load settings and API keys in parallel
+  const [apiKeys, settings] = await Promise.all([
+    api('/api/admin/api-keys'),
+    api('/api/admin/settings')
+  ]);
   const keysList = document.getElementById('api-keys-list');
 
   if (apiKeys.length === 0) {
@@ -5785,7 +5828,7 @@ async function loadAdminIntegrations() {
           <div class="webhook-info">
             <strong style="cursor:pointer;color:var(--primary)" onclick="openWebhookModal(${w.id})">${esc(w.name)}</strong>
             <span class="badge ${statusClass}">${w.status}</span>
-            ${w.failure_count > 0 ? `<span class="badge badge-high">${w.failure_count} failures</span>` : ''}
+            ${w.failure_count > 0 ? `<span class="badge badge-high" style="cursor:pointer" onclick="resetWebhookFailures(${w.id})" title="Click to reset">${w.failure_count} failures</span>` : ''}
           </div>
           <div class="webhook-url">${esc(w.url)}</div>
           <div class="webhook-meta">
@@ -5793,6 +5836,7 @@ async function loadAdminIntegrations() {
             <span>Last triggered: ${lastTriggered}</span>
           </div>
           <div class="webhook-actions">
+            <button class="btn btn-secondary btn-sm" onclick="testWebhook(${w.id})" title="Send test payload">&#128172; Test</button>
             <button class="btn btn-secondary btn-sm" onclick="openWebhookModal(${w.id})">Edit</button>
             <button class="btn btn-danger btn-sm" onclick="deleteWebhook(${w.id})">Delete</button>
           </div>
@@ -5800,17 +5844,97 @@ async function loadAdminIntegrations() {
       `;
     }).join('');
   }
+
+  // Update connected services status
+  const servicesContainer = document.getElementById('connected-services');
+  if (servicesContainer) {
+    const smtpConfigured = settings['smtp-server'] && settings['smtp-server'].length > 0;
+    const slackConfigured = settings['slack-webhook'] && settings['slack-webhook'].length > 0;
+
+    servicesContainer.innerHTML = `
+      <div class="service-card ${smtpConfigured ? 'connected' : 'available'}">
+        <div class="service-icon">&#128231;</div>
+        <div class="service-info">
+          <h4>Email (SMTP)</h4>
+          <p>${smtpConfigured ? 'Connected to ' + esc(settings['smtp-server']) : 'Send notifications via your email server'}</p>
+        </div>
+        <span class="service-status ${smtpConfigured ? 'connected' : ''}">${smtpConfigured ? '&#9989; Connected' : ''}</span>
+        <button class="btn btn-secondary btn-sm" onclick="configureService('smtp')">${smtpConfigured ? 'Reconfigure' : 'Configure'}</button>
+      </div>
+      <div class="service-card ${slackConfigured ? 'connected' : 'available'}">
+        <div class="service-icon">&#128172;</div>
+        <div class="service-info">
+          <h4>Slack</h4>
+          <p>${slackConfigured ? 'Connected to ' + esc(settings['slack-channel'] || 'Slack') : 'Send alerts to Slack channels'}</p>
+        </div>
+        <span class="service-status ${slackConfigured ? 'connected' : ''}">${slackConfigured ? '&#9989; Connected' : ''}</span>
+        <button class="btn btn-secondary btn-sm" onclick="configureService('slack')">${slackConfigured ? 'Reconfigure' : 'Connect'}</button>
+      </div>
+      <div class="service-card available">
+        <div class="service-icon">&#128196;</div>
+        <div class="service-info">
+          <h4>Microsoft 365</h4>
+          <p>Sync with SharePoint and Teams</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="configureService('m365')">Connect</button>
+      </div>
+      <div class="service-card available">
+        <div class="service-icon">&#128200;</div>
+        <div class="service-info">
+          <h4>Power BI</h4>
+          <p>Export data to Power BI dashboards</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="configureService('powerbi')">Connect</button>
+      </div>
+    `;
+  }
 }
 
-async function generateApiKey() {
-  const name = prompt('Enter a name for this API key:');
-  if (!name) return;
+function generateApiKey() {
+  // Open the API key modal
+  document.getElementById('api-key-form').reset();
+  document.getElementById('api-key-result').classList.add('hidden');
+  document.getElementById('api-key-modal').classList.remove('hidden');
+}
 
-  const result = await api('/api/admin/api-keys', { method: 'POST', body: { name, permissions: ['read'] } });
+function closeApiKeyModal() {
+  document.getElementById('api-key-modal').classList.add('hidden');
+  // Refresh list if a key was created
+  if (!document.getElementById('api-key-result').classList.contains('hidden')) {
+    loadAdminIntegrations();
+  }
+}
 
-  // Show the key (only shown once!)
-  alert(`API Key created!\n\nKey: ${result.key}\n\nSave this key now - it won't be shown again!`);
-  loadAdminIntegrations();
+async function createApiKey(e) {
+  e.preventDefault();
+
+  const permissions = [];
+  if (document.getElementById('api-perm-read').checked) permissions.push('read');
+  if (document.getElementById('api-perm-write').checked) permissions.push('write');
+  if (document.getElementById('api-perm-delete').checked) permissions.push('delete');
+  if (document.getElementById('api-perm-admin').checked) permissions.push('admin');
+
+  const body = {
+    name: document.getElementById('api-key-name').value,
+    permissions,
+    expires_at: document.getElementById('api-key-expiry').value || null
+  };
+
+  const result = await api('/api/admin/api-keys', { method: 'POST', body });
+
+  // Show the key
+  document.getElementById('api-key-display').textContent = result.key;
+  document.getElementById('api-key-result').classList.remove('hidden');
+
+  // Hide the form
+  document.getElementById('api-key-form').classList.add('hidden');
+}
+
+function copyApiKey() {
+  const key = document.getElementById('api-key-display').textContent;
+  navigator.clipboard.writeText(key).then(() => {
+    alert('API key copied to clipboard!');
+  });
 }
 
 async function revokeApiKey(id) {
@@ -5887,6 +6011,34 @@ async function saveWebhook(e) {
 async function deleteWebhook(id) {
   if (!confirm('Delete this webhook?')) return;
   await api(`/api/admin/webhooks/${id}`, { method: 'DELETE' });
+  loadAdminIntegrations();
+}
+
+async function testWebhook(id) {
+  const btn = event.target;
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '&#8987; Testing...';
+
+  try {
+    const result = await api(`/api/admin/webhooks/${id}/test`, { method: 'POST' });
+    if (result.success) {
+      alert(`Webhook test successful!\n\nStatus: ${result.statusCode}\nResponse: ${result.response || '(empty)'}`);
+    } else {
+      alert(`Webhook test failed:\n${result.error}`);
+    }
+  } catch (err) {
+    alert(`Webhook test failed:\n${err.message}`);
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = originalText;
+  loadAdminIntegrations();
+}
+
+async function resetWebhookFailures(id) {
+  if (!confirm('Reset failure count for this webhook?')) return;
+  await api(`/api/admin/webhooks/${id}/reset-failures`, { method: 'POST' });
   loadAdminIntegrations();
 }
 
