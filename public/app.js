@@ -4484,11 +4484,19 @@ async function loadArchitecture() {
 
   // Show/hide org chart section based on tab
   const orgChartSection = document.getElementById('org-chart-section');
+  const facilitiesMapSection = document.getElementById('facilities-map-section');
+
   if (currentArchTab === 'role') {
     orgChartSection.style.display = 'block';
+    facilitiesMapSection.style.display = 'none';
     renderOrgChart(items);
+  } else if (currentArchTab === 'facility') {
+    orgChartSection.style.display = 'none';
+    facilitiesMapSection.style.display = 'block';
+    renderFacilitiesMap(items);
   } else {
     orgChartSection.style.display = 'none';
+    facilitiesMapSection.style.display = 'none';
   }
 
   if (items.length === 0) {
@@ -4666,6 +4674,169 @@ function resetOrgChartZoom() {
   document.getElementById('org-chart-zoom-level').textContent = '100%';
 }
 
+// --- Facilities Map ---
+let facilitiesMap = null;
+let facilitiesMapMarkers = [];
+let facilitiesMapCollapsed = false;
+
+function renderFacilitiesMap(facilities) {
+  const mapContainer = document.getElementById('facilities-map');
+  const emptyState = document.getElementById('facilities-map-empty');
+  const mapWrapper = document.getElementById('facilities-map-container');
+
+  // Filter facilities that have coordinates
+  const facilitiesWithCoords = facilities.filter(f => {
+    let meta = {};
+    try { meta = JSON.parse(f.metadata || '{}'); } catch(e) {}
+    return meta.latitude && meta.longitude;
+  });
+
+  if (facilitiesWithCoords.length === 0) {
+    mapWrapper.classList.add('hidden');
+    emptyState.classList.remove('hidden');
+    return;
+  }
+
+  mapWrapper.classList.remove('hidden');
+  emptyState.classList.add('hidden');
+
+  // Initialize map if not exists
+  if (!facilitiesMap) {
+    facilitiesMap = L.map('facilities-map', {
+      scrollWheelZoom: true,
+      zoomControl: true
+    }).setView([52.0, 5.0], 6);
+
+    // Add tile layer (OpenStreetMap)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19
+    }).addTo(facilitiesMap);
+  }
+
+  // Clear existing markers
+  facilitiesMapMarkers.forEach(m => facilitiesMap.removeLayer(m));
+  facilitiesMapMarkers = [];
+
+  // Add markers for each facility
+  const bounds = [];
+  facilitiesWithCoords.forEach(facility => {
+    let meta = {};
+    try { meta = JSON.parse(facility.metadata || '{}'); } catch(e) {}
+
+    const lat = meta.latitude;
+    const lng = meta.longitude;
+    const status = facility.status || 'active';
+
+    // Custom marker icon based on status
+    const markerColor = status === 'active' ? '#10b981' : status === 'planned' ? '#f59e0b' : '#6b7280';
+    const markerIcon = L.divIcon({
+      className: 'facility-marker',
+      html: `<div class="facility-marker-pin" style="background:${markerColor}">
+               <span class="facility-marker-icon">&#127970;</span>
+             </div>`,
+      iconSize: [36, 42],
+      iconAnchor: [18, 42],
+      popupAnchor: [0, -42]
+    });
+
+    const marker = L.marker([lat, lng], { icon: markerIcon })
+      .addTo(facilitiesMap)
+      .bindPopup(`
+        <div class="facility-popup">
+          <strong>${esc(facility.name)}</strong>
+          <span class="popup-status ${status}">${status}</span>
+          ${meta.address ? `<div class="popup-address">${esc(meta.address)}</div>` : ''}
+          ${facility.owner ? `<div class="popup-owner">Owner: ${esc(facility.owner)}</div>` : ''}
+          <button class="popup-btn" onclick="openArchModal(${facility.id})">&#9998; Edit</button>
+        </div>
+      `);
+
+    facilitiesMapMarkers.push(marker);
+    bounds.push([lat, lng]);
+  });
+
+  // Fit map to show all markers
+  if (bounds.length > 0) {
+    if (bounds.length === 1) {
+      facilitiesMap.setView(bounds[0], 14);
+    } else {
+      facilitiesMap.fitBounds(bounds, { padding: [30, 30] });
+    }
+  }
+
+  // Invalidate size after a small delay (for proper rendering)
+  setTimeout(() => {
+    if (facilitiesMap) facilitiesMap.invalidateSize();
+  }, 100);
+}
+
+function toggleFacilitiesMap() {
+  const container = document.getElementById('facilities-map-container');
+  const emptyState = document.getElementById('facilities-map-empty');
+  const arrow = document.getElementById('facilities-map-arrow');
+
+  facilitiesMapCollapsed = !facilitiesMapCollapsed;
+
+  if (facilitiesMapCollapsed) {
+    container.style.display = 'none';
+    emptyState.style.display = 'none';
+    arrow.innerHTML = '&#9654;';
+  } else {
+    container.style.display = '';
+    emptyState.style.display = '';
+    arrow.innerHTML = '&#9660;';
+    if (facilitiesMap) {
+      setTimeout(() => facilitiesMap.invalidateSize(), 100);
+    }
+  }
+}
+
+function centerMapOnFacilities() {
+  if (facilitiesMap && facilitiesMapMarkers.length > 0) {
+    const bounds = facilitiesMapMarkers.map(m => m.getLatLng());
+    if (bounds.length === 1) {
+      facilitiesMap.setView(bounds[0], 14);
+    } else {
+      facilitiesMap.fitBounds(bounds, { padding: [30, 30] });
+    }
+  }
+}
+
+function refreshFacilitiesMap() {
+  loadArchitecture();
+}
+
+async function geocodeFacilityAddress() {
+  const addressField = document.getElementById('arch-address');
+  const latField = document.getElementById('arch-latitude');
+  const lngField = document.getElementById('arch-longitude');
+
+  const address = addressField.value.trim();
+  if (!address) {
+    alert('Please enter an address first.');
+    return;
+  }
+
+  try {
+    // Use Nominatim (OpenStreetMap) geocoding service
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`, {
+      headers: { 'User-Agent': 'LetTheFrameWork/1.0' }
+    });
+    const results = await response.json();
+
+    if (results.length > 0) {
+      latField.value = parseFloat(results[0].lat).toFixed(6);
+      lngField.value = parseFloat(results[0].lon).toFixed(6);
+      alert(`Coordinates found:\nLatitude: ${latField.value}\nLongitude: ${lngField.value}`);
+    } else {
+      alert('Could not find coordinates for this address. Please enter them manually.');
+    }
+  } catch (err) {
+    alert('Geocoding failed: ' + err.message);
+  }
+}
+
 function buildArchTableHeader(archType) {
   const headers = {
     role: ['Name', 'Contact', 'Reports to', 'Status', 'Links', ''],
@@ -4813,7 +4984,26 @@ async function openArchModal(id) {
       </div>`;
   } else if (archType === 'facility') {
     extraFields.innerHTML = `
-      <div class="form-group"><label>Address</label><textarea id="arch-address" rows="2" placeholder="Street address, city, country">${esc(metadata.address || '')}</textarea></div>`;
+      <div class="form-group">
+        <label>Address</label>
+        <textarea id="arch-address" rows="2" placeholder="Street address, city, country">${esc(metadata.address || '')}</textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Latitude</label>
+          <input type="number" step="any" id="arch-latitude" value="${metadata.latitude || ''}" placeholder="e.g. 52.3676">
+        </div>
+        <div class="form-group">
+          <label>Longitude</label>
+          <input type="number" step="any" id="arch-longitude" value="${metadata.longitude || ''}" placeholder="e.g. 4.9041">
+        </div>
+      </div>
+      <div class="form-group">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="geocodeFacilityAddress()" style="margin-top:4px">
+          &#128205; Get Coordinates from Address
+        </button>
+        <span class="field-hint">Enter coordinates manually or click to auto-detect from address</span>
+      </div>`;
   } else {
     extraFields.innerHTML = '';
   }
@@ -4844,7 +5034,11 @@ async function saveArch(e) {
     if (cr) metadata.criticality = cr.value;
   } else if (archType === 'facility') {
     const addr = document.getElementById('arch-address');
+    const lat = document.getElementById('arch-latitude');
+    const lng = document.getElementById('arch-longitude');
     if (addr) metadata.address = addr.value;
+    if (lat && lat.value) metadata.latitude = parseFloat(lat.value);
+    if (lng && lng.value) metadata.longitude = parseFloat(lng.value);
   }
   const body = {
     arch_type: archType,

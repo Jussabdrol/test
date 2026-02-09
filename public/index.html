@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Let The Frame Work</title>
   <link rel="stylesheet" href="style.css">
+  <!-- Leaflet.js Map Library -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <!-- PDF Export libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
@@ -470,6 +473,33 @@
           </div>
           <div id="org-chart-container" class="org-chart-container">
             <div id="org-chart" class="org-chart"></div>
+          </div>
+        </div>
+        <!-- Facilities Map Section (only visible for Facilities tab) -->
+        <div id="facilities-map-section" class="facilities-map-section" style="display:none">
+          <div class="facilities-map-header">
+            <h3 class="section-title" style="margin:0;border:none;padding:0">
+              <span class="facilities-map-toggle" onclick="toggleFacilitiesMap()">
+                &#127759; Facility Locations
+                <span id="facilities-map-arrow" class="facilities-map-arrow">&#9660;</span>
+              </span>
+            </h3>
+            <div class="facilities-map-controls">
+              <button class="btn btn-secondary btn-sm" onclick="centerMapOnFacilities()" title="Fit all locations">&#127760; Fit All</button>
+              <button class="btn btn-secondary btn-sm" onclick="refreshFacilitiesMap()" title="Refresh map">&#8635; Refresh</button>
+            </div>
+          </div>
+          <div id="facilities-map-container" class="facilities-map-container">
+            <div id="facilities-map" class="facilities-map"></div>
+            <div id="facilities-map-legend" class="facilities-map-legend">
+              <div class="legend-item"><span class="legend-marker active"></span> Active</div>
+              <div class="legend-item"><span class="legend-marker planned"></span> Planned</div>
+              <div class="legend-item"><span class="legend-marker retired"></span> Retired</div>
+            </div>
+          </div>
+          <div id="facilities-map-empty" class="facilities-map-empty hidden">
+            <div class="map-empty-icon">&#128205;</div>
+            <div class="map-empty-text">No facility locations configured. Add coordinates to your facilities to see them on the map.</div>
           </div>
         </div>
         <div id="arch-list"></div>
