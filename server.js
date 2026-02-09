@@ -357,6 +357,33 @@ db.exec(`
     status TEXT DEFAULT 'completed' CHECK(status IN ('in_progress','completed','failed')),
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  -- SAML/SSO Configuration
+  CREATE TABLE IF NOT EXISTS saml_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER DEFAULT 0,
+    entity_id TEXT DEFAULT '',
+    sso_url TEXT DEFAULT '',
+    slo_url TEXT DEFAULT '',
+    certificate TEXT DEFAULT '',
+    name_id_format TEXT DEFAULT 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    attribute_mapping TEXT DEFAULT '{"email":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress","name":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/displayname","groups":"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"}',
+    auto_provision INTEGER DEFAULT 1,
+    default_role TEXT DEFAULT 'user',
+    allowed_domains TEXT DEFAULT '',
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  -- SAML Sessions
+  CREATE TABLE IF NOT EXISTS saml_sessions (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    name_id TEXT NOT NULL,
+    session_index TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
 `);
 
 // Seed default threat feeds if none exist
@@ -2473,6 +2500,309 @@ app.post('/api/admin/webhooks/:id/reset-failures', (req, res) => {
   db.prepare("UPDATE webhooks SET failure_count = 0 WHERE id = ?").run(req.params.id);
   res.json({ success: true });
 });
+
+// ===== SAML/SSO ENDPOINTS =====
+
+// Initialize SAML config if not exists
+db.prepare(`INSERT OR IGNORE INTO saml_config (id) VALUES (1)`).run();
+
+// Get SAML configuration
+app.get('/api/admin/saml/config', (req, res) => {
+  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+  // Don't expose the full certificate in the API response
+  if (config && config.certificate) {
+    config.has_certificate = config.certificate.length > 0;
+    config.certificate = config.certificate ? '[CONFIGURED]' : '';
+  }
+  res.json(config || {});
+});
+
+// Update SAML configuration
+app.put('/api/admin/saml/config', (req, res) => {
+  const {
+    enabled, entity_id, sso_url, slo_url, certificate,
+    name_id_format, attribute_mapping, auto_provision,
+    default_role, allowed_domains
+  } = req.body;
+
+  const current = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+
+  // Only update certificate if a new one is provided
+  const certToStore = certificate && certificate !== '[CONFIGURED]' ? certificate : (current?.certificate || '');
+
+  db.prepare(`
+    UPDATE saml_config SET
+      enabled = ?,
+      entity_id = ?,
+      sso_url = ?,
+      slo_url = ?,
+      certificate = ?,
+      name_id_format = ?,
+      attribute_mapping = ?,
+      auto_provision = ?,
+      default_role = ?,
+      allowed_domains = ?,
+      updated_at = datetime('now')
+    WHERE id = 1
+  `).run(
+    enabled ? 1 : 0,
+    entity_id || '',
+    sso_url || '',
+    slo_url || '',
+    certToStore,
+    name_id_format || 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    typeof attribute_mapping === 'object' ? JSON.stringify(attribute_mapping) : (attribute_mapping || '{}'),
+    auto_provision ? 1 : 0,
+    default_role || 'user',
+    allowed_domains || ''
+  );
+
+  logAuditAction(null, 'System', 'saml_config_updated', 'saml', 1, null, `Enabled: ${enabled}`);
+  res.json({ success: true });
+});
+
+// Generate Service Provider metadata
+app.get('/saml/metadata', (req, res) => {
+  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+  const metadata = `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="${baseUrl}/saml/metadata">
+  <md:SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:NameIDFormat>${config?.name_id_format || 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'}</md:NameIDFormat>
+    <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="${baseUrl}/saml/callback" index="0" isDefault="true"/>
+    <md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="${baseUrl}/saml/logout"/>
+  </md:SPSSODescriptor>
+  <md:Organization>
+    <md:OrganizationName xml:lang="en">Let The Frame Work</md:OrganizationName>
+    <md:OrganizationDisplayName xml:lang="en">Let The Frame Work</md:OrganizationDisplayName>
+    <md:OrganizationURL xml:lang="en">${baseUrl}</md:OrganizationURL>
+  </md:Organization>
+</md:EntityDescriptor>`;
+
+  res.set('Content-Type', 'application/xml');
+  res.send(metadata);
+});
+
+// Initiate SAML login
+app.get('/saml/login', (req, res) => {
+  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+
+  if (!config || !config.enabled) {
+    return res.status(400).json({ error: 'SAML SSO is not enabled' });
+  }
+
+  if (!config.sso_url || !config.entity_id) {
+    return res.status(400).json({ error: 'SAML is not properly configured' });
+  }
+
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const requestId = '_' + require('crypto').randomBytes(16).toString('hex');
+  const issueInstant = new Date().toISOString();
+
+  // Create SAML AuthnRequest
+  const authnRequest = `<?xml version="1.0" encoding="UTF-8"?>
+<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+    ID="${requestId}"
+    Version="2.0"
+    IssueInstant="${issueInstant}"
+    Destination="${config.sso_url}"
+    AssertionConsumerServiceURL="${baseUrl}/saml/callback"
+    ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">
+  <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">${baseUrl}/saml/metadata</saml:Issuer>
+  <samlp:NameIDPolicy Format="${config.name_id_format}" AllowCreate="true"/>
+</samlp:AuthnRequest>`;
+
+  // Base64 encode and create redirect URL
+  const encodedRequest = Buffer.from(authnRequest).toString('base64');
+  const redirectUrl = `${config.sso_url}?SAMLRequest=${encodeURIComponent(encodedRequest)}`;
+
+  res.redirect(redirectUrl);
+});
+
+// Handle SAML callback (Assertion Consumer Service)
+app.post('/saml/callback', express.urlencoded({ extended: true }), (req, res) => {
+  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+
+  if (!config || !config.enabled) {
+    return res.status(400).send('SAML SSO is not enabled');
+  }
+
+  try {
+    const samlResponse = req.body.SAMLResponse;
+    if (!samlResponse) {
+      return res.status(400).send('No SAML response received');
+    }
+
+    // Decode the SAML response
+    const decodedResponse = Buffer.from(samlResponse, 'base64').toString('utf8');
+
+    // Parse attribute mapping
+    let attrMap = {};
+    try { attrMap = JSON.parse(config.attribute_mapping || '{}'); } catch(e) {}
+
+    // Extract user info from SAML assertion (simplified parsing)
+    const emailMatch = decodedResponse.match(/<(?:saml:)?Attribute[^>]*Name="([^"]*email[^"]*)"[^>]*>[\s\S]*?<(?:saml:)?AttributeValue[^>]*>([^<]+)/i) ||
+                       decodedResponse.match(/<(?:saml:)?NameID[^>]*>([^<]+)/);
+    const nameMatch = decodedResponse.match(/<(?:saml:)?Attribute[^>]*Name="([^"]*(?:displayname|name|givenname)[^"]*)"[^>]*>[\s\S]*?<(?:saml:)?AttributeValue[^>]*>([^<]+)/i);
+
+    let email = emailMatch ? (emailMatch[2] || emailMatch[1]) : null;
+    let name = nameMatch ? nameMatch[2] : null;
+
+    if (!email) {
+      return res.status(400).send('Could not extract email from SAML response');
+    }
+
+    email = email.trim().toLowerCase();
+    name = name ? name.trim() : email.split('@')[0];
+
+    // Check allowed domains
+    if (config.allowed_domains) {
+      const allowedDomains = config.allowed_domains.split(',').map(d => d.trim().toLowerCase());
+      const userDomain = email.split('@')[1];
+      if (allowedDomains.length > 0 && allowedDomains[0] !== '' && !allowedDomains.includes(userDomain)) {
+        return res.status(403).send('Your domain is not allowed to access this application');
+      }
+    }
+
+    // Find or create user
+    let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+
+    if (!user && config.auto_provision) {
+      // Create new user
+      const result = db.prepare(`
+        INSERT INTO users (name, email, role, permissions, status, sso_provider)
+        VALUES (?, ?, ?, ?, 'active', 'saml')
+      `).run(name, email, config.default_role || 'user', JSON.stringify(['org', 'risk', 'ops', 'audit']));
+
+      user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+      logAuditAction(user.id, user.name, 'user_provisioned_saml', 'user', user.id, user.name);
+    } else if (!user) {
+      return res.status(403).send('User not found and auto-provisioning is disabled');
+    } else {
+      // Update last login
+      db.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?").run(user.id);
+    }
+
+    // Create session
+    const sessionId = require('crypto').randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
+
+    db.prepare(`
+      INSERT INTO saml_sessions (id, user_id, name_id, expires_at)
+      VALUES (?, ?, ?, ?)
+    `).run(sessionId, user.id, email, expiresAt);
+
+    logAuditAction(user.id, user.name, 'saml_login', 'user', user.id, user.name);
+
+    // Redirect to app with session token
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>SSO Login</title></head>
+      <body>
+        <script>
+          localStorage.setItem('saml_session', '${sessionId}');
+          localStorage.setItem('saml_user', '${Buffer.from(JSON.stringify({ id: user.id, name: user.name, email: user.email, role: user.role })).toString('base64')}');
+          window.location.href = '/';
+        </script>
+        <p>Logging you in...</p>
+      </body>
+      </html>
+    `);
+
+  } catch (err) {
+    console.error('SAML callback error:', err);
+    res.status(500).send('Error processing SAML response: ' + err.message);
+  }
+});
+
+// SAML logout
+app.get('/saml/logout', (req, res) => {
+  const sessionId = req.query.session;
+  if (sessionId) {
+    const session = db.prepare('SELECT * FROM saml_sessions WHERE id = ?').get(sessionId);
+    if (session) {
+      db.prepare('DELETE FROM saml_sessions WHERE id = ?').run(sessionId);
+      logAuditAction(session.user_id, 'User', 'saml_logout', 'user', session.user_id, session.name_id);
+    }
+  }
+  res.redirect('/');
+});
+
+// Validate SAML session
+app.get('/api/auth/session', (req, res) => {
+  const sessionId = req.headers['x-saml-session'];
+  if (!sessionId) {
+    return res.json({ authenticated: false });
+  }
+
+  const session = db.prepare(`
+    SELECT s.*, u.name, u.email, u.role, u.permissions
+    FROM saml_sessions s
+    JOIN users u ON s.user_id = u.id
+    WHERE s.id = ? AND s.expires_at > datetime('now')
+  `).get(sessionId);
+
+  if (!session) {
+    return res.json({ authenticated: false });
+  }
+
+  res.json({
+    authenticated: true,
+    user: {
+      id: session.user_id,
+      name: session.name,
+      email: session.email,
+      role: session.role,
+      permissions: JSON.parse(session.permissions || '[]')
+    }
+  });
+});
+
+// Test SAML configuration
+app.post('/api/admin/saml/test', (req, res) => {
+  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+
+  const issues = [];
+  if (!config.entity_id) issues.push('Identity Provider Entity ID is not configured');
+  if (!config.sso_url) issues.push('SSO URL is not configured');
+  if (!config.certificate) issues.push('IdP Certificate is not configured');
+
+  if (issues.length > 0) {
+    return res.json({ success: false, issues });
+  }
+
+  // Validate certificate format
+  if (!config.certificate.includes('BEGIN CERTIFICATE')) {
+    issues.push('Certificate does not appear to be in PEM format');
+  }
+
+  // Validate URL format
+  try {
+    new URL(config.sso_url);
+  } catch {
+    issues.push('SSO URL is not a valid URL');
+  }
+
+  if (issues.length > 0) {
+    return res.json({ success: false, issues });
+  }
+
+  res.json({
+    success: true,
+    message: 'SAML configuration appears valid. Test login to verify full functionality.',
+    metadata_url: `${req.protocol}://${req.get('host')}/saml/metadata`,
+    callback_url: `${req.protocol}://${req.get('host')}/saml/callback`
+  });
+});
+
+// Add sso_provider column to users if not exists
+try {
+  db.prepare("SELECT sso_provider FROM users LIMIT 1").get();
+} catch {
+  db.prepare("ALTER TABLE users ADD COLUMN sso_provider TEXT DEFAULT ''").run();
+}
 
 // Seed default admin user if none exist
 const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;

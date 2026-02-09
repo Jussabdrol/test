@@ -5888,6 +5888,140 @@ async function loadAdminIntegrations() {
       </div>
     `;
   }
+
+  // Load SAML configuration
+  loadSamlConfig();
+}
+
+// --- SAML/SSO Functions ---
+async function loadSamlConfig() {
+  const config = await api('/api/admin/saml/config');
+  const baseUrl = window.location.origin;
+
+  // Update SP info
+  document.getElementById('sp-entity-id').textContent = `${baseUrl}/saml/metadata`;
+  document.getElementById('sp-acs-url').textContent = `${baseUrl}/saml/callback`;
+  document.getElementById('sp-metadata-url').textContent = `${baseUrl}/saml/metadata`;
+
+  // Update status
+  const statusIndicator = document.querySelector('#saml-status .status-indicator');
+  const statusText = document.querySelector('#saml-status .status-text');
+  const enabledCheckbox = document.getElementById('saml-enabled');
+
+  if (config.enabled) {
+    statusIndicator.className = 'status-indicator enabled';
+    statusText.textContent = 'SSO Enabled';
+    enabledCheckbox.checked = true;
+  } else {
+    statusIndicator.className = 'status-indicator disabled';
+    statusText.textContent = 'SSO Disabled';
+    enabledCheckbox.checked = false;
+  }
+
+  // Populate form fields
+  document.getElementById('saml-entity-id').value = config.entity_id || '';
+  document.getElementById('saml-sso-url').value = config.sso_url || '';
+  document.getElementById('saml-slo-url').value = config.slo_url || '';
+  document.getElementById('saml-certificate').value = config.certificate || '';
+  document.getElementById('saml-auto-provision').checked = config.auto_provision !== 0;
+  document.getElementById('saml-default-role').value = config.default_role || 'user';
+  document.getElementById('saml-allowed-domains').value = config.allowed_domains || '';
+
+  // Show certificate placeholder if configured
+  if (config.has_certificate) {
+    document.getElementById('saml-certificate').placeholder = '[Certificate configured - enter new to replace]';
+  }
+}
+
+function toggleSamlEnabled() {
+  const enabled = document.getElementById('saml-enabled').checked;
+  const statusIndicator = document.querySelector('#saml-status .status-indicator');
+  const statusText = document.querySelector('#saml-status .status-text');
+
+  if (enabled) {
+    statusIndicator.className = 'status-indicator enabled';
+    statusText.textContent = 'SSO Enabled';
+  } else {
+    statusIndicator.className = 'status-indicator disabled';
+    statusText.textContent = 'SSO Disabled';
+  }
+}
+
+async function saveSamlConfig() {
+  const config = {
+    enabled: document.getElementById('saml-enabled').checked,
+    entity_id: document.getElementById('saml-entity-id').value,
+    sso_url: document.getElementById('saml-sso-url').value,
+    slo_url: document.getElementById('saml-slo-url').value,
+    certificate: document.getElementById('saml-certificate').value,
+    auto_provision: document.getElementById('saml-auto-provision').checked,
+    default_role: document.getElementById('saml-default-role').value,
+    allowed_domains: document.getElementById('saml-allowed-domains').value
+  };
+
+  // Validate required fields if enabled
+  if (config.enabled) {
+    if (!config.entity_id || !config.sso_url) {
+      alert('Please fill in the required IdP Entity ID and SSO URL fields.');
+      return;
+    }
+  }
+
+  try {
+    await api('/api/admin/saml/config', { method: 'PUT', body: config });
+    alert('SAML configuration saved successfully!');
+    loadSamlConfig();
+  } catch (err) {
+    alert('Failed to save SAML configuration: ' + err.message);
+  }
+}
+
+async function testSamlConfig() {
+  const resultEl = document.getElementById('saml-test-result');
+  resultEl.classList.remove('hidden');
+  resultEl.className = 'saml-test-result loading';
+  resultEl.innerHTML = '<span>&#8987;</span> Testing configuration...';
+
+  try {
+    const result = await api('/api/admin/saml/test', { method: 'POST' });
+
+    if (result.success) {
+      resultEl.className = 'saml-test-result success';
+      resultEl.innerHTML = `
+        <div class="test-success">
+          <span>&#9989;</span> ${esc(result.message)}
+        </div>
+        <div class="test-urls">
+          <div><strong>Metadata URL:</strong> <code>${esc(result.metadata_url)}</code></div>
+          <div><strong>Callback URL:</strong> <code>${esc(result.callback_url)}</code></div>
+        </div>
+        <a href="/saml/login" target="_blank" class="btn btn-primary btn-sm" style="margin-top:12px">&#128274; Test SSO Login</a>
+      `;
+    } else {
+      resultEl.className = 'saml-test-result error';
+      resultEl.innerHTML = `
+        <div class="test-error">
+          <span>&#10060;</span> Configuration issues found:
+        </div>
+        <ul class="test-issues">
+          ${result.issues.map(i => `<li>${esc(i)}</li>`).join('')}
+        </ul>
+      `;
+    }
+  } catch (err) {
+    resultEl.className = 'saml-test-result error';
+    resultEl.innerHTML = `<span>&#10060;</span> Test failed: ${esc(err.message)}`;
+  }
+}
+
+function copySamlField(fieldId) {
+  const text = document.getElementById(fieldId).textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector(`#${fieldId} + .btn-copy`);
+    const originalHtml = btn.innerHTML;
+    btn.innerHTML = '&#9989;';
+    setTimeout(() => btn.innerHTML = originalHtml, 1500);
+  });
 }
 
 function generateApiKey() {

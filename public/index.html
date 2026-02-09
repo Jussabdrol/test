@@ -828,6 +828,117 @@
           <button class="btn btn-secondary" onclick="openWebhookModal()" style="margin-top:12px">+ Add Webhook</button>
         </div>
 
+        <!-- SAML/SSO Configuration -->
+        <div class="integration-section" style="margin-top:28px">
+          <h3 class="section-title">&#128274; Single Sign-On (SAML 2.0)</h3>
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Enable SAML-based Single Sign-On to allow users to authenticate via Microsoft Entra ID, Okta, or other identity providers.</p>
+
+          <div class="saml-config-card" id="saml-config-card">
+            <div class="saml-header">
+              <div class="saml-status" id="saml-status">
+                <span class="status-indicator disabled"></span>
+                <span class="status-text">SSO Disabled</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="saml-enabled" onchange="toggleSamlEnabled()">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="saml-config-body" id="saml-config-body">
+              <!-- Service Provider Info -->
+              <div class="saml-sp-info">
+                <h4>Service Provider (SP) Information</h4>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Provide these URLs to your Identity Provider when configuring the SAML application.</p>
+                <div class="sp-info-grid">
+                  <div class="sp-info-item">
+                    <label>Entity ID / Audience URI</label>
+                    <div class="copy-field">
+                      <code id="sp-entity-id"></code>
+                      <button class="btn-copy" onclick="copySamlField('sp-entity-id')" title="Copy">&#128203;</button>
+                    </div>
+                  </div>
+                  <div class="sp-info-item">
+                    <label>ACS URL (Reply URL)</label>
+                    <div class="copy-field">
+                      <code id="sp-acs-url"></code>
+                      <button class="btn-copy" onclick="copySamlField('sp-acs-url')" title="Copy">&#128203;</button>
+                    </div>
+                  </div>
+                  <div class="sp-info-item">
+                    <label>Metadata URL</label>
+                    <div class="copy-field">
+                      <code id="sp-metadata-url"></code>
+                      <button class="btn-copy" onclick="copySamlField('sp-metadata-url')" title="Copy">&#128203;</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Identity Provider Config -->
+              <div class="saml-idp-config">
+                <h4>Identity Provider (IdP) Configuration</h4>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Enter the details from your Identity Provider (e.g., Microsoft Entra ID, Okta).</p>
+
+                <div class="form-group">
+                  <label for="saml-entity-id">IdP Entity ID *</label>
+                  <input type="text" id="saml-entity-id" placeholder="https://sts.windows.net/{tenant-id}/">
+                </div>
+
+                <div class="form-group">
+                  <label for="saml-sso-url">SSO URL (Login URL) *</label>
+                  <input type="url" id="saml-sso-url" placeholder="https://login.microsoftonline.com/{tenant-id}/saml2">
+                </div>
+
+                <div class="form-group">
+                  <label for="saml-slo-url">SLO URL (Logout URL)</label>
+                  <input type="url" id="saml-slo-url" placeholder="https://login.microsoftonline.com/{tenant-id}/saml2">
+                </div>
+
+                <div class="form-group">
+                  <label for="saml-certificate">IdP Certificate (PEM format) *</label>
+                  <textarea id="saml-certificate" rows="4" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
+                  <span class="field-hint">Paste the X.509 certificate from your IdP in PEM format</span>
+                </div>
+              </div>
+
+              <!-- User Provisioning -->
+              <div class="saml-provisioning">
+                <h4>User Provisioning</h4>
+
+                <div class="form-group toggle-row">
+                  <label for="saml-auto-provision">Auto-provision users on first login</label>
+                  <input type="checkbox" id="saml-auto-provision" class="toggle-checkbox" checked>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="saml-default-role">Default Role for New Users</label>
+                    <select id="saml-default-role">
+                      <option value="viewer">Viewer</option>
+                      <option value="user" selected>User</option>
+                      <option value="manager">Manager</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="saml-allowed-domains">Allowed Email Domains</label>
+                    <input type="text" id="saml-allowed-domains" placeholder="example.com, company.org">
+                    <span class="field-hint">Leave empty to allow all domains</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Actions -->
+              <div class="saml-actions">
+                <button class="btn btn-secondary" onclick="testSamlConfig()">&#128269; Test Configuration</button>
+                <button class="btn btn-primary" onclick="saveSamlConfig()">Save Configuration</button>
+              </div>
+
+              <div id="saml-test-result" class="saml-test-result hidden"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Connected Services -->
         <div class="integration-section" style="margin-top:28px">
           <h3 class="section-title">&#128268; Connected Services</h3>
