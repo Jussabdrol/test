@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 const multer = require('multer');
+const bcrypt = require('bcrypt');
+const session = require('express-session');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,6 +23,16 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
 app.use(express.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'lettheframework-secret-key-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(uploadsDir));
 
@@ -290,6 +302,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
+    password TEXT DEFAULT NULL,
     role TEXT DEFAULT 'user' CHECK(role IN ('viewer','user','manager','admin')),
     department TEXT DEFAULT '',
     permissions TEXT DEFAULT '["org","risk","ops","audit"]',
@@ -386,6 +399,29 @@ db.exec(`
   );
 `);
 
+// Migration: Add password column to users table if it doesn't exist
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN password TEXT DEFAULT NULL`);
+} catch (e) {
+  // Column already exists, ignore error
+}
+
+// Seed default admin user if no users with password exist
+const userWithPasswordCount = db.prepare('SELECT COUNT(*) as c FROM users WHERE password IS NOT NULL').get().c;
+if (userWithPasswordCount === 0) {
+  const bcryptSync = require('bcrypt');
+  const hashedPassword = bcryptSync.hashSync('Hey!', 10);
+  try {
+    db.prepare(`
+      INSERT INTO users (name, email, password, role, status)
+      VALUES (?, ?, ?, 'admin', 'active')
+    `).run('Henk', 'admin@lettheframework.local', hashedPassword);
+    console.log('Default admin user created: admin@lettheframework.local');
+  } catch (e) {
+    // User might already exist
+  }
+}
+
 // Seed default threat feeds if none exist
 const feedCount = db.prepare('SELECT COUNT(*) as c FROM threat_feeds').get().c;
 if (feedCount === 0) {
@@ -472,6 +508,140 @@ function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth)
   }
   return d.toISOString().split('T')[0];
 }
+
+// --- Authentication Routes ---
+
+// Serve login page
+app.get('/login', (req, res) => {
+  if (req.session.userId) {
+    return res.redirect('/');
+  }
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// Check if user is authenticated
+app.get('/api/auth/check', (req, res) => {
+  if (req.session.userId) {
+    const user = db.prepare('SELECT id, name, email, role, permissions FROM users WHERE id = ?').get(req.session.userId);
+    if (user) {
+      return res.json({ authenticated: true, user });
+    }
+  }
+  res.json({ authenticated: false });
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE email = ? AND status = ?').get(email, 'active');
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    if (!user.password) {
+      return res.status(401).json({ error: 'Account not set up. Please contact administrator.' });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Update last active
+    db.prepare('UPDATE users SET last_active = datetime("now") WHERE id = ?').run(user.id);
+
+    req.session.userId = user.id;
+    req.session.userRole = user.role;
+
+    res.json({
+      success: true,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, permissions: user.permissions }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Register (first user becomes admin)
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    // Check if any users exist
+    const userCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE password IS NOT NULL').get().count;
+    const role = userCount === 0 ? 'admin' : 'user';
+
+    // Check if email already exists
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    if (existing) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const result = db.prepare(`
+      INSERT INTO users (name, email, password, role, status)
+      VALUES (?, ?, ?, ?, 'active')
+    `).run(name, email, hashedPassword, role);
+
+    req.session.userId = result.lastInsertRowid;
+    req.session.userRole = role;
+
+    res.json({
+      success: true,
+      user: { id: result.lastInsertRowid, name, email, role },
+      isFirstUser: userCount === 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({ error: 'Logout failed' });
+    }
+    res.json({ success: true });
+  });
+});
+
+// Auth middleware for API routes
+const requireAuth = (req, res, next) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  next();
+};
+
+// Apply auth middleware to all /api routes except auth routes
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth/')) {
+    return next();
+  }
+  requireAuth(req, res, next);
+});
+
+// Protect main app - redirect to login if not authenticated
+app.get('/', (req, res, next) => {
+  if (!req.session.userId) {
+    return res.redirect('/login');
+  }
+  next();
+});
 
 // --- API Routes ---
 

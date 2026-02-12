@@ -7,6 +7,37 @@ let actionFilters = { status: 'open' };
 let yearlyYear = new Date().getFullYear();
 let lastCompletionContext = null; // { completion_id, task_id }
 let yearlyData = null; // cached yearly API data
+let currentUser = null;
+
+// --- Authentication ---
+async function loadCurrentUser() {
+  try {
+    const res = await fetch('/api/auth/check');
+    const data = await res.json();
+    if (data.authenticated && data.user) {
+      currentUser = data.user;
+      const nameEl = document.getElementById('user-name');
+      if (nameEl) nameEl.textContent = data.user.name;
+    }
+  } catch (err) {
+    console.error('Failed to load user info:', err);
+  }
+}
+
+async function logout() {
+  try {
+    const res = await fetch('/api/auth/logout', { method: 'POST' });
+    if (res.ok) {
+      window.location.href = '/login';
+    }
+  } catch (err) {
+    console.error('Logout failed:', err);
+    window.location.href = '/login';
+  }
+}
+
+// Load user on page load
+loadCurrentUser();
 
 // --- Sidebar Toggle ---
 function toggleSidebar() {
