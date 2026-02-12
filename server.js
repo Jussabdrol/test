@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 const multer = require('multer');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const session = require('express-session');
 
 const app = express();
@@ -442,7 +442,7 @@ try {
 // Seed default admin user if no users with password exist
 const userWithPasswordCount = db.prepare('SELECT COUNT(*) as c FROM users WHERE password IS NOT NULL').get().c;
 if (userWithPasswordCount === 0) {
-  const bcryptSync = require('bcrypt');
+  const bcryptSync = require('bcryptjs');
   const hashedPassword = bcryptSync.hashSync('Hey!', 10);
   try {
     db.prepare(`
