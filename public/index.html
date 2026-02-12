@@ -88,20 +88,20 @@
           </ul>
         </li>
       </ul>
-      <div class="user-section">
-        <div class="user-info" id="user-info">
-          <span class="user-icon">&#128100;</span>
-          <span class="user-name" id="user-name">User</span>
-        </div>
-        <button class="logout-btn" onclick="logout()" title="Sign out">
-          &#x2190; Sign Out
-        </button>
-      </div>
       <button class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse sidebar">
         &#9776;
         <span class="sidebar-toggle-label">Collapse</span>
       </button>
     </nav>
+
+    <!-- User Widget - Top Right -->
+    <div class="user-widget" id="user-widget">
+      <div class="user-widget-info">
+        <span class="user-widget-icon">&#128100;</span>
+        <span class="user-widget-name" id="user-name">User</span>
+      </div>
+      <button class="user-widget-logout" onclick="logout()" title="Sign out">Sign Out</button>
+    </div>
 
     <main class="content">
       <!-- Dashboard View -->

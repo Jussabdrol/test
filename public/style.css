@@ -91,44 +91,60 @@ body {
 .sidebar.collapsed .sidebar-toggle { justify-content: center; padding: 10px 0; }
 .sidebar.collapsed .sidebar-toggle:hover { transform: none; }
 .sidebar-toggle-label { font-size: 13px; font-weight: 500; }
-.user-section {
-  padding: 16px;
-  border-top: 1px solid rgba(255,255,255,0.1);
-  margin-top: auto;
-}
-.user-info {
+
+/* User Widget - Top Right */
+.user-widget {
+  position: fixed;
+  top: 16px;
+  right: 24px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--sidebar-text);
-  margin-bottom: 10px;
-  padding: 8px;
-  border-radius: var(--radius-sm);
-  background: rgba(255,255,255,0.05);
+  gap: 12px;
+  background: #fff;
+  padding: 8px 16px;
+  border-radius: 24px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+  z-index: 1000;
 }
-.user-icon { font-size: 20px; }
-.user-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.logout-btn {
+.user-widget-info {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 10px 12px;
+}
+.user-widget-icon {
+  font-size: 18px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #4361ee 0%, #3a0ca3 100%);
+  border-radius: 50%;
+}
+.user-widget-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  max-width: 150px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-widget-logout {
+  padding: 6px 14px;
   border: none;
-  border-radius: var(--radius-sm);
-  background: rgba(239, 68, 68, 0.2);
-  color: #fca5a5;
+  border-radius: 16px;
+  background: #fee2e2;
+  color: #dc2626;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
 }
-.logout-btn:hover { background: rgba(239, 68, 68, 0.3); }
-.sidebar.collapsed .user-section { padding: 12px 8px; }
-.sidebar.collapsed .user-info { justify-content: center; }
-.sidebar.collapsed .user-name { display: none; }
-.sidebar.collapsed .logout-btn { justify-content: center; font-size: 18px; }
-.sidebar.collapsed .logout-btn span:not(.logout-icon) { display: none; }
+.user-widget-logout:hover {
+  background: #fecaca;
+}
+
 .logo { display: flex; align-items: center; gap: 12px; margin-bottom: 36px; padding: 0 8px; }
 .logo-icon {
   font-size: 32px;

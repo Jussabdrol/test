@@ -33,6 +33,33 @@ app.use(session({
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
+
+// Auth middleware for static files - protect everything except login page
+app.use((req, res, next) => {
+  // Allow login page and its assets
+  if (req.path === '/login' || req.path === '/login.html' || req.path.startsWith('/api/auth/')) {
+    return next();
+  }
+  // Check authentication for all other routes
+  if (!req.session.userId) {
+    // For API requests, return 401
+    if (req.path.startsWith('/api/')) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    // For page requests, redirect to login
+    return res.redirect('/login');
+  }
+  next();
+});
+
+// Serve login page without auth
+app.get('/login', (req, res) => {
+  if (req.session.userId) {
+    return res.redirect('/');
+  }
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(uploadsDir));
 
@@ -511,14 +538,6 @@ function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth)
 
 // --- Authentication Routes ---
 
-// Serve login page
-app.get('/login', (req, res) => {
-  if (req.session.userId) {
-    return res.redirect('/');
-  }
-  res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
 // Check if user is authenticated
 app.get('/api/auth/check', (req, res) => {
   if (req.session.userId) {
@@ -567,48 +586,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Register (first user becomes admin)
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: 'Name, email, and password are required' });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    }
-
-    // Check if any users exist
-    const userCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE password IS NOT NULL').get().count;
-    const role = userCount === 0 ? 'admin' : 'user';
-
-    // Check if email already exists
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
-    if (existing) {
-      return res.status(400).json({ error: 'Email already registered' });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const result = db.prepare(`
-      INSERT INTO users (name, email, password, role, status)
-      VALUES (?, ?, ?, ?, 'active')
-    `).run(name, email, hashedPassword, role);
-
-    req.session.userId = result.lastInsertRowid;
-    req.session.userRole = role;
-
-    res.json({
-      success: true,
-      user: { id: result.lastInsertRowid, name, email, role },
-      isFirstUser: userCount === 0
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Registration failed' });
-  }
-});
-
 // Logout
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy((err) => {
@@ -617,30 +594,6 @@ app.post('/api/auth/logout', (req, res) => {
     }
     res.json({ success: true });
   });
-});
-
-// Auth middleware for API routes
-const requireAuth = (req, res, next) => {
-  if (!req.session.userId) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-  next();
-};
-
-// Apply auth middleware to all /api routes except auth routes
-app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth/')) {
-    return next();
-  }
-  requireAuth(req, res, next);
-});
-
-// Protect main app - redirect to login if not authenticated
-app.get('/', (req, res, next) => {
-  if (!req.session.userId) {
-    return res.redirect('/login');
-  }
-  next();
 });
 
 // --- API Routes ---

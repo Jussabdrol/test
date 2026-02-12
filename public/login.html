@@ -26,7 +26,7 @@
       border-radius: 12px;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
       width: 100%;
-      max-width: 420px;
+      max-width: 400px;
       overflow: hidden;
     }
 
@@ -56,39 +56,6 @@
 
     .login-form {
       padding: 40px 30px;
-    }
-
-    .tabs {
-      display: flex;
-      margin-bottom: 30px;
-      border-bottom: 2px solid #e9ecef;
-    }
-
-    .tab {
-      flex: 1;
-      padding: 12px;
-      background: none;
-      border: none;
-      font-size: 14px;
-      font-weight: 600;
-      color: #6c757d;
-      cursor: pointer;
-      transition: all 0.3s;
-      position: relative;
-    }
-
-    .tab.active {
-      color: #4361ee;
-    }
-
-    .tab.active::after {
-      content: '';
-      position: absolute;
-      bottom: -2px;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: #4361ee;
     }
 
     .form-group {
@@ -150,24 +117,6 @@
       display: none;
     }
 
-    .success-message {
-      background: #d1fae5;
-      color: #059669;
-      padding: 12px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      font-size: 14px;
-      display: none;
-    }
-
-    .form-panel {
-      display: none;
-    }
-
-    .form-panel.active {
-      display: block;
-    }
-
     .info-text {
       text-align: center;
       margin-top: 20px;
@@ -185,86 +134,36 @@
     </div>
 
     <div class="login-form">
-      <div class="tabs">
-        <button class="tab active" data-tab="login">Sign In</button>
-        <button class="tab" data-tab="register">Create Account</button>
-      </div>
-
       <div class="error-message" id="error-message"></div>
-      <div class="success-message" id="success-message"></div>
 
-      <!-- Login Form -->
-      <div class="form-panel active" id="login-panel">
-        <form id="login-form">
-          <div class="form-group">
-            <label for="login-email">Email</label>
-            <input type="email" id="login-email" name="email" required placeholder="Enter your email">
-          </div>
-          <div class="form-group">
-            <label for="login-password">Password</label>
-            <input type="password" id="login-password" name="password" required placeholder="Enter your password">
-          </div>
-          <button type="submit" class="btn">Sign In</button>
-        </form>
-      </div>
+      <form id="login-form">
+        <div class="form-group">
+          <label for="login-email">Email</label>
+          <input type="email" id="login-email" name="email" required placeholder="Enter your email">
+        </div>
+        <div class="form-group">
+          <label for="login-password">Password</label>
+          <input type="password" id="login-password" name="password" required placeholder="Enter your password">
+        </div>
+        <button type="submit" class="btn">Sign In</button>
+      </form>
 
-      <!-- Register Form -->
-      <div class="form-panel" id="register-panel">
-        <form id="register-form">
-          <div class="form-group">
-            <label for="register-name">Full Name</label>
-            <input type="text" id="register-name" name="name" required placeholder="Enter your name">
-          </div>
-          <div class="form-group">
-            <label for="register-email">Email</label>
-            <input type="email" id="register-email" name="email" required placeholder="Enter your email">
-          </div>
-          <div class="form-group">
-            <label for="register-password">Password</label>
-            <input type="password" id="register-password" name="password" required minlength="6" placeholder="Min 6 characters">
-          </div>
-          <button type="submit" class="btn">Create Account</button>
-        </form>
-        <p class="info-text">First user automatically becomes administrator</p>
-      </div>
+      <p class="info-text">Contact your administrator for account access</p>
     </div>
   </div>
 
   <script>
-    const tabs = document.querySelectorAll('.tab');
-    const panels = document.querySelectorAll('.form-panel');
     const errorMsg = document.getElementById('error-message');
-    const successMsg = document.getElementById('success-message');
-
-    // Tab switching
-    tabs.forEach(tab => {
-      tab.addEventListener('click', () => {
-        tabs.forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-
-        panels.forEach(p => p.classList.remove('active'));
-        document.getElementById(`${tab.dataset.tab}-panel`).classList.add('active');
-
-        errorMsg.style.display = 'none';
-        successMsg.style.display = 'none';
-      });
-    });
 
     function showError(msg) {
       errorMsg.textContent = msg;
       errorMsg.style.display = 'block';
-      successMsg.style.display = 'none';
     }
 
-    function showSuccess(msg) {
-      successMsg.textContent = msg;
-      successMsg.style.display = 'block';
-      errorMsg.style.display = 'none';
-    }
-
-    // Login form
     document.getElementById('login-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      errorMsg.style.display = 'none';
+
       const email = document.getElementById('login-email').value;
       const password = document.getElementById('login-password').value;
 
@@ -280,38 +179,6 @@
           window.location.href = '/';
         } else {
           showError(data.error || 'Login failed');
-        }
-      } catch (err) {
-        showError('Connection error. Please try again.');
-      }
-    });
-
-    // Register form
-    document.getElementById('register-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const name = document.getElementById('register-name').value;
-      const email = document.getElementById('register-email').value;
-      const password = document.getElementById('register-password').value;
-
-      try {
-        const res = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email, password })
-        });
-
-        const data = await res.json();
-        if (res.ok) {
-          if (data.isFirstUser) {
-            showSuccess('Admin account created! Redirecting...');
-          } else {
-            showSuccess('Account created! Redirecting...');
-          }
-          setTimeout(() => {
-            window.location.href = '/';
-          }, 1500);
-        } else {
-          showError(data.error || 'Registration failed');
         }
       } catch (err) {
         showError('Connection error. Please try again.');
