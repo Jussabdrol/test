@@ -23,13 +23,19 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
 app.use(express.json());
+
+// Trust proxy for Cloud Run (needed for secure cookies behind load balancer)
+app.set('trust proxy', 1);
+
 app.use(session({
   secret: process.env.SESSION_SECRET || 'lettheframework-secret-key-change-in-production',
   resave: false,
   saveUninitialized: false,
+  proxy: true,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: 'auto', // Automatically use secure cookies when HTTPS is detected
     httpOnly: true,
+    sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
