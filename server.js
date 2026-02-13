@@ -583,7 +583,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Update last active
-    db.prepare('UPDATE users SET last_active = datetime("now") WHERE id = ?').run(user.id);
+    db.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?").run(user.id);
 
     req.session.userId = user.id;
     req.session.userRole = user.role;
