@@ -40,10 +40,15 @@ app.use(session({
   }
 }));
 
+// Health check endpoint for Cloud Run (must be before auth middleware)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
 // Auth middleware for static files - protect everything except login page
 app.use((req, res, next) => {
-  // Allow login page and its assets
-  if (req.path === '/login' || req.path === '/login.html' || req.path.startsWith('/api/auth/')) {
+  // Allow login page, health check, and auth endpoints
+  if (req.path === '/login' || req.path === '/login.html' || req.path === '/health' || req.path.startsWith('/api/auth/')) {
     return next();
   }
   // Check authentication for all other routes
@@ -583,11 +588,19 @@ app.post('/api/auth/login', async (req, res) => {
     req.session.userId = user.id;
     req.session.userRole = user.role;
 
-    res.json({
-      success: true,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, permissions: user.permissions }
+    // Explicitly save session to ensure it's persisted before responding
+    req.session.save((saveErr) => {
+      if (saveErr) {
+        console.error('Session save error:', saveErr);
+        return res.status(500).json({ error: 'Session could not be saved' });
+      }
+      res.json({
+        success: true,
+        user: { id: user.id, name: user.name, email: user.email, role: user.role, permissions: user.permissions }
+      });
     });
   } catch (err) {
+    console.error('Login error:', err);
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -2945,6 +2958,21 @@ if (userCount === 0) {
 // SPA fallback
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Global error handler - must be last middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err.stack || err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled rejection at:', promise, 'reason:', reason);
 });
 
 app.listen(PORT, () => {
