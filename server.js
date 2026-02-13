@@ -41,7 +41,7 @@ app.use(session({
 }));
 
 // Health check endpoint for Cloud Run (must be before auth middleware)
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
@@ -64,7 +64,7 @@ app.use((req, res, next) => {
 });
 
 // Serve login page without auth
-app.get('/login', (req, res) => {
+app.get('/login', async (req, res) => {
   if (req.session.userId) {
     return res.redirect('/');
   }
@@ -112,9 +112,9 @@ function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth)
 // --- Authentication Routes ---
 
 // Check if user is authenticated
-app.get('/api/auth/check', (req, res) => {
+app.get('/api/auth/check', async (req, res) => {
   if (req.session.userId) {
-    const user = db.prepare('SELECT id, name, email, role, permissions FROM users WHERE id = ?').get(req.session.userId);
+    const user = await db.prepare('SELECT id, name, email, role, permissions FROM users WHERE id = ?').get(req.session.userId);
     if (user) {
       return res.json({ authenticated: true, user });
     }
@@ -130,7 +130,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE email = ? AND status = ?').get(email, 'active');
+    const user = await db.prepare('SELECT * FROM users WHERE email = ? AND status = ?').get(email, 'active');
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -145,7 +145,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Update last active
-    db.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?").run(user.id);
+    await db.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?").run(user.id);
 
     req.session.userId = user.id;
     req.session.userRole = user.role;
@@ -168,7 +168,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Logout
-app.post('/api/auth/logout', (req, res) => {
+app.post('/api/auth/logout', async (req, res) => {
   req.session.destroy((err) => {
     if (err) {
       return res.status(500).json({ error: 'Logout failed' });
@@ -180,7 +180,7 @@ app.post('/api/auth/logout', (req, res) => {
 // --- API Routes ---
 
 // Get all tasks with optional filters
-app.get('/api/tasks', (req, res) => {
+app.get('/api/tasks', async (req, res) => {
   const { active, assignee, category, priority, overdue } = req.query;
   let sql = 'SELECT * FROM tasks WHERE 1=1';
   const params = [];
@@ -206,45 +206,45 @@ app.get('/api/tasks', (req, res) => {
   }
 
   sql += ' ORDER BY next_due ASC';
-  const tasks = db.prepare(sql).all(...params);
+  const tasks = await db.prepare(sql).all(...params);
   res.json(tasks);
 });
 
 // Get dashboard stats
-app.get('/api/dashboard', (req, res) => {
+app.get('/api/dashboard', async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
   const stats = {
-    totalActive: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1').get().c,
-    dueToday: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due = ?').get(today).c,
-    overdue: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due < ?').get(today).c,
-    completedThisWeek: db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-7 days')`).get().c,
-    completedThisMonth: db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-30 days')`).get().c,
-    byCategory: db.prepare('SELECT category, COUNT(*) as count FROM tasks WHERE is_active = 1 GROUP BY category').all(),
-    byPriority: db.prepare('SELECT priority, COUNT(*) as count FROM tasks WHERE is_active = 1 GROUP BY priority').all(),
-    byAssignee: db.prepare("SELECT assignee, COUNT(*) as count FROM tasks WHERE is_active = 1 AND assignee != '' GROUP BY assignee").all(),
-    upcomingTasks: db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due >= ? ORDER BY next_due ASC LIMIT 10').all(today),
-    overdueTasks: db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due < ? ORDER BY next_due ASC').all(today),
-    openActions: db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress')").get().c,
-    overdueActions: db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress') AND due_date < ? AND due_date IS NOT NULL").get(today).c,
+    totalActive: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1').get()).c,
+    dueToday: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due = ?').get(today)).c,
+    overdue: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due < ?').get(today)).c,
+    completedThisWeek: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-7 days')`).get()).c,
+    completedThisMonth: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-30 days')`).get()).c,
+    byCategory: await db.prepare('SELECT category, COUNT(*) as count FROM tasks WHERE is_active = 1 GROUP BY category').all(),
+    byPriority: await db.prepare('SELECT priority, COUNT(*) as count FROM tasks WHERE is_active = 1 GROUP BY priority').all(),
+    byAssignee: await db.prepare("SELECT assignee, COUNT(*) as count FROM tasks WHERE is_active = 1 AND assignee != '' GROUP BY assignee").all(),
+    upcomingTasks: await db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due >= ? ORDER BY next_due ASC LIMIT 10').all(today),
+    overdueTasks: await db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due < ? ORDER BY next_due ASC').all(today),
+    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress')").get()).c,
+    overdueActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress') AND due_date < ? AND due_date IS NOT NULL").get(today)).c,
   };
 
   // KPI: Actions per check
-  const totalCompletions = db.prepare('SELECT COUNT(*) as c FROM completions').get().c;
-  const totalActionsAll = db.prepare('SELECT COUNT(*) as c FROM actions').get().c;
+  const totalCompletions = (await db.prepare('SELECT COUNT(*) as c FROM completions').get()).c;
+  const totalActionsAll = (await db.prepare('SELECT COUNT(*) as c FROM actions').get()).c;
   stats.actionsPerCheck = totalCompletions > 0 ? +(totalActionsAll / totalCompletions).toFixed(2) : 0;
   stats.totalCompletions = totalCompletions;
   stats.totalActionsCount = totalActionsAll;
 
   // Actions per check this month vs last month
-  const actionsThisMonth = db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month')").get().c;
-  const completionsThisMonth = db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month')").get().c;
-  const actionsLastMonth = db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month','-1 month') AND created_at < date('now','start of month')").get().c;
-  const completionsLastMonth = db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month','-1 month') AND completed_at < date('now','start of month')").get().c;
+  const actionsThisMonth = (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month')").get()).c;
+  const completionsThisMonth = (await db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month')").get()).c;
+  const actionsLastMonth = (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month','-1 month') AND created_at < date('now','start of month')").get()).c;
+  const completionsLastMonth = (await db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month','-1 month') AND completed_at < date('now','start of month')").get()).c;
   stats.actionsPerCheckThisMonth = completionsThisMonth > 0 ? +(actionsThisMonth / completionsThisMonth).toFixed(2) : 0;
   stats.actionsPerCheckLastMonth = completionsLastMonth > 0 ? +(actionsLastMonth / completionsLastMonth).toFixed(2) : 0;
 
   // KPI: On-time completion trend (last 30 days vs previous 30 days)
-  const allTasks = db.prepare('SELECT id, recurrence, custom_days FROM tasks').all();
+  const allTasks = await db.prepare('SELECT id, recurrence, custom_days FROM tasks').all();
   const taskRecMap = {};
   for (const t of allTasks) taskRecMap[t.id] = t;
 
@@ -256,8 +256,8 @@ app.get('/api/dashboard', (req, res) => {
     }
   }
 
-  const recent30 = db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-30 days') ORDER BY completed_at ASC").all();
-  const prev30 = db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-60 days') AND completed_at < date('now','-30 days') ORDER BY completed_at ASC").all();
+  const recent30 = await db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-30 days') ORDER BY completed_at ASC").all();
+  const prev30 = await db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-60 days') AND completed_at < date('now','-30 days') ORDER BY completed_at ASC").all();
 
   function calcOnTimeRate(completions) {
     if (completions.length === 0) return null;
@@ -289,22 +289,22 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 // Get single task with completion history
-app.get('/api/tasks/:id', (req, res) => {
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+app.get('/api/tasks/:id', async (req, res) => {
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
-  const completions = db.prepare('SELECT * FROM completions WHERE task_id = ? ORDER BY completed_at DESC LIMIT 20').all(req.params.id);
+  const completions = await db.prepare('SELECT * FROM completions WHERE task_id = ? ORDER BY completed_at DESC LIMIT 20').all(req.params.id);
   res.json({ ...task, completions });
 });
 
 // Create task
-app.post('/api/tasks', (req, res) => {
+app.post('/api/tasks', async (req, res) => {
   const { title, description, assignee, category, priority, recurrence, custom_days, day_of_week, day_of_month, start_date } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
 
   const startDt = start_date || new Date().toISOString().split('T')[0];
   const nextDue = startDt;
 
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO tasks (title, description, assignee, category, priority, recurrence, custom_days, day_of_week, day_of_month, start_date, next_due)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -321,13 +321,13 @@ app.post('/api/tasks', (req, res) => {
     nextDue
   );
 
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(task);
 });
 
 // Update task
-app.put('/api/tasks/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+app.put('/api/tasks/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Task not found' });
 
   const fields = ['title', 'description', 'assignee', 'category', 'priority', 'recurrence', 'custom_days', 'day_of_week', 'day_of_month', 'start_date', 'next_due', 'is_active'];
@@ -345,38 +345,38 @@ app.put('/api/tasks/:id', (req, res) => {
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
 
-  db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  await db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   res.json(task);
 });
 
 // Complete a task (mark done + advance next_due)
-app.post('/api/tasks/:id/complete', (req, res) => {
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+app.post('/api/tasks/:id/complete', async (req, res) => {
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
-  const completionResult = db.prepare('INSERT INTO completions (task_id, completed_by, notes) VALUES (?, ?, ?)').run(
+  const completionResult = await db.prepare('INSERT INTO completions (task_id, completed_by, notes) VALUES (?, ?, ?)').run(
     task.id,
     req.body.completed_by || '',
     req.body.notes || ''
   );
 
   const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
-  db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ?").run(nextDue, task.id);
+  await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ?").run(nextDue, task.id);
 
-  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  const updated = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
   res.json({ ...updated, completion_id: completionResult.lastInsertRowid });
 });
 
 // Delete task
-app.delete('/api/tasks/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+app.delete('/api/tasks/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Task not found' });
   res.json({ success: true });
 });
 
 // Get completion history
-app.get('/api/completions', (req, res) => {
+app.get('/api/completions', async (req, res) => {
   const { task_id, limit } = req.query;
   let sql = `SELECT c.*, t.title as task_title,
     (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id) as action_count,
@@ -389,24 +389,24 @@ app.get('/api/completions', (req, res) => {
   }
   sql += ' ORDER BY c.completed_at DESC LIMIT ?';
   params.push(parseInt(limit) || 50);
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.prepare(sql).all(...params));
 });
 
 // Get unique assignees and categories for filters
-app.get('/api/meta', (req, res) => {
-  const assignees = db.prepare("SELECT DISTINCT assignee FROM tasks WHERE assignee != '' ORDER BY assignee").all().map(r => r.assignee);
-  const categories = db.prepare('SELECT DISTINCT category FROM tasks ORDER BY category').all().map(r => r.category);
+app.get('/api/meta', async (req, res) => {
+  const assignees = (await db.prepare("SELECT DISTINCT assignee FROM tasks WHERE assignee != '' ORDER BY assignee").all()).map(r => r.assignee);
+  const categories = (await db.prepare('SELECT DISTINCT category FROM tasks ORDER BY category').all()).map(r => r.category);
   res.json({ assignees, categories });
 });
 
 // Get yearly plan data (all due dates + completions for a year)
-app.get('/api/yearly', (req, res) => {
+app.get('/api/yearly', async (req, res) => {
   const year = parseInt(req.query.year) || new Date().getFullYear();
   const startDate = `${year}-01-01`;
   const endDate = `${year}-12-31`;
 
   // Get all active tasks and project their due dates across the year
-  const tasks = db.prepare('SELECT * FROM tasks WHERE is_active = 1').all();
+  const tasks = await db.prepare('SELECT * FROM tasks WHERE is_active = 1').all();
   const dueDates = {}; // { "2026-03-15": [{ task_id, title, ... }] }
 
   for (const task of tasks) {
@@ -437,7 +437,7 @@ app.get('/api/yearly', (req, res) => {
   }
 
   // Get completions for this year
-  const completions = db.prepare(
+  const completions = await db.prepare(
     `SELECT c.*, t.title, t.assignee, t.category, t.priority, t.recurrence
      FROM completions c JOIN tasks t ON c.task_id = t.id
      WHERE c.completed_at >= ? AND c.completed_at <= ?`
@@ -465,7 +465,7 @@ app.get('/api/yearly', (req, res) => {
 // --- Follow-up Actions API ---
 
 // Get all actions with optional filters
-app.get('/api/actions', (req, res) => {
+app.get('/api/actions', async (req, res) => {
   const { task_id, completion_id, status } = req.query;
   let sql = `SELECT a.*, t.title as task_title FROM actions a JOIN tasks t ON a.task_id = t.id WHERE 1=1`;
   const params = [];
@@ -473,33 +473,33 @@ app.get('/api/actions', (req, res) => {
   if (completion_id) { sql += ' AND a.completion_id = ?'; params.push(completion_id); }
   if (status) { sql += ' AND a.status = ?'; params.push(status); }
   sql += ' ORDER BY a.created_at DESC';
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.prepare(sql).all(...params));
 });
 
 // Get single action
-app.get('/api/actions/:id', (req, res) => {
-  const action = db.prepare('SELECT a.*, t.title as task_title FROM actions a JOIN tasks t ON a.task_id = t.id WHERE a.id = ?').get(req.params.id);
+app.get('/api/actions/:id', async (req, res) => {
+  const action = await db.prepare('SELECT a.*, t.title as task_title FROM actions a JOIN tasks t ON a.task_id = t.id WHERE a.id = ?').get(req.params.id);
   if (!action) return res.status(404).json({ error: 'Action not found' });
   res.json(action);
 });
 
 // Create action (linked to a completion)
-app.post('/api/actions', (req, res) => {
+app.post('/api/actions', async (req, res) => {
   const { completion_id, task_id, title, description, assignee, priority, due_date } = req.body;
   if (!title || !completion_id || !task_id) return res.status(400).json({ error: 'title, completion_id, and task_id are required' });
 
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO actions (completion_id, task_id, title, description, assignee, priority, due_date)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(completion_id, task_id, title, description || '', assignee || '', priority || 'Medium', due_date || null);
 
-  const action = db.prepare('SELECT * FROM actions WHERE id = ?').get(result.lastInsertRowid);
+  const action = await db.prepare('SELECT * FROM actions WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(action);
 });
 
 // Update action
-app.put('/api/actions/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM actions WHERE id = ?').get(req.params.id);
+app.put('/api/actions/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM actions WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Action not found' });
 
   const fields = ['title', 'description', 'assignee', 'priority', 'status', 'due_date', 'resolved_by'];
@@ -518,14 +518,14 @@ app.put('/api/actions/:id', (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
 
-  db.prepare(`UPDATE actions SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  const action = db.prepare('SELECT * FROM actions WHERE id = ?').get(req.params.id);
+  await db.prepare(`UPDATE actions SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  const action = await db.prepare('SELECT * FROM actions WHERE id = ?').get(req.params.id);
   res.json(action);
 });
 
 // Delete action
-app.delete('/api/actions/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM actions WHERE id = ?').run(req.params.id);
+app.delete('/api/actions/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM actions WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Action not found' });
   res.json({ success: true });
 });
@@ -533,21 +533,21 @@ app.delete('/api/actions/:id', (req, res) => {
 // --- Audit API ---
 
 // List audits (returns parent audits with ALL events attached including first instance)
-app.get('/api/audits', (req, res) => {
+app.get('/api/audits', async (req, res) => {
   const { status, include_children } = req.query;
   let sql = 'SELECT * FROM audits WHERE parent_audit_id IS NULL';
   const params = [];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   sql += ' ORDER BY planned_date DESC, created_at DESC';
-  const parentAudits = db.prepare(sql).all(...params);
+  const parentAudits = await db.prepare(sql).all(...params);
 
   // Helper function to get audit stats
   const getAuditStats = (auditId) => ({
-    checklist_count: db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(auditId).c,
-    assessed_count: db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(auditId).c,
-    nc_count: db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(auditId).c,
-    ncr_count: db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(auditId).c,
-    open_nc_count: db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(auditId).c
+    checklist_count: (await db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(auditId)).c,
+    assessed_count: (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(auditId)).c,
+    nc_count: (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(auditId)).c,
+    ncr_count: (await db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(auditId)).c,
+    open_nc_count: (await db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(auditId)).c
   });
 
   // Attach counts and ALL events (including parent as event #1) for each parent
@@ -556,7 +556,7 @@ app.get('/api/audits', (req, res) => {
     Object.assign(a, parentStats);
 
     // Get child events for recurring audits
-    const childAudits = db.prepare('SELECT * FROM audits WHERE parent_audit_id = ? ORDER BY instance_number, planned_date').all(a.id);
+    const childAudits = await db.prepare('SELECT * FROM audits WHERE parent_audit_id = ? ORDER BY instance_number, planned_date').all(a.id);
     for (const c of childAudits) {
       Object.assign(c, getAuditStats(c.id));
     }
@@ -583,11 +583,11 @@ app.get('/api/audits', (req, res) => {
 });
 
 // Get single audit with checklist and NCs
-app.get('/api/audits/:id', (req, res) => {
-  const audit = db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
+app.get('/api/audits/:id', async (req, res) => {
+  const audit = await db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
   if (!audit) return res.status(404).json({ error: 'Audit not found' });
-  audit.checklist = db.prepare('SELECT * FROM audit_checklist WHERE audit_id = ? ORDER BY sort_order, id').all(audit.id);
-  audit.non_conformities = db.prepare('SELECT * FROM non_conformities WHERE audit_id = ? ORDER BY created_at DESC').all(audit.id);
+  audit.checklist = await db.prepare('SELECT * FROM audit_checklist WHERE audit_id = ? ORDER BY sort_order, id').all(audit.id);
+  audit.non_conformities = await db.prepare('SELECT * FROM non_conformities WHERE audit_id = ? ORDER BY created_at DESC').all(audit.id);
   res.json(audit);
 });
 
@@ -605,7 +605,7 @@ function getNextRecurrenceDate(dateStr, recurrenceType) {
 }
 
 // Create audit
-app.post('/api/audits', (req, res) => {
+app.post('/api/audits', async (req, res) => {
   const { title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, requirement_ids, recurrence, recurrence_end_date } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
 
@@ -615,15 +615,15 @@ app.post('/api/audits', (req, res) => {
 
   const createAudit = db.transaction(() => {
     // Create the parent audit (instance 1)
-    const result = db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    const result = await db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1
     );
     const parentAuditId = result.lastInsertRowid;
 
     // Auto-create checklist items from selected requirements, including the standard
     if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
-      const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
-      const getReq = db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
+      const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
+      const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
       let order = 1;
       for (const reqId of requirement_ids) {
         const req = getReq.get(reqId);
@@ -640,14 +640,14 @@ app.post('/api/audits', (req, res) => {
       let instanceNum = 2;
 
       while (nextDate && new Date(nextDate) <= endDate) {
-        const recurResult = db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        const recurResult = await db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
           title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date, parentAuditId, instanceNum
         );
 
         // Copy checklist items to recurring audit
         if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
-          const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
-          const getReq = db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
+          const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
+          const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
           let order = 1;
           for (const reqId of requirement_ids) {
             const req = getReq.get(reqId);
@@ -662,7 +662,7 @@ app.post('/api/audits', (req, res) => {
       }
     }
 
-    return db.prepare('SELECT * FROM audits WHERE id = ?').get(parentAuditId);
+    return await db.prepare('SELECT * FROM audits WHERE id = ?').get(parentAuditId);
   });
 
   const audit = createAudit();
@@ -670,8 +670,8 @@ app.post('/api/audits', (req, res) => {
 });
 
 // Update audit
-app.put('/api/audits/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
+app.put('/api/audits/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Audit not found' });
   const fields = ['title', 'standard', 'scope', 'lead_auditor', 'audit_team', 'auditee', 'status', 'planned_date', 'completed_date', 'summary', 'recurrence', 'recurrence_end_date'];
 
@@ -689,14 +689,14 @@ app.put('/api/audits/:id', (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  db.prepare(`UPDATE audits SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  await db.prepare(`UPDATE audits SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
   // Add checklist items from newly selected requirements (skip existing clauses)
   if (req.body.requirement_ids && Array.isArray(req.body.requirement_ids)) {
-    const existingClauses = db.prepare('SELECT clause FROM audit_checklist WHERE audit_id = ?').all(req.params.id).map(c => c.clause);
-    const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)');
-    const getReq = db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
-    const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ?').get(req.params.id).m;
+    const existingClauses = (await db.prepare('SELECT clause FROM audit_checklist WHERE audit_id = ?').all(req.params.id)).map(c => c.clause);
+    const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)');
+    const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
+    const maxOrder = (await db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ?').get(req.params.id)).m;
     let order = maxOrder + 1;
     for (const reqId of req.body.requirement_ids) {
       const r = getReq.get(reqId);
@@ -706,12 +706,12 @@ app.put('/api/audits/:id', (req, res) => {
     }
   }
 
-  res.json(db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id));
+  res.json(await db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id));
 });
 
 // Delete audit
-app.delete('/api/audits/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM audits WHERE id = ?').run(req.params.id);
+app.delete('/api/audits/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM audits WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Audit not found' });
   res.json({ success: true });
 });
@@ -719,19 +719,19 @@ app.delete('/api/audits/:id', (req, res) => {
 // --- Audit Checklist API ---
 
 // Add checklist item
-app.post('/api/audits/:id/checklist', (req, res) => {
+app.post('/api/audits/:id/checklist', async (req, res) => {
   const { clause, requirement, sort_order } = req.body;
   if (!clause) return res.status(400).json({ error: 'Clause is required' });
-  const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ?').get(req.params.id).m;
-  const result = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)').run(
+  const maxOrder = (await db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ?').get(req.params.id)).m;
+  const result = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)').run(
     req.params.id, clause, requirement || '', sort_order ?? maxOrder + 1
   );
-  res.status(201).json(db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(result.lastInsertRowid));
 });
 
 // Update checklist item (during execution)
-app.put('/api/checklist/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.put('/api/checklist/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Checklist item not found' });
   const fields = ['clause', 'requirement', 'evidence', 'finding', 'rating', 'notes', 'sort_order', 'evidence_files'];
   const updates = [];
@@ -741,46 +741,46 @@ app.put('/api/checklist/:id', (req, res) => {
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
-  db.prepare(`UPDATE audit_checklist SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  await db.prepare(`UPDATE audit_checklist SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
   // Auto-create or remove NCR when rating changes
   if (req.body.rating) {
     const isNc = req.body.rating === 'minor_nc' || req.body.rating === 'major_nc';
-    const existingNcr = db.prepare('SELECT * FROM non_conformities WHERE checklist_item_id = ?').get(req.params.id);
+    const existingNcr = await db.prepare('SELECT * FROM non_conformities WHERE checklist_item_id = ?').get(req.params.id);
 
     if (isNc && !existingNcr) {
       // Auto-create NCR with populated fields from checklist item
-      const cl = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+      const cl = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
       const severity = req.body.rating === 'major_nc' ? 'major' : 'minor';
       const description = cl.finding || `Non-conformity found for clause ${cl.clause}`;
-      db.prepare(`INSERT INTO non_conformities (audit_id, checklist_item_id, clause, description, severity) VALUES (?, ?, ?, ?, ?)`).run(
+      await db.prepare(`INSERT INTO non_conformities (audit_id, checklist_item_id, clause, description, severity) VALUES (?, ?, ?, ?, ?)`).run(
         existing.audit_id, req.params.id, cl.clause, description, severity
       );
     } else if (isNc && existingNcr) {
       // Update severity if it changed (e.g. minor_nc -> major_nc)
       const severity = req.body.rating === 'major_nc' ? 'major' : 'minor';
       if (existingNcr.severity !== severity) {
-        db.prepare("UPDATE non_conformities SET severity = ?, updated_at = datetime('now') WHERE id = ?").run(severity, existingNcr.id);
+        await db.prepare("UPDATE non_conformities SET severity = ?, updated_at = datetime('now') WHERE id = ?").run(severity, existingNcr.id);
       }
     } else if (!isNc && existingNcr && existingNcr.status === 'open') {
       // Remove auto-created NCR if rating changed away from NC and NCR is still open
-      db.prepare('DELETE FROM non_conformities WHERE id = ?').run(existingNcr.id);
+      await db.prepare('DELETE FROM non_conformities WHERE id = ?').run(existingNcr.id);
     }
   }
 
-  res.json(db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
+  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
 });
 
 // Delete checklist item
-app.delete('/api/checklist/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM audit_checklist WHERE id = ?').run(req.params.id);
+app.delete('/api/checklist/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM audit_checklist WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Item not found' });
   res.json({ success: true });
 });
 
 // Upload evidence file to checklist item
-app.post('/api/checklist/:id/evidence', upload.single('file'), (req, res) => {
-  const item = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.post('/api/checklist/:id/evidence', upload.single('file'), async (req, res) => {
+  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
@@ -800,13 +800,13 @@ app.post('/api/checklist/:id/evidence', upload.single('file'), (req, res) => {
   });
 
   // Update the checklist item
-  db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
-  res.json(db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
+  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
+  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
 });
 
 // Download evidence file from checklist item
-app.get('/api/checklist/:id/evidence/:fileId/download', (req, res) => {
-  const item = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.get('/api/checklist/:id/evidence/:fileId/download', async (req, res) => {
+  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
 
   let evidenceFiles = [];
@@ -821,8 +821,8 @@ app.get('/api/checklist/:id/evidence/:fileId/download', (req, res) => {
 });
 
 // Delete evidence file from checklist item
-app.delete('/api/checklist/:id/evidence/:fileId', (req, res) => {
-  const item = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.delete('/api/checklist/:id/evidence/:fileId', async (req, res) => {
+  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
 
   let evidenceFiles = [];
@@ -840,13 +840,13 @@ app.delete('/api/checklist/:id/evidence/:fileId', (req, res) => {
 
   // Remove from array
   evidenceFiles.splice(fileIndex, 1);
-  db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
+  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
   res.json({ success: true });
 });
 
 // Add link evidence to checklist item
-app.post('/api/checklist/:id/evidence-link', (req, res) => {
-  const item = db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.post('/api/checklist/:id/evidence-link', async (req, res) => {
+  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
   const { link_type, link_id, link_name } = req.body;
   if (!link_type || !link_id) return res.status(400).json({ error: 'Link type and id required' });
@@ -866,14 +866,14 @@ app.post('/api/checklist/:id/evidence-link', (req, res) => {
   });
 
   // Update the checklist item
-  db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
-  res.json(db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
+  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
+  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
 });
 
 // --- Non-Conformity API ---
 
 // List NCs (optionally filter by audit)
-app.get('/api/ncrs', (req, res) => {
+app.get('/api/ncrs', async (req, res) => {
   const { audit_id, status } = req.query;
   let sql = `SELECT n.*, a.title as audit_title, a.standard as audit_standard,
     COALESCE(cl.standard, a.standard) as ncr_standard
@@ -885,27 +885,27 @@ app.get('/api/ncrs', (req, res) => {
   if (audit_id) { sql += ' AND n.audit_id = ?'; params.push(audit_id); }
   if (status) { sql += ' AND n.status = ?'; params.push(status); }
   sql += ' ORDER BY n.created_at DESC';
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.prepare(sql).all(...params));
 });
 
 // Create NC
-app.post('/api/ncrs', (req, res) => {
+app.post('/api/ncrs', async (req, res) => {
   const { audit_id, checklist_item_id, clause, description, severity, root_cause, correction, corrective_action, responsible, due_date } = req.body;
   if (!audit_id || !description) return res.status(400).json({ error: 'audit_id and description are required' });
-  const result = db.prepare(`INSERT INTO non_conformities (audit_id, checklist_item_id, clause, description, severity, root_cause, correction, corrective_action, responsible, due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  const result = await db.prepare(`INSERT INTO non_conformities (audit_id, checklist_item_id, clause, description, severity, root_cause, correction, corrective_action, responsible, due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     audit_id, checklist_item_id || null, clause || '', description, severity || 'minor', root_cause || '', correction || '', corrective_action || '', responsible || '', due_date || null
   );
   // If linked to checklist item, update its rating
   if (checklist_item_id) {
     const rating = (severity === 'major') ? 'major_nc' : 'minor_nc';
-    db.prepare('UPDATE audit_checklist SET rating = ? WHERE id = ?').run(rating, checklist_item_id);
+    await db.prepare('UPDATE audit_checklist SET rating = ? WHERE id = ?').run(rating, checklist_item_id);
   }
-  res.status(201).json(db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(result.lastInsertRowid));
 });
 
 // Update NC
-app.put('/api/ncrs/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(req.params.id);
+app.put('/api/ncrs/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'NCR not found' });
   const fields = ['clause', 'description', 'severity', 'root_cause', 'correction', 'corrective_action', 'responsible', 'due_date', 'status', 'verification_notes'];
   const updates = [];
@@ -919,13 +919,13 @@ app.put('/api/ncrs/:id', (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  db.prepare(`UPDATE non_conformities SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE non_conformities SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(req.params.id));
 });
 
 // Delete NC
-app.delete('/api/ncrs/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM non_conformities WHERE id = ?').run(req.params.id);
+app.delete('/api/ncrs/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM non_conformities WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'NCR not found' });
   res.json({ success: true });
 });
@@ -933,19 +933,19 @@ app.delete('/api/ncrs/:id', (req, res) => {
 // --- Standard Requirements API ---
 
 // List requirements (optionally filter by standard), enriched with audit history
-app.get('/api/requirements', (req, res) => {
+app.get('/api/requirements', async (req, res) => {
   const { standard } = req.query;
   let sql = 'SELECT * FROM standard_requirements WHERE 1=1';
   const params = [];
   if (standard) { sql += ' AND standard = ?'; params.push(standard); }
   sql += ' ORDER BY standard, sort_order, clause';
-  const reqs = db.prepare(sql).all(...params);
+  const reqs = await db.prepare(sql).all(...params);
 
   // Enrich each requirement with audit history
   for (const r of reqs) {
     // Find checklist items matching this requirement's clause and standard
     // Check both checklist item's standard field and fallback to audit's standard
-    const auditHistory = db.prepare(`
+    const auditHistory = await db.prepare(`
       SELECT a.id as audit_id, a.title as audit_title, a.planned_date, a.completed_date, a.status as audit_status,
              cl.rating, cl.id as checklist_item_id
       FROM audit_checklist cl
@@ -962,7 +962,7 @@ app.get('/api/requirements', (req, res) => {
     r.times_audited = completedAudits.length;
 
     // NC info for this clause + standard (check checklist item standard or audit standard)
-    const ncs = db.prepare(`
+    const ncs = await db.prepare(`
       SELECT n.id, n.status, n.severity
       FROM non_conformities n
       JOIN audits a ON n.audit_id = a.id
@@ -979,28 +979,28 @@ app.get('/api/requirements', (req, res) => {
 });
 
 // Get unique standards list
-app.get('/api/requirements/standards', (req, res) => {
-  const standards = db.prepare('SELECT DISTINCT standard FROM standard_requirements ORDER BY standard').all().map(r => r.standard);
+app.get('/api/requirements/standards', async (req, res) => {
+  const standards = (await db.prepare('SELECT DISTINCT standard FROM standard_requirements ORDER BY standard').all()).map(r => r.standard);
   res.json(standards);
 });
 
 // Create requirement
-app.post('/api/requirements', (req, res) => {
+app.post('/api/requirements', async (req, res) => {
   const { standard, clause, title, description, category, sort_order, owner } = req.body;
   if (!clause) return res.status(400).json({ error: 'Clause is required' });
-  const result = db.prepare(`INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order, owner) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+  const result = await db.prepare(`INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order, owner) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
     standard || 'ISO 9001', clause, title || '', description || '', category || '', sort_order ?? 0, owner || ''
   );
-  res.status(201).json(db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(result.lastInsertRowid));
 });
 
 // Bulk import requirements
-app.post('/api/requirements/bulk', (req, res) => {
+app.post('/api/requirements/bulk', async (req, res) => {
   const { standard, items } = req.body;
   if (!items || !Array.isArray(items)) return res.status(400).json({ error: 'items array is required' });
   const std = standard || 'ISO 9001';
-  const existing = db.prepare('SELECT clause FROM standard_requirements WHERE standard = ?').all(std).map(r => r.clause);
-  const insert = db.prepare('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)');
+  const existing = (await db.prepare('SELECT clause FROM standard_requirements WHERE standard = ?').all(std)).map(r => r.clause);
+  const insert = await db.prepare('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)');
   let inserted = 0;
   const bulkInsert = db.transaction((items) => {
     for (const item of items) {
@@ -1014,8 +1014,8 @@ app.post('/api/requirements/bulk', (req, res) => {
 });
 
 // Update requirement
-app.put('/api/requirements/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id);
+app.put('/api/requirements/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Requirement not found' });
   const fields = ['standard', 'clause', 'title', 'description', 'category', 'sort_order', 'owner'];
   const updates = [];
@@ -1026,22 +1026,22 @@ app.put('/api/requirements/:id', (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  db.prepare(`UPDATE standard_requirements SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE standard_requirements SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id));
 });
 
 // Delete all requirements for a standard (retire)
-app.delete('/api/requirements/standard/:standard', (req, res) => {
+app.delete('/api/requirements/standard/:standard', async (req, res) => {
   const standard = decodeURIComponent(req.params.standard);
   // Clean up SoA entries for requirements of this standard (cascade should handle, but explicit for safety)
-  db.prepare(`DELETE FROM soa_entries WHERE requirement_id IN (SELECT id FROM standard_requirements WHERE standard = ?)`).run(standard);
-  const result = db.prepare('DELETE FROM standard_requirements WHERE standard = ?').run(standard);
+  await db.prepare(`DELETE FROM soa_entries WHERE requirement_id IN (SELECT id FROM standard_requirements WHERE standard = ?)`).run(standard);
+  const result = await db.prepare('DELETE FROM standard_requirements WHERE standard = ?').run(standard);
   res.json({ success: true, deleted: result.changes });
 });
 
 // Delete requirement
-app.delete('/api/requirements/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM standard_requirements WHERE id = ?').run(req.params.id);
+app.delete('/api/requirements/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM standard_requirements WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Requirement not found' });
   res.json({ success: true });
 });
@@ -1049,25 +1049,25 @@ app.delete('/api/requirements/:id', (req, res) => {
 // --- Threat Intelligence API ---
 
 // List feeds
-app.get('/api/threat-feeds', (req, res) => {
-  const feeds = db.prepare('SELECT * FROM threat_feeds ORDER BY tier, name').all();
+app.get('/api/threat-feeds', async (req, res) => {
+  const feeds = await db.prepare('SELECT * FROM threat_feeds ORDER BY tier, name').all();
   for (const f of feeds) {
-    f.item_count = db.prepare('SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ?').get(f.id).c;
-    f.new_count = db.prepare("SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ? AND status = 'new'").get(f.id).c;
+    f.item_count = (await db.prepare('SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ?').get(f.id)).c;
+    f.new_count = (await db.prepare("SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ? AND status = 'new'").get(f.id)).c;
   }
   res.json(feeds);
 });
 
 // Add feed
-app.post('/api/threat-feeds', (req, res) => {
+app.post('/api/threat-feeds', async (req, res) => {
   const { name, url, tier } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'name and url required' });
-  const result = db.prepare('INSERT INTO threat_feeds (name, url, tier) VALUES (?, ?, ?)').run(name, url, tier || 1);
-  res.status(201).json(db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(result.lastInsertRowid));
+  const result = await db.prepare('INSERT INTO threat_feeds (name, url, tier) VALUES (?, ?, ?)').run(name, url, tier || 1);
+  res.status(201).json(await db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(result.lastInsertRowid));
 });
 
 // Update feed
-app.put('/api/threat-feeds/:id', (req, res) => {
+app.put('/api/threat-feeds/:id', async (req, res) => {
   const fields = ['name', 'url', 'tier', 'enabled'];
   const updates = []; const params = [];
   for (const f of fields) {
@@ -1075,19 +1075,19 @@ app.put('/api/threat-feeds/:id', (req, res) => {
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
-  db.prepare(`UPDATE threat_feeds SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE threat_feeds SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(req.params.id));
 });
 
 // Delete feed
-app.delete('/api/threat-feeds/:id', (req, res) => {
-  db.prepare('DELETE FROM threat_feeds WHERE id = ?').run(req.params.id);
+app.delete('/api/threat-feeds/:id', async (req, res) => {
+  await db.prepare('DELETE FROM threat_feeds WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
 // Fetch/refresh a single feed (server-side RSS proxy)
 app.post('/api/threat-feeds/:id/fetch', async (req, res) => {
-  const feed = db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(req.params.id);
+  const feed = await db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(req.params.id);
   if (!feed) return res.status(404).json({ error: 'Feed not found' });
 
   try {
@@ -1129,12 +1129,12 @@ app.post('/api/threat-feeds/:id/fetch', async (req, res) => {
     }
 
     // Upsert items
-    const upsert = db.prepare(`INSERT INTO threat_items (feed_id, guid, title, description, link, pub_date) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(feed_id, guid) DO UPDATE SET title=excluded.title, description=excluded.description, link=excluded.link, pub_date=excluded.pub_date`);
+    const upsert = await db.prepare(`INSERT INTO threat_items (feed_id, guid, title, description, link, pub_date) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(feed_id, guid) DO UPDATE SET title=excluded.title, description=excluded.description, link=excluded.link, pub_date=excluded.pub_date`);
     const insertMany = db.transaction((items) => { for (const i of items) upsert.run(feed.id, i.guid || i.title, i.title, i.description, i.link, i.pub_date); });
     insertMany(items);
 
     // Update last_fetched
-    db.prepare("UPDATE threat_feeds SET last_fetched = datetime('now') WHERE id = ?").run(feed.id);
+    await db.prepare("UPDATE threat_feeds SET last_fetched = datetime('now') WHERE id = ?").run(feed.id);
 
     res.json({ success: true, count: items.length });
   } catch (err) {
@@ -1143,7 +1143,7 @@ app.post('/api/threat-feeds/:id/fetch', async (req, res) => {
 });
 
 // Get threat items (with filters)
-app.get('/api/threat-items', (req, res) => {
+app.get('/api/threat-items', async (req, res) => {
   const { feed_id, tier, status, limit: lim } = req.query;
   let sql = `SELECT ti.*, tf.name as feed_name, tf.tier FROM threat_items ti JOIN threat_feeds tf ON ti.feed_id = tf.id WHERE tf.enabled = 1`;
   const params = [];
@@ -1153,19 +1153,19 @@ app.get('/api/threat-items', (req, res) => {
   sql += ' ORDER BY ti.fetched_at DESC, ti.pub_date DESC';
   if (lim) { sql += ' LIMIT ?'; params.push(parseInt(lim)); }
   else { sql += ' LIMIT 200'; }
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.prepare(sql).all(...params));
 });
 
 // Update threat item status
-app.put('/api/threat-items/:id', (req, res) => {
+app.put('/api/threat-items/:id', async (req, res) => {
   const { status, created_risk_id } = req.body;
   const updates = []; const params = [];
   if (status) { updates.push('status = ?'); params.push(status); }
   if (created_risk_id !== undefined) { updates.push('created_risk_id = ?'); params.push(created_risk_id); }
   if (updates.length === 0) return res.status(400).json({ error: 'Nothing to update' });
   params.push(req.params.id);
-  db.prepare(`UPDATE threat_items SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(db.prepare('SELECT * FROM threat_items WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE threat_items SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM threat_items WHERE id = ?').get(req.params.id));
 });
 
 function stripTags(str) {
@@ -1176,43 +1176,43 @@ function stripTags(str) {
 // --- Risk Management API ---
 
 // List risks
-app.get('/api/risks', (req, res) => {
+app.get('/api/risks', async (req, res) => {
   const { status, category } = req.query;
   let sql = 'SELECT * FROM risks WHERE 1=1';
   const params = [];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (category) { sql += ' AND category = ?'; params.push(category); }
   sql += ' ORDER BY inherent_score DESC, created_at DESC';
-  const risks = db.prepare(sql).all(...params);
+  const risks = await db.prepare(sql).all(...params);
   // Attach treatment count
   for (const r of risks) {
-    r.treatment_count = db.prepare('SELECT COUNT(*) as c FROM risk_treatments WHERE risk_id = ?').get(r.id).c;
-    r.open_treatments = db.prepare("SELECT COUNT(*) as c FROM risk_treatments WHERE risk_id = ? AND status IN ('planned','in_progress')").get(r.id).c;
+    r.treatment_count = (await db.prepare('SELECT COUNT(*) as c FROM risk_treatments WHERE risk_id = ?').get(r.id)).c;
+    r.open_treatments = (await db.prepare("SELECT COUNT(*) as c FROM risk_treatments WHERE risk_id = ? AND status IN ('planned','in_progress')").get(r.id)).c;
   }
   res.json(risks);
 });
 
 // Get single risk with treatments
-app.get('/api/risks/:id', (req, res) => {
-  const risk = db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id);
+app.get('/api/risks/:id', async (req, res) => {
+  const risk = await db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id);
   if (!risk) return res.status(404).json({ error: 'Risk not found' });
-  risk.treatments = db.prepare(`SELECT rt.*, sr.clause, sr.title as requirement_title FROM risk_treatments rt LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE rt.risk_id = ? ORDER BY rt.created_at`).all(risk.id);
+  risk.treatments = await db.prepare(`SELECT rt.*, sr.clause, sr.title as requirement_title FROM risk_treatments rt LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE rt.risk_id = ? ORDER BY rt.created_at`).all(risk.id);
   res.json(risk);
 });
 
 // Create risk
-app.post('/api/risks', (req, res) => {
+app.post('/api/risks', async (req, res) => {
   const { title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
-  const result = db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  const result = await db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', likelihood || 3, impact || 3, risk_owner || '', status || 'identified'
   );
-  res.status(201).json(db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid));
 });
 
 // Update risk
-app.put('/api/risks/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id);
+app.put('/api/risks/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Risk not found' });
   const fields = ['title', 'description', 'category', 'source', 'asset', 'threat', 'vulnerability', 'likelihood', 'impact', 'risk_owner', 'status'];
   const updates = [];
@@ -1223,40 +1223,40 @@ app.put('/api/risks/:id', (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  db.prepare(`UPDATE risks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE risks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id));
 });
 
 // Delete risk
-app.delete('/api/risks/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM risks WHERE id = ?').run(req.params.id);
+app.delete('/api/risks/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM risks WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Risk not found' });
   res.json({ success: true });
 });
 
 // --- Risk Treatments API ---
 
-app.get('/api/treatments', (req, res) => {
+app.get('/api/treatments', async (req, res) => {
   const { risk_id, status } = req.query;
   let sql = `SELECT rt.*, r.title as risk_title, sr.clause, sr.title as requirement_title FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE 1=1`;
   const params = [];
   if (risk_id) { sql += ' AND rt.risk_id = ?'; params.push(risk_id); }
   if (status) { sql += ' AND rt.status = ?'; params.push(status); }
   sql += ' ORDER BY rt.created_at DESC';
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.prepare(sql).all(...params));
 });
 
-app.post('/api/treatments', (req, res) => {
+app.post('/api/treatments', async (req, res) => {
   const { risk_id, treatment_type, description, control_reference, requirement_id, responsible, due_date, residual_likelihood, residual_impact, notes } = req.body;
   if (!risk_id) return res.status(400).json({ error: 'risk_id is required' });
-  const result = db.prepare(`INSERT INTO risk_treatments (risk_id, treatment_type, description, control_reference, requirement_id, responsible, due_date, residual_likelihood, residual_impact, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  const result = await db.prepare(`INSERT INTO risk_treatments (risk_id, treatment_type, description, control_reference, requirement_id, responsible, due_date, residual_likelihood, residual_impact, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     risk_id, treatment_type || 'mitigate', description || '', control_reference || '', requirement_id || null, responsible || '', due_date || null, residual_likelihood || null, residual_impact || null, notes || ''
   );
-  res.status(201).json(db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/treatments/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id);
+app.put('/api/treatments/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Treatment not found' });
   const fields = ['treatment_type', 'description', 'control_reference', 'requirement_id', 'responsible', 'due_date', 'status', 'residual_likelihood', 'residual_impact', 'notes'];
   const updates = [];
@@ -1267,31 +1267,31 @@ app.put('/api/treatments/:id', (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  db.prepare(`UPDATE risk_treatments SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE risk_treatments SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/treatments/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM risk_treatments WHERE id = ?').run(req.params.id);
+app.delete('/api/treatments/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM risk_treatments WHERE id = ?').run(req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Treatment not found' });
   res.json({ success: true });
 });
 
 // --- Statement of Applicability API ---
 
-app.get('/api/soa', (req, res) => {
+app.get('/api/soa', async (req, res) => {
   // Get all Annex A requirements with their SoA status
-  const reqs = db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes, soa.linked_processes, soa.regulatory
+  const reqs = await db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes, soa.linked_processes, soa.regulatory
     FROM standard_requirements sr LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
     WHERE sr.standard = 'ISO 27001 Annex A'
     ORDER BY sr.sort_order, sr.clause`).all();
   // Attach linked risk treatments (via requirement_id OR control_reference)
-  const allProcesses = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process'").all();
+  const allProcesses = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process'").all();
   for (const r of reqs) {
     // Get treatments linked by requirement_id
-    const linkedById = db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ?`).all(r.id);
+    const linkedById = await db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ?`).all(r.id);
     // Get treatments linked by control_reference (matching clause)
-    const linkedByRef = db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.control_reference = ? AND rt.control_reference != ''`).all(r.clause);
+    const linkedByRef = await db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.control_reference = ? AND rt.control_reference != ''`).all(r.clause);
     // Combine and dedupe
     const allLinked = [...linkedById];
     for (const t of linkedByRef) {
@@ -1304,10 +1304,10 @@ app.get('/api/soa', (req, res) => {
   res.json(reqs);
 });
 
-app.put('/api/soa/:requirementId', (req, res) => {
+app.put('/api/soa/:requirementId', async (req, res) => {
   const reqId = req.params.requirementId;
   const { applicable, justification, implementation_status, notes } = req.body;
-  const existing = db.prepare('SELECT * FROM soa_entries WHERE requirement_id = ?').get(reqId);
+  const existing = await db.prepare('SELECT * FROM soa_entries WHERE requirement_id = ?').get(reqId);
   if (existing) {
     const fields = [];
     const params = [];
@@ -1319,9 +1319,9 @@ app.put('/api/soa/:requirementId', (req, res) => {
     if (req.body.regulatory !== undefined) { fields.push('regulatory = ?'); params.push(req.body.regulatory ? 1 : 0); }
     fields.push("updated_at = datetime('now')");
     params.push(existing.id);
-    db.prepare(`UPDATE soa_entries SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+    await db.prepare(`UPDATE soa_entries SET ${fields.join(', ')} WHERE id = ?`).run(...params);
   } else {
-    db.prepare('INSERT INTO soa_entries (requirement_id, applicable, justification, implementation_status, notes, linked_processes, regulatory) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+    await db.prepare('INSERT INTO soa_entries (requirement_id, applicable, justification, implementation_status, notes, linked_processes, regulatory) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       reqId, applicable !== undefined ? (applicable ? 1 : 0) : 1, justification || '', implementation_status || 'not_implemented', notes || '', JSON.stringify(req.body.linked_processes || []), req.body.regulatory ? 1 : 0
     );
   }
@@ -1331,73 +1331,73 @@ app.put('/api/soa/:requirementId', (req, res) => {
 // --- Organizational Planning API ---
 
 // Mission
-app.get('/api/mission', (req, res) => {
-  res.json(db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
+app.get('/api/mission', async (req, res) => {
+  res.json(await db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
 });
 
-app.put('/api/mission', (req, res) => {
+app.put('/api/mission', async (req, res) => {
   const { content, vision, values_text } = req.body;
-  db.prepare("UPDATE org_mission SET content = ?, vision = ?, values_text = ?, updated_at = datetime('now') WHERE id = 1").run(content || '', vision || '', values_text || '');
-  res.json(db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
+  await db.prepare("UPDATE org_mission SET content = ?, vision = ?, values_text = ?, updated_at = datetime('now') WHERE id = 1").run(content || '', vision || '', values_text || '');
+  res.json(await db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
 });
 
 // KPIs
-app.get('/api/kpis', (req, res) => {
-  const kpis = db.prepare('SELECT * FROM org_kpis ORDER BY module, name').all();
+app.get('/api/kpis', async (req, res) => {
+  const kpis = await db.prepare('SELECT * FROM org_kpis ORDER BY module, name').all();
   for (const k of kpis) {
-    k.values = db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? ORDER BY period DESC LIMIT 12').all(k.id);
+    k.values = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? ORDER BY period DESC LIMIT 12').all(k.id);
   }
   res.json(kpis);
 });
 
 // Auto-KPI data
-app.get('/api/kpis/auto', (req, res) => {
+app.get('/api/kpis/auto', async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
   const auto = {
     // Task Management
-    tasks_active: db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1').get().v,
-    tasks_overdue: db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1 AND next_due < ?').get(today).v,
-    completions_this_month: db.prepare("SELECT COUNT(*) as v FROM completions WHERE completed_at >= date('now','start of month')").get().v,
+    tasks_active: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1').get()).v,
+    tasks_overdue: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1 AND next_due < ?').get(today)).v,
+    completions_this_month: (await db.prepare("SELECT COUNT(*) as v FROM completions WHERE completed_at >= date('now','start of month')").get()).v,
     // Audits & Compliance
-    audits_planned: db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'planned'").get().v,
-    audits_completed: db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'completed'").get().v,
-    open_ncrs: db.prepare("SELECT COUNT(*) as v FROM non_conformities WHERE status IN ('open','in_progress')").get().v,
-    open_actions: db.prepare("SELECT COUNT(*) as v FROM actions WHERE status IN ('open','in_progress')").get().v,
-    standards_count: db.prepare('SELECT COUNT(DISTINCT standard) as v FROM standard_requirements').get().v,
+    audits_planned: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'planned'").get()).v,
+    audits_completed: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'completed'").get()).v,
+    open_ncrs: (await db.prepare("SELECT COUNT(*) as v FROM non_conformities WHERE status IN ('open','in_progress')").get()).v,
+    open_actions: (await db.prepare("SELECT COUNT(*) as v FROM actions WHERE status IN ('open','in_progress')").get()).v,
+    standards_count: (await db.prepare('SELECT COUNT(DISTINCT standard) as v FROM standard_requirements').get()).v,
     // Risk Management
-    total_risks: db.prepare('SELECT COUNT(*) as v FROM risks').get().v,
-    high_risks: db.prepare('SELECT COUNT(*) as v FROM risks WHERE inherent_score >= 15').get().v,
-    open_treatments: db.prepare("SELECT COUNT(*) as v FROM risk_treatments WHERE status IN ('planned','in_progress')").get().v,
+    total_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks').get()).v,
+    high_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks WHERE inherent_score >= 15').get()).v,
+    open_treatments: (await db.prepare("SELECT COUNT(*) as v FROM risk_treatments WHERE status IN ('planned','in_progress')").get()).v,
     // SoA counts from Annex A requirements (applicable by default unless explicitly set to 0)
-    soa_applicable: db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
+    soa_applicable: await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
       LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
       WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1)`).get().v,
-    soa_implemented: db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
+    soa_implemented: await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
       LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
       WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1) AND soa.implementation_status = 'implemented'`).get().v,
-    threat_items_new: db.prepare("SELECT COUNT(*) as v FROM threat_items WHERE status = 'new'").get().v,
+    threat_items_new: (await db.prepare("SELECT COUNT(*) as v FROM threat_items WHERE status = 'new'").get()).v,
     // Document Control
-    total_documents: db.prepare('SELECT COUNT(*) as v FROM documents').get().v,
-    docs_due_review: db.prepare('SELECT COUNT(*) as v FROM documents WHERE review_date IS NOT NULL AND review_date <= ?').get(today).v,
+    total_documents: (await db.prepare('SELECT COUNT(*) as v FROM documents').get()).v,
+    docs_due_review: (await db.prepare('SELECT COUNT(*) as v FROM documents WHERE review_date IS NOT NULL AND review_date <= ?').get(today)).v,
     // Architecture
-    arch_processes: db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'process'").get().v,
-    arch_roles: db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'role'").get().v,
-    arch_systems: db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'system'").get().v,
-    arch_facilities: db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'facility'").get().v,
+    arch_processes: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'process'").get()).v,
+    arch_roles: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'role'").get()).v,
+    arch_systems: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'system'").get()).v,
+    arch_facilities: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'facility'").get()).v,
   };
   res.json(auto);
 });
 
-app.post('/api/kpis', (req, res) => {
+app.post('/api/kpis', async (req, res) => {
   const { name, description, module, target_value, unit, frequency } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
-  const result = db.prepare('INSERT INTO org_kpis (name, description, module, target_value, unit, frequency) VALUES (?, ?, ?, ?, ?, ?)').run(
+  const result = await db.prepare('INSERT INTO org_kpis (name, description, module, target_value, unit, frequency) VALUES (?, ?, ?, ?, ?, ?)').run(
     name, description || '', module || 'custom', target_value || null, unit || '', frequency || 'monthly'
   );
-  res.status(201).json(db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/kpis/:id', (req, res) => {
+app.put('/api/kpis/:id', async (req, res) => {
   const fields = ['name', 'description', 'module', 'target_value', 'unit', 'frequency'];
   const updates = [];
   const params = [];
@@ -1406,48 +1406,48 @@ app.put('/api/kpis/:id', (req, res) => {
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
-  db.prepare(`UPDATE org_kpis SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE org_kpis SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/kpis/:id', (req, res) => {
-  db.prepare('DELETE FROM org_kpis WHERE id = ?').run(req.params.id);
+app.delete('/api/kpis/:id', async (req, res) => {
+  await db.prepare('DELETE FROM org_kpis WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
-app.post('/api/kpis/:id/values', (req, res) => {
+app.post('/api/kpis/:id/values', async (req, res) => {
   const { value, period } = req.body;
   if (value === undefined || !period) return res.status(400).json({ error: 'value and period are required' });
   // Upsert
-  const existing = db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? AND period = ?').get(req.params.id, period);
+  const existing = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? AND period = ?').get(req.params.id, period);
   if (existing) {
-    db.prepare("UPDATE org_kpi_values SET value = ?, recorded_at = datetime('now') WHERE id = ?").run(value, existing.id);
+    await db.prepare("UPDATE org_kpi_values SET value = ?, recorded_at = datetime('now') WHERE id = ?").run(value, existing.id);
   } else {
-    db.prepare('INSERT INTO org_kpi_values (kpi_id, value, period) VALUES (?, ?, ?)').run(req.params.id, value, period);
+    await db.prepare('INSERT INTO org_kpi_values (kpi_id, value, period) VALUES (?, ?, ?)').run(req.params.id, value, period);
   }
   res.json({ success: true });
 });
 
 // Architecture
-app.get('/api/architecture', (req, res) => {
+app.get('/api/architecture', async (req, res) => {
   const { arch_type } = req.query;
   let sql = 'SELECT * FROM org_architecture WHERE 1=1';
   const params = [];
   if (arch_type) { sql += ' AND arch_type = ?'; params.push(arch_type); }
   sql += ' ORDER BY arch_type, sort_order, name';
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.prepare(sql).all(...params));
 });
 
-app.post('/api/architecture', (req, res) => {
+app.post('/api/architecture', async (req, res) => {
   const { arch_type, name, description, parent_id, owner, status, metadata } = req.body;
   if (!arch_type || !name) return res.status(400).json({ error: 'arch_type and name are required' });
-  const result = db.prepare('INSERT INTO org_architecture (arch_type, name, description, parent_id, owner, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+  const result = await db.prepare('INSERT INTO org_architecture (arch_type, name, description, parent_id, owner, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
     arch_type, name, description || '', parent_id || null, owner || '', status || 'active', metadata || '{}'
   );
-  res.status(201).json(db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/architecture/:id', (req, res) => {
+app.put('/api/architecture/:id', async (req, res) => {
   const fields = ['name', 'description', 'parent_id', 'owner', 'status', 'metadata', 'sort_order'];
   const updates = [];
   const params = [];
@@ -1457,18 +1457,18 @@ app.put('/api/architecture/:id', (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  db.prepare(`UPDATE org_architecture SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE org_architecture SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/architecture/:id', (req, res) => {
-  db.prepare('DELETE FROM org_architecture WHERE id = ?').run(req.params.id);
+app.delete('/api/architecture/:id', async (req, res) => {
+  await db.prepare('DELETE FROM org_architecture WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
 // --- Document Control API ---
 
-app.get('/api/documents', (req, res) => {
+app.get('/api/documents', async (req, res) => {
   const { doc_type, status, linked_module, classification } = req.query;
   let sql = 'SELECT * FROM documents WHERE 1=1';
   const params = [];
@@ -1477,23 +1477,23 @@ app.get('/api/documents', (req, res) => {
   if (linked_module) { sql += ' AND linked_module = ?'; params.push(linked_module); }
   if (classification) { sql += ' AND classification = ?'; params.push(classification); }
   sql += ' ORDER BY updated_at DESC';
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.prepare(sql).all(...params));
 });
 
-app.post('/api/documents', upload.single('file'), (req, res) => {
+app.post('/api/documents', upload.single('file'), async (req, res) => {
   const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date, classification } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
   const file = req.file;
-  const result = db.prepare(`INSERT INTO documents (title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  const result = await db.prepare(`INSERT INTO documents (title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     title, description || '', doc_type || 'policy', version || '1.0', owner || '', status || 'draft',
     file ? file.originalname : '', file ? file.filename : '', file ? file.size : 0, file ? file.mimetype : '',
     linked_module || '', linked_ref_type || '', linked_ref_id || null, review_date || null, classification || ''
   );
-  res.status(201).json(db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/documents/:id', upload.single('file'), (req, res) => {
-  const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+app.put('/api/documents/:id', upload.single('file'), async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Document not found' });
   const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date, classification } = req.body;
   const file = req.file;
@@ -1502,7 +1502,7 @@ app.put('/api/documents/:id', upload.single('file'), (req, res) => {
     const oldPath = path.join(uploadsDir, existing.file_path);
     if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
   }
-  db.prepare(`UPDATE documents SET title=?, description=?, doc_type=?, version=?, owner=?, status=?, file_name=?, file_path=?, file_size=?, mime_type=?, linked_module=?, linked_ref_type=?, linked_ref_id=?, review_date=?, classification=?, updated_at=datetime('now') WHERE id=?`).run(
+  await db.prepare(`UPDATE documents SET title=?, description=?, doc_type=?, version=?, owner=?, status=?, file_name=?, file_path=?, file_size=?, mime_type=?, linked_module=?, linked_ref_type=?, linked_ref_id=?, review_date=?, classification=?, updated_at=datetime('now') WHERE id=?`).run(
     title || existing.title, description !== undefined ? description : existing.description,
     doc_type || existing.doc_type, version || existing.version, owner !== undefined ? owner : existing.owner,
     status || existing.status,
@@ -1515,22 +1515,22 @@ app.put('/api/documents/:id', upload.single('file'), (req, res) => {
     classification !== undefined ? classification : (existing.classification || ''),
     req.params.id
   );
-  res.json(db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id));
+  res.json(await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/documents/:id', (req, res) => {
-  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+app.delete('/api/documents/:id', async (req, res) => {
+  const doc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
   if (doc.file_path) {
     const filePath = path.join(uploadsDir, doc.file_path);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }
-  db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
-app.get('/api/documents/:id/download', (req, res) => {
-  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+app.get('/api/documents/:id/download', async (req, res) => {
+  const doc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
   if (!doc || !doc.file_path) return res.status(404).json({ error: 'File not found' });
   const filePath = path.join(uploadsDir, doc.file_path);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
@@ -1541,25 +1541,25 @@ app.get('/api/documents/:id/download', (req, res) => {
 
 // Entity type resolution helpers
 const entityResolvers = {
-  risk: id => db.prepare('SELECT id, title as name FROM risks WHERE id = ?').get(id),
-  task: id => db.prepare('SELECT id, title as name FROM tasks WHERE id = ?').get(id),
-  action: id => db.prepare('SELECT id, title as name FROM actions WHERE id = ?').get(id),
-  requirement: id => { const r = db.prepare('SELECT id, clause, title, standard FROM standard_requirements WHERE id = ?').get(id); return r ? { id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` } : null; },
-  audit: id => db.prepare('SELECT id, title as name FROM audits WHERE id = ?').get(id),
-  ncr: id => { const n = db.prepare('SELECT id, clause, description FROM non_conformities WHERE id = ?').get(id); return n ? { id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` } : null; },
-  role: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'role'").get(id),
-  process: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'process'").get(id),
-  system: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'system'").get(id),
-  asset: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'asset'").get(id),
-  facility: id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'facility'").get(id),
-  document: id => db.prepare('SELECT id, title as name FROM documents WHERE id = ?').get(id),
-  treatment: id => { const t = db.prepare('SELECT id, description FROM risk_treatments WHERE id = ?').get(id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
+  risk: id => await db.prepare('SELECT id, title as name FROM risks WHERE id = ?').get(id),
+  task: id => await db.prepare('SELECT id, title as name FROM tasks WHERE id = ?').get(id),
+  action: id => await db.prepare('SELECT id, title as name FROM actions WHERE id = ?').get(id),
+  requirement: id => { const r = await db.prepare('SELECT id, clause, title, standard FROM standard_requirements WHERE id = ?').get(id); return r ? { id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` } : null; },
+  audit: id => await db.prepare('SELECT id, title as name FROM audits WHERE id = ?').get(id),
+  ncr: id => { const n = await db.prepare('SELECT id, clause, description FROM non_conformities WHERE id = ?').get(id); return n ? { id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` } : null; },
+  role: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'role'").get(id),
+  process: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'process'").get(id),
+  system: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'system'").get(id),
+  asset: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'asset'").get(id),
+  facility: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'facility'").get(id),
+  document: id => await db.prepare('SELECT id, title as name FROM documents WHERE id = ?').get(id),
+  treatment: id => { const t = await db.prepare('SELECT id, description FROM risk_treatments WHERE id = ?').get(id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
 };
 
 // Get all cross-links for an entity
-app.get('/api/cross-links/:type/:id', (req, res) => {
+app.get('/api/cross-links/:type/:id', async (req, res) => {
   const { type, id } = req.params;
-  const links = db.prepare(`
+  const links = await db.prepare(`
     SELECT * FROM cross_links WHERE (source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?)
   `).all(type, id, type, id);
 
@@ -1576,7 +1576,7 @@ app.get('/api/cross-links/:type/:id', (req, res) => {
 });
 
 // Add a cross-link
-app.post('/api/cross-links', (req, res) => {
+app.post('/api/cross-links', async (req, res) => {
   const { source_type, source_id, target_type, target_id } = req.body;
   if (!source_type || !source_id || !target_type || !target_id) return res.status(400).json({ error: 'All fields required' });
   // Normalize order to avoid duplicates (alphabetical source_type)
@@ -1584,7 +1584,7 @@ app.post('/api/cross-links', (req, res) => {
     ? [source_type, source_id, target_type, target_id]
     : [target_type, target_id, source_type, source_id];
   try {
-    db.prepare('INSERT INTO cross_links (source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?)').run(s_type, s_id, t_type, t_id);
+    await db.prepare('INSERT INTO cross_links (source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?)').run(s_type, s_id, t_type, t_id);
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Link already exists' });
     throw e;
@@ -1593,43 +1593,43 @@ app.post('/api/cross-links', (req, res) => {
 });
 
 // Delete a cross-link
-app.delete('/api/cross-links/:id', (req, res) => {
-  db.prepare('DELETE FROM cross_links WHERE id = ?').run(req.params.id);
+app.delete('/api/cross-links/:id', async (req, res) => {
+  await db.prepare('DELETE FROM cross_links WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
 // List linkable entities by type
-app.get('/api/linkable/:type', (req, res) => {
+app.get('/api/linkable/:type', async (req, res) => {
   const { type } = req.params;
   let items = [];
-  if (type === 'risk') items = db.prepare('SELECT id, title as name FROM risks ORDER BY title').all();
-  else if (type === 'task') items = db.prepare('SELECT id, title as name FROM tasks ORDER BY title').all();
-  else if (type === 'requirement') items = db.prepare("SELECT id, clause || ' - ' || title || ' (' || standard || ')' as name FROM standard_requirements ORDER BY standard, sort_order").all();
-  else if (type === 'audit') items = db.prepare('SELECT id, title as name FROM audits ORDER BY title').all();
-  else if (type === 'role') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'role' ORDER BY name").all();
-  else if (type === 'process') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process' ORDER BY name").all();
-  else if (type === 'system') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'system' ORDER BY name").all();
-  else if (type === 'asset') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'asset' ORDER BY name").all();
-  else if (type === 'facility') items = db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'facility' ORDER BY name").all();
-  else if (type === 'document') items = db.prepare('SELECT id, title as name FROM documents ORDER BY title').all();
-  else if (type === 'ncr') items = db.prepare("SELECT id, clause || ' - ' || substr(description, 1, 60) as name FROM non_conformities ORDER BY id DESC").all();
-  else if (type === 'treatment') items = db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments ORDER BY id DESC").all();
-  else if (type === 'action') items = db.prepare('SELECT id, title as name FROM actions ORDER BY id DESC').all();
+  if (type === 'risk') items = await db.prepare('SELECT id, title as name FROM risks ORDER BY title').all();
+  else if (type === 'task') items = await db.prepare('SELECT id, title as name FROM tasks ORDER BY title').all();
+  else if (type === 'requirement') items = await db.prepare("SELECT id, clause || ' - ' || title || ' (' || standard || ')' as name FROM standard_requirements ORDER BY standard, sort_order").all();
+  else if (type === 'audit') items = await db.prepare('SELECT id, title as name FROM audits ORDER BY title').all();
+  else if (type === 'role') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'role' ORDER BY name").all();
+  else if (type === 'process') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process' ORDER BY name").all();
+  else if (type === 'system') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'system' ORDER BY name").all();
+  else if (type === 'asset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'asset' ORDER BY name").all();
+  else if (type === 'facility') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'facility' ORDER BY name").all();
+  else if (type === 'document') items = await db.prepare('SELECT id, title as name FROM documents ORDER BY title').all();
+  else if (type === 'ncr') items = await db.prepare("SELECT id, clause || ' - ' || substr(description, 1, 60) as name FROM non_conformities ORDER BY id DESC").all();
+  else if (type === 'treatment') items = await db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments ORDER BY id DESC").all();
+  else if (type === 'action') items = await db.prepare('SELECT id, title as name FROM actions ORDER BY id DESC').all();
   res.json(items);
 });
 
 // Cross-linking references endpoint (legacy for document control)
-app.get('/api/link-references', (req, res) => {
+app.get('/api/link-references', async (req, res) => {
   const { module } = req.query;
   const refs = [];
   if (module === 'audits') {
-    const reqs = db.prepare('SELECT id, clause, title, standard FROM standard_requirements ORDER BY standard, sort_order').all();
+    const reqs = await db.prepare('SELECT id, clause, title, standard FROM standard_requirements ORDER BY standard, sort_order').all();
     reqs.forEach(r => refs.push({ id: r.id, type: 'requirement', label: `${r.clause} - ${r.title} (${r.standard})` }));
   } else if (module === 'risk-management') {
-    const risks = db.prepare('SELECT id, title FROM risks ORDER BY title').all();
+    const risks = await db.prepare('SELECT id, title FROM risks ORDER BY title').all();
     risks.forEach(r => refs.push({ id: r.id, type: 'risk', label: r.title }));
   } else if (module === 'operational-planning') {
-    const tasks = db.prepare('SELECT id, title FROM tasks ORDER BY title').all();
+    const tasks = await db.prepare('SELECT id, title FROM tasks ORDER BY title').all();
     tasks.forEach(t => refs.push({ id: t.id, type: 'task', label: t.title }));
   }
   res.json(refs);
@@ -1638,84 +1638,84 @@ app.get('/api/link-references', (req, res) => {
 // ===== ADMIN API ENDPOINTS =====
 
 // Admin: System Overview Stats
-app.get('/api/admin/overview', (req, res) => {
+app.get('/api/admin/overview', async (req, res) => {
   const stats = {
     // Database stats
     databaseSize: fs.statSync(path.join(__dirname, 'tasks.db')).size,
 
     // Module counts
-    tasks: db.prepare('SELECT COUNT(*) as c FROM tasks').get().c,
-    activeTasks: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1').get().c,
-    completions: db.prepare('SELECT COUNT(*) as c FROM completions').get().c,
-    actions: db.prepare('SELECT COUNT(*) as c FROM actions').get().c,
-    openActions: db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open', 'in_progress')").get().c,
+    tasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks').get()).c,
+    activeTasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1').get()).c,
+    completions: (await db.prepare('SELECT COUNT(*) as c FROM completions').get()).c,
+    actions: (await db.prepare('SELECT COUNT(*) as c FROM actions').get()).c,
+    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open', 'in_progress')").get()).c,
 
-    risks: db.prepare('SELECT COUNT(*) as c FROM risks').get().c,
-    highRisks: db.prepare('SELECT COUNT(*) as c FROM risks WHERE (likelihood * impact) >= 15').get().c,
-    treatments: db.prepare('SELECT COUNT(*) as c FROM risk_treatments').get().c,
+    risks: (await db.prepare('SELECT COUNT(*) as c FROM risks').get()).c,
+    highRisks: (await db.prepare('SELECT COUNT(*) as c FROM risks WHERE (likelihood * impact) >= 15').get()).c,
+    treatments: (await db.prepare('SELECT COUNT(*) as c FROM risk_treatments').get()).c,
 
-    audits: db.prepare('SELECT COUNT(*) as c FROM audits').get().c,
-    plannedAudits: db.prepare("SELECT COUNT(*) as c FROM audits WHERE status = 'planned'").get().c,
-    ncrs: db.prepare('SELECT COUNT(*) as c FROM non_conformities').get().c,
-    openNcrs: db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE status IN ('open', 'in_progress')").get().c,
+    audits: (await db.prepare('SELECT COUNT(*) as c FROM audits').get()).c,
+    plannedAudits: (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE status = 'planned'").get()).c,
+    ncrs: (await db.prepare('SELECT COUNT(*) as c FROM non_conformities').get()).c,
+    openNcrs: (await db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE status IN ('open', 'in_progress')").get()).c,
 
-    requirements: db.prepare('SELECT COUNT(*) as c FROM standard_requirements').get().c,
-    documents: db.prepare('SELECT COUNT(*) as c FROM documents').get().c,
-    architecture: db.prepare('SELECT COUNT(*) as c FROM org_architecture').get().c,
+    requirements: (await db.prepare('SELECT COUNT(*) as c FROM standard_requirements').get()).c,
+    documents: (await db.prepare('SELECT COUNT(*) as c FROM documents').get()).c,
+    architecture: (await db.prepare('SELECT COUNT(*) as c FROM org_architecture').get()).c,
 
-    users: db.prepare('SELECT COUNT(*) as c FROM users').get().c,
-    activeUsers: db.prepare("SELECT COUNT(*) as c FROM users WHERE status = 'active'").get().c,
+    users: (await db.prepare('SELECT COUNT(*) as c FROM users').get()).c,
+    activeUsers: (await db.prepare("SELECT COUNT(*) as c FROM users WHERE status = 'active'").get()).c,
 
     // Recent activity
-    recentCompletions: db.prepare(`
+    recentCompletions: await db.prepare(`
       SELECT c.*, t.title as task_title
       FROM completions c JOIN tasks t ON c.task_id = t.id
       ORDER BY c.completed_at DESC LIMIT 10
     `).all(),
 
-    recentAuditLogs: db.prepare(`
+    recentAuditLogs: await db.prepare(`
       SELECT * FROM admin_audit_log ORDER BY created_at DESC LIMIT 20
     `).all(),
 
     // System health
-    lastBackup: db.prepare("SELECT * FROM backups WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1").get(),
+    lastBackup: await db.prepare("SELECT * FROM backups WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1").get(),
   };
 
   res.json(stats);
 });
 
 // Admin: Users CRUD
-app.get('/api/admin/users', (req, res) => {
+app.get('/api/admin/users', async (req, res) => {
   const { status, role } = req.query;
   let sql = 'SELECT * FROM users WHERE 1=1';
   const params = [];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (role) { sql += ' AND role = ?'; params.push(role); }
   sql += ' ORDER BY name';
-  res.json(db.prepare(sql).all(...params));
+  res.json(await db.prepare(sql).all(...params));
 });
 
-app.post('/api/admin/users', (req, res) => {
+app.post('/api/admin/users', async (req, res) => {
   const { name, email, role, department, permissions, status, expiry_date, notes } = req.body;
   if (!name || !email) return res.status(400).json({ error: 'Name and email required' });
 
   try {
-    const result = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO users (name, email, role, department, permissions, status, expiry_date, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(name, email, role || 'user', department || '', JSON.stringify(permissions || ['org','risk','ops','audit']),
            status || 'active', expiry_date || null, notes || '');
 
     logAuditAction(null, 'System', 'user_created', 'user', result.lastInsertRowid, name);
-    res.status(201).json(db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
+    res.status(201).json(await db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Email already exists' });
     throw e;
   }
 });
 
-app.put('/api/admin/users/:id', (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+app.put('/api/admin/users/:id', async (req, res) => {
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const fields = ['name', 'email', 'role', 'department', 'permissions', 'status', 'expiry_date', 'notes'];
@@ -1730,22 +1730,22 @@ app.put('/api/admin/users/:id', (req, res) => {
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
 
-  db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
   logAuditAction(null, 'System', 'user_updated', 'user', user.id, user.name);
-  res.json(db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id));
+  res.json(await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/admin/users/:id', (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+app.delete('/api/admin/users/:id', async (req, res) => {
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
   logAuditAction(null, 'System', 'user_deleted', 'user', user.id, user.name);
   res.json({ success: true });
 });
 
 // Admin: Audit Log
-app.get('/api/admin/audit-log', (req, res) => {
+app.get('/api/admin/audit-log', async (req, res) => {
   const { action, entity_type, user_name, limit = 100, offset = 0 } = req.query;
   let sql = 'SELECT * FROM admin_audit_log WHERE 1=1';
   const params = [];
@@ -1755,22 +1755,22 @@ app.get('/api/admin/audit-log', (req, res) => {
   sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
   params.push(parseInt(limit), parseInt(offset));
 
-  const logs = db.prepare(sql).all(...params);
-  const total = db.prepare('SELECT COUNT(*) as c FROM admin_audit_log').get().c;
+  const logs = await db.prepare(sql).all(...params);
+  const total = (await db.prepare('SELECT COUNT(*) as c FROM admin_audit_log').get()).c;
   res.json({ logs, total, limit: parseInt(limit), offset: parseInt(offset) });
 });
 
 // Helper function to log audit actions
 function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '') {
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO admin_audit_log (user_id, user_name, action, entity_type, entity_id, entity_name, details)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(userId, userName, action, entityType, entityId, entityName, details);
 }
 
 // Admin: System Settings
-app.get('/api/admin/settings', (req, res) => {
-  const settings = db.prepare('SELECT * FROM system_settings').all();
+app.get('/api/admin/settings', async (req, res) => {
+  const settings = await db.prepare('SELECT * FROM system_settings').all();
   const result = {};
   for (const s of settings) {
     try { result[s.key] = JSON.parse(s.value); }
@@ -1779,9 +1779,9 @@ app.get('/api/admin/settings', (req, res) => {
   res.json(result);
 });
 
-app.put('/api/admin/settings', (req, res) => {
+app.put('/api/admin/settings', async (req, res) => {
   const settings = req.body;
-  const upsert = db.prepare(`
+  const upsert = await db.prepare(`
     INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
   `);
@@ -1795,11 +1795,11 @@ app.put('/api/admin/settings', (req, res) => {
 });
 
 // Admin: API Keys
-app.get('/api/admin/api-keys', (req, res) => {
-  res.json(db.prepare("SELECT id, name, key_prefix, permissions, last_used, expires_at, status, created_at FROM api_keys ORDER BY created_at DESC").all());
+app.get('/api/admin/api-keys', async (req, res) => {
+  res.json(await db.prepare("SELECT id, name, key_prefix, permissions, last_used, expires_at, status, created_at FROM api_keys ORDER BY created_at DESC").all());
 });
 
-app.post('/api/admin/api-keys', (req, res) => {
+app.post('/api/admin/api-keys', async (req, res) => {
   const { name, permissions, expires_at } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
 
@@ -1809,7 +1809,7 @@ app.post('/api/admin/api-keys', (req, res) => {
   const keyHash = crypto.createHash('sha256').update(key).digest('hex');
   const keyPrefix = key.substring(0, 12) + '...';
 
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO api_keys (name, key_hash, key_prefix, permissions, expires_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(name, keyHash, keyPrefix, JSON.stringify(permissions || ['read']), expires_at || null);
@@ -1827,58 +1827,58 @@ app.post('/api/admin/api-keys', (req, res) => {
   });
 });
 
-app.delete('/api/admin/api-keys/:id', (req, res) => {
-  const key = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(req.params.id);
+app.delete('/api/admin/api-keys/:id', async (req, res) => {
+  const key = await db.prepare('SELECT * FROM api_keys WHERE id = ?').get(req.params.id);
   if (!key) return res.status(404).json({ error: 'API key not found' });
 
-  db.prepare("UPDATE api_keys SET status = 'revoked' WHERE id = ?").run(req.params.id);
+  await db.prepare("UPDATE api_keys SET status = 'revoked' WHERE id = ?").run(req.params.id);
   logAuditAction(null, 'System', 'api_key_revoked', 'api_key', key.id, key.name);
   res.json({ success: true });
 });
 
 // Admin: Webhooks
-app.get('/api/admin/webhooks', (req, res) => {
-  res.json(db.prepare('SELECT * FROM webhooks ORDER BY created_at DESC').all());
+app.get('/api/admin/webhooks', async (req, res) => {
+  res.json(await db.prepare('SELECT * FROM webhooks ORDER BY created_at DESC').all());
 });
 
-app.post('/api/admin/webhooks', (req, res) => {
+app.post('/api/admin/webhooks', async (req, res) => {
   const { name, url, events, secret, status } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'Name and URL required' });
 
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO webhooks (name, url, events, secret, status)
     VALUES (?, ?, ?, ?, ?)
   `).run(name, url, JSON.stringify(events || []), secret || '', status || 'active');
 
   logAuditAction(null, 'System', 'webhook_created', 'webhook', result.lastInsertRowid, name);
-  res.status(201).json(db.prepare('SELECT * FROM webhooks WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/admin/webhooks/:id', (req, res) => {
-  const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+app.put('/api/admin/webhooks/:id', async (req, res) => {
+  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
   const { name, url, events, secret, status } = req.body;
-  db.prepare(`
+  await db.prepare(`
     UPDATE webhooks SET name = ?, url = ?, events = ?, secret = ?, status = ? WHERE id = ?
   `).run(name || webhook.name, url || webhook.url, JSON.stringify(events || JSON.parse(webhook.events)),
          secret !== undefined ? secret : webhook.secret, status || webhook.status, req.params.id);
 
   logAuditAction(null, 'System', 'webhook_updated', 'webhook', webhook.id, webhook.name);
-  res.json(db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id));
+  res.json(await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/admin/webhooks/:id', (req, res) => {
-  const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+app.delete('/api/admin/webhooks/:id', async (req, res) => {
+  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
-  db.prepare('DELETE FROM webhooks WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM webhooks WHERE id = ?').run(req.params.id);
   logAuditAction(null, 'System', 'webhook_deleted', 'webhook', webhook.id, webhook.name);
   res.json({ success: true });
 });
 
 // Admin: Data Export
-app.get('/api/admin/export', (req, res) => {
+app.get('/api/admin/export', async (req, res) => {
   const { format = 'json', include } = req.query;
   const includes = include ? include.split(',') : ['tasks', 'risks', 'audits', 'architecture', 'requirements', 'documents'];
 
@@ -1888,33 +1888,33 @@ app.get('/api/admin/export', (req, res) => {
   };
 
   if (includes.includes('tasks')) {
-    data.tasks = db.prepare('SELECT * FROM tasks').all();
-    data.completions = db.prepare('SELECT * FROM completions').all();
-    data.actions = db.prepare('SELECT * FROM actions').all();
+    data.tasks = await db.prepare('SELECT * FROM tasks').all();
+    data.completions = await db.prepare('SELECT * FROM completions').all();
+    data.actions = await db.prepare('SELECT * FROM actions').all();
   }
   if (includes.includes('risks')) {
-    data.risks = db.prepare('SELECT * FROM risks').all();
-    data.treatments = db.prepare('SELECT * FROM risk_treatments').all();
+    data.risks = await db.prepare('SELECT * FROM risks').all();
+    data.treatments = await db.prepare('SELECT * FROM risk_treatments').all();
   }
   if (includes.includes('audits')) {
-    data.audits = db.prepare('SELECT * FROM audits').all();
-    data.auditChecklist = db.prepare('SELECT * FROM audit_checklist').all();
-    data.ncrs = db.prepare('SELECT * FROM non_conformities').all();
+    data.audits = await db.prepare('SELECT * FROM audits').all();
+    data.auditChecklist = await db.prepare('SELECT * FROM audit_checklist').all();
+    data.ncrs = await db.prepare('SELECT * FROM non_conformities').all();
   }
   if (includes.includes('architecture')) {
-    data.architecture = db.prepare('SELECT * FROM org_architecture').all();
-    data.kpis = db.prepare('SELECT * FROM kpis').all();
+    data.architecture = await db.prepare('SELECT * FROM org_architecture').all();
+    data.kpis = await db.prepare('SELECT * FROM kpis').all();
   }
   if (includes.includes('requirements')) {
-    data.requirements = db.prepare('SELECT * FROM standard_requirements').all();
-    data.soaEntries = db.prepare('SELECT * FROM soa_entries').all();
+    data.requirements = await db.prepare('SELECT * FROM standard_requirements').all();
+    data.soaEntries = await db.prepare('SELECT * FROM soa_entries').all();
   }
   if (includes.includes('documents')) {
-    data.documents = db.prepare('SELECT id, title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at FROM documents').all();
+    data.documents = await db.prepare('SELECT id, title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at FROM documents').all();
   }
 
   // Cross-links
-  data.crossLinks = db.prepare('SELECT * FROM cross_links').all();
+  data.crossLinks = await db.prepare('SELECT * FROM cross_links').all();
 
   logAuditAction(null, 'System', 'data_exported', 'system', null, null, `Format: ${format}, Includes: ${includes.join(',')}`);
 
@@ -1924,7 +1924,7 @@ app.get('/api/admin/export', (req, res) => {
 });
 
 // Admin: Create Backup
-app.post('/api/admin/backups', (req, res) => {
+app.post('/api/admin/backups', async (req, res) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const filename = `backup-${timestamp}.json`;
 
@@ -1932,31 +1932,31 @@ app.post('/api/admin/backups', (req, res) => {
   const data = {
     exportedAt: new Date().toISOString(),
     version: '1.0',
-    tasks: db.prepare('SELECT * FROM tasks').all(),
-    completions: db.prepare('SELECT * FROM completions').all(),
-    actions: db.prepare('SELECT * FROM actions').all(),
-    risks: db.prepare('SELECT * FROM risks').all(),
-    treatments: db.prepare('SELECT * FROM risk_treatments').all(),
-    audits: db.prepare('SELECT * FROM audits').all(),
-    auditChecklist: db.prepare('SELECT * FROM audit_checklist').all(),
-    ncrs: db.prepare('SELECT * FROM non_conformities').all(),
-    architecture: db.prepare('SELECT * FROM org_architecture').all(),
-    requirements: db.prepare('SELECT * FROM standard_requirements').all(),
-    soaEntries: db.prepare('SELECT * FROM soa_entries').all(),
-    documents: db.prepare('SELECT * FROM documents').all(),
-    kpis: db.prepare('SELECT * FROM kpis').all(),
-    kpiValues: db.prepare('SELECT * FROM kpi_values').all(),
-    crossLinks: db.prepare('SELECT * FROM cross_links').all(),
-    threatFeeds: db.prepare('SELECT * FROM threat_feeds').all(),
-    users: db.prepare('SELECT * FROM users').all(),
-    settings: db.prepare('SELECT * FROM system_settings').all(),
+    tasks: await db.prepare('SELECT * FROM tasks').all(),
+    completions: await db.prepare('SELECT * FROM completions').all(),
+    actions: await db.prepare('SELECT * FROM actions').all(),
+    risks: await db.prepare('SELECT * FROM risks').all(),
+    treatments: await db.prepare('SELECT * FROM risk_treatments').all(),
+    audits: await db.prepare('SELECT * FROM audits').all(),
+    auditChecklist: await db.prepare('SELECT * FROM audit_checklist').all(),
+    ncrs: await db.prepare('SELECT * FROM non_conformities').all(),
+    architecture: await db.prepare('SELECT * FROM org_architecture').all(),
+    requirements: await db.prepare('SELECT * FROM standard_requirements').all(),
+    soaEntries: await db.prepare('SELECT * FROM soa_entries').all(),
+    documents: await db.prepare('SELECT * FROM documents').all(),
+    kpis: await db.prepare('SELECT * FROM kpis').all(),
+    kpiValues: await db.prepare('SELECT * FROM kpi_values').all(),
+    crossLinks: await db.prepare('SELECT * FROM cross_links').all(),
+    threatFeeds: await db.prepare('SELECT * FROM threat_feeds').all(),
+    users: await db.prepare('SELECT * FROM users').all(),
+    settings: await db.prepare('SELECT * FROM system_settings').all(),
   };
 
   const content = JSON.stringify(data, null, 2);
   const size = Buffer.byteLength(content, 'utf8');
 
   // Save backup record
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO backups (filename, size, type, status) VALUES (?, ?, ?, 'completed')
   `).run(filename, size, req.body.type || 'manual');
 
@@ -1966,15 +1966,15 @@ app.post('/api/admin/backups', (req, res) => {
   fs.writeFileSync(path.join(backupsDir, filename), content);
 
   logAuditAction(null, 'System', 'backup_created', 'backup', result.lastInsertRowid, filename);
-  res.status(201).json(db.prepare('SELECT * FROM backups WHERE id = ?').get(result.lastInsertRowid));
+  res.status(201).json(await db.prepare('SELECT * FROM backups WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.get('/api/admin/backups', (req, res) => {
-  res.json(db.prepare("SELECT * FROM backups ORDER BY created_at DESC").all());
+app.get('/api/admin/backups', async (req, res) => {
+  res.json(await db.prepare("SELECT * FROM backups ORDER BY created_at DESC").all());
 });
 
-app.get('/api/admin/backups/:id/download', (req, res) => {
-  const backup = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+app.get('/api/admin/backups/:id/download', async (req, res) => {
+  const backup = await db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
   if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
   const filePath = path.join(__dirname, 'backups', backup.filename);
@@ -1983,21 +1983,21 @@ app.get('/api/admin/backups/:id/download', (req, res) => {
   res.download(filePath, backup.filename);
 });
 
-app.delete('/api/admin/backups/:id', (req, res) => {
-  const backup = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+app.delete('/api/admin/backups/:id', async (req, res) => {
+  const backup = await db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
   if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
   // Delete file
   const filePath = path.join(__dirname, 'backups', backup.filename);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-  db.prepare('DELETE FROM backups WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM backups WHERE id = ?').run(req.params.id);
   logAuditAction(null, 'System', 'backup_deleted', 'backup', backup.id, backup.filename);
   res.json({ success: true });
 });
 
 // Admin: Data Cleanup
-app.post('/api/admin/cleanup', (req, res) => {
+app.post('/api/admin/cleanup', async (req, res) => {
   const { type } = req.body;
   let result = { affected: 0 };
 
@@ -2005,13 +2005,13 @@ app.post('/api/admin/cleanup', (req, res) => {
     // Delete completions older than 1 year
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-    const r = db.prepare("DELETE FROM completions WHERE completed_at < ?").run(oneYearAgo.toISOString());
+    const r = await db.prepare("DELETE FROM completions WHERE completed_at < ?").run(oneYearAgo.toISOString());
     result.affected = r.changes;
   } else if (type === 'logs') {
     // Delete audit logs older than 90 days
     const ninetyDaysAgo = new Date();
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const r = db.prepare("DELETE FROM admin_audit_log WHERE created_at < ?").run(ninetyDaysAgo.toISOString());
+    const r = await db.prepare("DELETE FROM admin_audit_log WHERE created_at < ?").run(ninetyDaysAgo.toISOString());
     result.affected = r.changes;
   }
 
@@ -2020,7 +2020,7 @@ app.post('/api/admin/cleanup', (req, res) => {
 });
 
 // Admin: Data Import
-app.post('/api/admin/import', (req, res) => {
+app.post('/api/admin/import', async (req, res) => {
   const data = req.body;
   const result = { imported: {}, errors: [] };
 
@@ -2028,7 +2028,7 @@ app.post('/api/admin/import', (req, res) => {
     // Import tasks
     if (data.tasks && Array.isArray(data.tasks)) {
       let count = 0;
-      const insertTask = db.prepare(`
+      const insertTask = await db.prepare(`
         INSERT OR IGNORE INTO tasks (title, description, assignee, category, priority, recurrence, next_due, is_active, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
@@ -2045,7 +2045,7 @@ app.post('/api/admin/import', (req, res) => {
     // Import risks
     if (data.risks && Array.isArray(data.risks)) {
       let count = 0;
-      const insertRisk = db.prepare(`
+      const insertRisk = await db.prepare(`
         INSERT OR IGNORE INTO risks (title, description, category, status, owner, threat, vulnerability, asset_system, likelihood, impact, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
@@ -2063,7 +2063,7 @@ app.post('/api/admin/import', (req, res) => {
     // Import architecture items
     if (data.architecture && Array.isArray(data.architecture)) {
       let count = 0;
-      const insertArch = db.prepare(`
+      const insertArch = await db.prepare(`
         INSERT OR IGNORE INTO org_architecture (arch_type, name, description, owner, parent_id, status, created_at)
         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
       `);
@@ -2080,7 +2080,7 @@ app.post('/api/admin/import', (req, res) => {
     // Import requirements
     if (data.requirements && Array.isArray(data.requirements)) {
       let count = 0;
-      const insertReq = db.prepare(`
+      const insertReq = await db.prepare(`
         INSERT OR IGNORE INTO standard_requirements (standard, clause, title, description, guidance, status, created_at)
         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
       `);
@@ -2097,7 +2097,7 @@ app.post('/api/admin/import', (req, res) => {
     // Import documents
     if (data.documents && Array.isArray(data.documents)) {
       let count = 0;
-      const insertDoc = db.prepare(`
+      const insertDoc = await db.prepare(`
         INSERT OR IGNORE INTO documents (title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
@@ -2115,7 +2115,7 @@ app.post('/api/admin/import', (req, res) => {
     // Import audits
     if (data.audits && Array.isArray(data.audits)) {
       let count = 0;
-      const insertAudit = db.prepare(`
+      const insertAudit = await db.prepare(`
         INSERT OR IGNORE INTO audits (title, type, standard, lead_auditor, scope, status, scheduled_date, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
@@ -2138,7 +2138,7 @@ app.post('/api/admin/import', (req, res) => {
 
 // Admin: Test Webhook
 app.post('/api/admin/webhooks/:id/test', async (req, res) => {
-  const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
   const testPayload = {
@@ -2186,22 +2186,22 @@ app.post('/api/admin/webhooks/:id/test', async (req, res) => {
     });
 
     // Update last triggered
-    db.prepare("UPDATE webhooks SET last_triggered = datetime('now') WHERE id = ?").run(webhook.id);
+    await db.prepare("UPDATE webhooks SET last_triggered = datetime('now') WHERE id = ?").run(webhook.id);
 
     res.json({ success: true, statusCode: result.statusCode, response: result.body });
   } catch (err) {
     // Increment failure count
-    db.prepare("UPDATE webhooks SET failure_count = failure_count + 1 WHERE id = ?").run(webhook.id);
+    await db.prepare("UPDATE webhooks SET failure_count = failure_count + 1 WHERE id = ?").run(webhook.id);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // Admin: Reset Webhook Failures
-app.post('/api/admin/webhooks/:id/reset-failures', (req, res) => {
-  const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+app.post('/api/admin/webhooks/:id/reset-failures', async (req, res) => {
+  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
-  db.prepare("UPDATE webhooks SET failure_count = 0 WHERE id = ?").run(req.params.id);
+  await db.prepare("UPDATE webhooks SET failure_count = 0 WHERE id = ?").run(req.params.id);
   res.json({ success: true });
 });
 
@@ -2210,8 +2210,8 @@ app.post('/api/admin/webhooks/:id/reset-failures', (req, res) => {
 // SAML config is initialized in db.js seedSQLiteData()/seedPostgresData()
 
 // Get SAML configuration
-app.get('/api/admin/saml/config', (req, res) => {
-  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+app.get('/api/admin/saml/config', async (req, res) => {
+  const config = await db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
   // Don't expose the full certificate in the API response
   if (config && config.certificate) {
     config.has_certificate = config.certificate.length > 0;
@@ -2221,19 +2221,19 @@ app.get('/api/admin/saml/config', (req, res) => {
 });
 
 // Update SAML configuration
-app.put('/api/admin/saml/config', (req, res) => {
+app.put('/api/admin/saml/config', async (req, res) => {
   const {
     enabled, entity_id, sso_url, slo_url, certificate,
     name_id_format, attribute_mapping, auto_provision,
     default_role, allowed_domains
   } = req.body;
 
-  const current = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+  const current = await db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
 
   // Only update certificate if a new one is provided
   const certToStore = certificate && certificate !== '[CONFIGURED]' ? certificate : (current?.certificate || '');
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE saml_config SET
       enabled = ?,
       entity_id = ?,
@@ -2265,8 +2265,8 @@ app.put('/api/admin/saml/config', (req, res) => {
 });
 
 // Generate Service Provider metadata
-app.get('/saml/metadata', (req, res) => {
-  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+app.get('/saml/metadata', async (req, res) => {
+  const config = await db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
   const baseUrl = `${req.protocol}://${req.get('host')}`;
 
   const metadata = `<?xml version="1.0" encoding="UTF-8"?>
@@ -2288,8 +2288,8 @@ app.get('/saml/metadata', (req, res) => {
 });
 
 // Initiate SAML login
-app.get('/saml/login', (req, res) => {
-  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+app.get('/saml/login', async (req, res) => {
+  const config = await db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
 
   if (!config || !config.enabled) {
     return res.status(400).json({ error: 'SAML SSO is not enabled' });
@@ -2324,8 +2324,8 @@ app.get('/saml/login', (req, res) => {
 });
 
 // Handle SAML callback (Assertion Consumer Service)
-app.post('/saml/callback', express.urlencoded({ extended: true }), (req, res) => {
-  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+app.post('/saml/callback', express.urlencoded({ extended: true }), async (req, res) => {
+  const config = await db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
 
   if (!config || !config.enabled) {
     return res.status(400).send('SAML SSO is not enabled');
@@ -2369,29 +2369,29 @@ app.post('/saml/callback', express.urlencoded({ extended: true }), (req, res) =>
     }
 
     // Find or create user
-    let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    let user = await db.prepare('SELECT * FROM users WHERE email = ?').get(email);
 
     if (!user && config.auto_provision) {
       // Create new user
-      const result = db.prepare(`
+      const result = await db.prepare(`
         INSERT INTO users (name, email, role, permissions, status, sso_provider)
         VALUES (?, ?, ?, ?, 'active', 'saml')
       `).run(name, email, config.default_role || 'user', JSON.stringify(['org', 'risk', 'ops', 'audit']));
 
-      user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+      user = await db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
       logAuditAction(user.id, user.name, 'user_provisioned_saml', 'user', user.id, user.name);
     } else if (!user) {
       return res.status(403).send('User not found and auto-provisioning is disabled');
     } else {
       // Update last login
-      db.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?").run(user.id);
+      await db.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?").run(user.id);
     }
 
     // Create session
     const sessionId = require('crypto').randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO saml_sessions (id, user_id, name_id, expires_at)
       VALUES (?, ?, ?, ?)
     `).run(sessionId, user.id, email, expiresAt);
@@ -2421,12 +2421,12 @@ app.post('/saml/callback', express.urlencoded({ extended: true }), (req, res) =>
 });
 
 // SAML logout
-app.get('/saml/logout', (req, res) => {
+app.get('/saml/logout', async (req, res) => {
   const sessionId = req.query.session;
   if (sessionId) {
-    const session = db.prepare('SELECT * FROM saml_sessions WHERE id = ?').get(sessionId);
+    const session = await db.prepare('SELECT * FROM saml_sessions WHERE id = ?').get(sessionId);
     if (session) {
-      db.prepare('DELETE FROM saml_sessions WHERE id = ?').run(sessionId);
+      await db.prepare('DELETE FROM saml_sessions WHERE id = ?').run(sessionId);
       logAuditAction(session.user_id, 'User', 'saml_logout', 'user', session.user_id, session.name_id);
     }
   }
@@ -2434,13 +2434,13 @@ app.get('/saml/logout', (req, res) => {
 });
 
 // Validate SAML session
-app.get('/api/auth/session', (req, res) => {
+app.get('/api/auth/session', async (req, res) => {
   const sessionId = req.headers['x-saml-session'];
   if (!sessionId) {
     return res.json({ authenticated: false });
   }
 
-  const session = db.prepare(`
+  const session = await db.prepare(`
     SELECT s.*, u.name, u.email, u.role, u.permissions
     FROM saml_sessions s
     JOIN users u ON s.user_id = u.id
@@ -2464,8 +2464,8 @@ app.get('/api/auth/session', (req, res) => {
 });
 
 // Test SAML configuration
-app.post('/api/admin/saml/test', (req, res) => {
-  const config = db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
+app.post('/api/admin/saml/test', async (req, res) => {
+  const config = await db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
 
   const issues = [];
   if (!config.entity_id) issues.push('Identity Provider Entity ID is not configured');
@@ -2503,7 +2503,7 @@ app.post('/api/admin/saml/test', (req, res) => {
 // Database migrations and seeding are handled in db.js
 
 // SPA fallback
-app.get('*', (req, res) => {
+app.get('*', async (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
