@@ -1,8 +1,8 @@
 # Let The Frame Work - Cloud Run Deployment
-# Use official Node.js LTS image
+# Supports both SQLite (local dev) and PostgreSQL (production)
 FROM node:20-alpine
 
-# Install dependencies for better-sqlite3
+# Install dependencies for better-sqlite3 (needed for local SQLite mode)
 RUN apk add --no-cache python3 make g++
 
 # Create app directory
@@ -11,20 +11,23 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install dependencies (includes both better-sqlite3 and pg)
 RUN npm ci --only=production
 
 # Copy app source
 COPY . .
 
-# Create data directory for SQLite
-RUN mkdir -p /app/data
+# Create directories for uploads and backups
+RUN mkdir -p /app/uploads /app/backups
 
 # Expose port
 EXPOSE 8080
 
-# Set environment variable for port (Cloud Run uses 8080)
+# Set environment variables
+# PORT: Cloud Run uses 8080
+# DB_TYPE: Set to 'postgresql' for Cloud SQL, default 'sqlite' for local
 ENV PORT=8080
+ENV DB_TYPE=sqlite
 
 # Start the application
 CMD ["node", "server.js"]

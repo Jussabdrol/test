@@ -7,7 +7,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/lettheframework']
 
-  # Deploy container image to Cloud Run
+  # Deploy container image to Cloud Run with Cloud SQL
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -29,6 +29,19 @@ steps:
       - '1'
       - '--max-instances'
       - '10'
+      # Cloud SQL connection (uncomment and configure for PostgreSQL)
+      # - '--add-cloudsql-instances'
+      # - '${PROJECT_ID}:us-central1:lettheframework-db'
+      # - '--set-env-vars'
+      # - 'DB_TYPE=postgresql,CLOUD_SQL_CONNECTION_NAME=${PROJECT_ID}:us-central1:lettheframework-db,DB_USER=appuser,DB_NAME=lettheframework'
+      # - '--set-secrets'
+      # - 'DB_PASSWORD=db-password:latest'
+
+# Substitution variables (can be overridden)
+substitutions:
+  _DB_INSTANCE_NAME: 'lettheframework-db'
+  _DB_NAME: 'lettheframework'
+  _DB_USER: 'appuser'
 
 images:
   - 'gcr.io/$PROJECT_ID/lettheframework'

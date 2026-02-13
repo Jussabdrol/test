@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const Database = require('better-sqlite3');
+const db = require('./db');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const session = require('express-session');
@@ -75,447 +75,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(uploadsDir));
 
 // --- Database Setup ---
-const db = new Database(path.join(__dirname, 'tasks.db'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    assignee TEXT DEFAULT '',
-    category TEXT DEFAULT 'General',
-    priority TEXT DEFAULT 'Medium' CHECK(priority IN ('Low','Medium','High','Critical')),
-    recurrence TEXT NOT NULL DEFAULT 'daily' CHECK(recurrence IN ('daily','weekly','biweekly','monthly','quarterly','yearly','custom')),
-    custom_days INTEGER DEFAULT NULL,
-    day_of_week INTEGER DEFAULT NULL,
-    day_of_month INTEGER DEFAULT NULL,
-    start_date TEXT NOT NULL,
-    next_due TEXT NOT NULL,
-    is_active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS completions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER NOT NULL,
-    completed_by TEXT DEFAULT '',
-    completed_at TEXT DEFAULT (datetime('now')),
-    notes TEXT DEFAULT '',
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS actions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    completion_id INTEGER NOT NULL,
-    task_id INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    assignee TEXT DEFAULT '',
-    priority TEXT DEFAULT 'Medium' CHECK(priority IN ('Low','Medium','High','Critical')),
-    status TEXT DEFAULT 'open' CHECK(status IN ('open','in_progress','resolved','closed')),
-    due_date TEXT DEFAULT NULL,
-    resolved_by TEXT DEFAULT '',
-    resolved_at TEXT DEFAULT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (completion_id) REFERENCES completions(id) ON DELETE CASCADE,
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS audits (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    standard TEXT DEFAULT 'ISO 9001',
-    scope TEXT DEFAULT '',
-    lead_auditor TEXT DEFAULT '',
-    audit_team TEXT DEFAULT '',
-    auditee TEXT DEFAULT '',
-    status TEXT DEFAULT 'planned' CHECK(status IN ('planned','in_progress','completed','cancelled')),
-    planned_date TEXT DEFAULT NULL,
-    completed_date TEXT DEFAULT NULL,
-    summary TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS audit_checklist (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    audit_id INTEGER NOT NULL,
-    clause TEXT NOT NULL,
-    requirement TEXT DEFAULT '',
-    evidence TEXT DEFAULT '',
-    finding TEXT DEFAULT '',
-    rating TEXT DEFAULT 'not_assessed' CHECK(rating IN ('not_assessed','conforming','observation','minor_nc','major_nc')),
-    notes TEXT DEFAULT '',
-    sort_order INTEGER DEFAULT 0,
-    FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS non_conformities (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    audit_id INTEGER NOT NULL,
-    checklist_item_id INTEGER DEFAULT NULL,
-    clause TEXT DEFAULT '',
-    description TEXT NOT NULL,
-    severity TEXT DEFAULT 'minor' CHECK(severity IN ('minor','major')),
-    root_cause TEXT DEFAULT '',
-    correction TEXT DEFAULT '',
-    corrective_action TEXT DEFAULT '',
-    responsible TEXT DEFAULT '',
-    due_date TEXT DEFAULT NULL,
-    status TEXT DEFAULT 'open' CHECK(status IN ('open','in_progress','closed','verified')),
-    closed_date TEXT DEFAULT NULL,
-    verification_notes TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (audit_id) REFERENCES audits(id) ON DELETE CASCADE,
-    FOREIGN KEY (checklist_item_id) REFERENCES audit_checklist(id) ON DELETE SET NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS standard_requirements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    standard TEXT NOT NULL DEFAULT 'ISO 9001',
-    clause TEXT NOT NULL,
-    title TEXT NOT NULL DEFAULT '',
-    description TEXT DEFAULT '',
-    category TEXT DEFAULT '',
-    sort_order INTEGER DEFAULT 0,
-    owner TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS risks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    category TEXT DEFAULT 'Information Security',
-    source TEXT DEFAULT '',
-    asset TEXT DEFAULT '',
-    threat TEXT DEFAULT '',
-    vulnerability TEXT DEFAULT '',
-    likelihood INTEGER DEFAULT 3 CHECK(likelihood BETWEEN 1 AND 5),
-    impact INTEGER DEFAULT 3 CHECK(impact BETWEEN 1 AND 5),
-    inherent_score INTEGER GENERATED ALWAYS AS (likelihood * impact) STORED,
-    risk_owner TEXT DEFAULT '',
-    status TEXT DEFAULT 'identified' CHECK(status IN ('identified','analyzing','treating','accepted','closed')),
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS risk_treatments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    risk_id INTEGER NOT NULL,
-    treatment_type TEXT DEFAULT 'mitigate' CHECK(treatment_type IN ('mitigate','accept','transfer','avoid')),
-    description TEXT DEFAULT '',
-    control_reference TEXT DEFAULT '',
-    requirement_id INTEGER DEFAULT NULL,
-    responsible TEXT DEFAULT '',
-    due_date TEXT DEFAULT NULL,
-    status TEXT DEFAULT 'planned' CHECK(status IN ('planned','in_progress','implemented','verified')),
-    residual_likelihood INTEGER DEFAULT NULL,
-    residual_impact INTEGER DEFAULT NULL,
-    notes TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (risk_id) REFERENCES risks(id) ON DELETE CASCADE,
-    FOREIGN KEY (requirement_id) REFERENCES standard_requirements(id) ON DELETE SET NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS soa_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    requirement_id INTEGER NOT NULL,
-    applicable INTEGER DEFAULT 1,
-    justification TEXT DEFAULT '',
-    implementation_status TEXT DEFAULT 'not_implemented' CHECK(implementation_status IN ('not_implemented','partial','implemented')),
-    notes TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (requirement_id) REFERENCES standard_requirements(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS org_mission (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    content TEXT DEFAULT '',
-    vision TEXT DEFAULT '',
-    values_text TEXT DEFAULT '',
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS org_kpis (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    module TEXT DEFAULT 'custom',
-    target_value REAL DEFAULT NULL,
-    unit TEXT DEFAULT '',
-    frequency TEXT DEFAULT 'monthly',
-    is_auto INTEGER DEFAULT 0,
-    auto_source TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS org_kpi_values (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    kpi_id INTEGER NOT NULL,
-    value REAL NOT NULL,
-    period TEXT NOT NULL,
-    recorded_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (kpi_id) REFERENCES org_kpis(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS org_architecture (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    arch_type TEXT NOT NULL CHECK(arch_type IN ('role','process','system','asset','facility')),
-    name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    parent_id INTEGER DEFAULT NULL,
-    owner TEXT DEFAULT '',
-    status TEXT DEFAULT 'active',
-    metadata TEXT DEFAULT '{}',
-    sort_order INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS documents (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    doc_type TEXT DEFAULT 'policy' CHECK(doc_type IN ('policy','procedure','work_instruction','record','form','report','other')),
-    version TEXT DEFAULT '1.0',
-    owner TEXT DEFAULT '',
-    status TEXT DEFAULT 'draft' CHECK(status IN ('draft','review','approved','obsolete')),
-    file_name TEXT DEFAULT '',
-    file_path TEXT DEFAULT '',
-    file_size INTEGER DEFAULT 0,
-    mime_type TEXT DEFAULT '',
-    linked_module TEXT DEFAULT '',
-    linked_ref_type TEXT DEFAULT '',
-    linked_ref_id INTEGER DEFAULT NULL,
-    review_date TEXT DEFAULT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS cross_links (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_type TEXT NOT NULL,
-    source_id INTEGER NOT NULL,
-    target_type TEXT NOT NULL,
-    target_id INTEGER NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(source_type, source_id, target_type, target_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS threat_feeds (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    url TEXT NOT NULL,
-    tier INTEGER DEFAULT 1 CHECK(tier BETWEEN 1 AND 4),
-    enabled INTEGER DEFAULT 1,
-    last_fetched TEXT DEFAULT NULL,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS threat_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    feed_id INTEGER NOT NULL,
-    guid TEXT NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    link TEXT DEFAULT '',
-    pub_date TEXT DEFAULT '',
-    status TEXT DEFAULT 'new' CHECK(status IN ('new','reviewed','dismissed','risk_created')),
-    created_risk_id INTEGER DEFAULT NULL,
-    fetched_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (feed_id) REFERENCES threat_feeds(id) ON DELETE CASCADE,
-    UNIQUE(feed_id, guid)
-  );
-
-  -- Admin: Users table
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT DEFAULT NULL,
-    role TEXT DEFAULT 'user' CHECK(role IN ('viewer','user','manager','admin')),
-    department TEXT DEFAULT '',
-    permissions TEXT DEFAULT '["org","risk","ops","audit"]',
-    status TEXT DEFAULT 'active' CHECK(status IN ('active','pending','suspended','inactive')),
-    last_active TEXT DEFAULT NULL,
-    expiry_date TEXT DEFAULT NULL,
-    notes TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  -- Admin: System settings
-  CREATE TABLE IF NOT EXISTS system_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  -- Admin: Audit log
-  CREATE TABLE IF NOT EXISTS admin_audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER DEFAULT NULL,
-    user_name TEXT DEFAULT 'System',
-    action TEXT NOT NULL,
-    entity_type TEXT DEFAULT NULL,
-    entity_id INTEGER DEFAULT NULL,
-    entity_name TEXT DEFAULT NULL,
-    details TEXT DEFAULT '',
-    ip_address TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  -- Admin: API keys
-  CREATE TABLE IF NOT EXISTS api_keys (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    key_hash TEXT NOT NULL,
-    key_prefix TEXT NOT NULL,
-    permissions TEXT DEFAULT '["read"]',
-    last_used TEXT DEFAULT NULL,
-    expires_at TEXT DEFAULT NULL,
-    status TEXT DEFAULT 'active' CHECK(status IN ('active','revoked')),
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  -- Admin: Webhooks
-  CREATE TABLE IF NOT EXISTS webhooks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    url TEXT NOT NULL,
-    events TEXT DEFAULT '[]',
-    secret TEXT DEFAULT '',
-    status TEXT DEFAULT 'active' CHECK(status IN ('active','paused')),
-    last_triggered TEXT DEFAULT NULL,
-    failure_count INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  -- Admin: Backups
-  CREATE TABLE IF NOT EXISTS backups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    filename TEXT NOT NULL,
-    size INTEGER DEFAULT 0,
-    type TEXT DEFAULT 'manual' CHECK(type IN ('manual','scheduled')),
-    status TEXT DEFAULT 'completed' CHECK(status IN ('in_progress','completed','failed')),
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  -- SAML/SSO Configuration
-  CREATE TABLE IF NOT EXISTS saml_config (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    enabled INTEGER DEFAULT 0,
-    entity_id TEXT DEFAULT '',
-    sso_url TEXT DEFAULT '',
-    slo_url TEXT DEFAULT '',
-    certificate TEXT DEFAULT '',
-    name_id_format TEXT DEFAULT 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
-    attribute_mapping TEXT DEFAULT '{"email":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress","name":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/displayname","groups":"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"}',
-    auto_provision INTEGER DEFAULT 1,
-    default_role TEXT DEFAULT 'user',
-    allowed_domains TEXT DEFAULT '',
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-
-  -- SAML Sessions
-  CREATE TABLE IF NOT EXISTS saml_sessions (
-    id TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    name_id TEXT NOT NULL,
-    session_index TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now')),
-    expires_at TEXT NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-`);
-
-// Migration: Add password column to users table if it doesn't exist
-try {
-  db.exec(`ALTER TABLE users ADD COLUMN password TEXT DEFAULT NULL`);
-} catch (e) {
-  // Column already exists, ignore error
-}
-
-// Seed default admin user if no users with password exist
-const userWithPasswordCount = db.prepare('SELECT COUNT(*) as c FROM users WHERE password IS NOT NULL').get().c;
-if (userWithPasswordCount === 0) {
-  const bcryptSync = require('bcryptjs');
-  const hashedPassword = bcryptSync.hashSync('Hey!', 10);
-  try {
-    db.prepare(`
-      INSERT INTO users (name, email, password, role, status)
-      VALUES (?, ?, ?, 'admin', 'active')
-    `).run('Henk', 'admin@lettheframework.local', hashedPassword);
-    console.log('Default admin user created: admin@lettheframework.local');
-  } catch (e) {
-    // User might already exist
-  }
-}
-
-// Seed default threat feeds if none exist
-const feedCount = db.prepare('SELECT COUNT(*) as c FROM threat_feeds').get().c;
-if (feedCount === 0) {
-  const defaultFeeds = [
-    // Tier 1 - Authority
-    { name: 'CERT-EU Latest', url: 'https://cert.europa.eu/publications/security-advisories/rss', tier: 1 },
-    { name: 'NCSC-UK Advisories', url: 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml', tier: 1 },
-    { name: 'ENISA News', url: 'https://www.enisa.europa.eu/rss.xml', tier: 1 },
-    // Tier 2 - Early Warning
-    { name: 'CISA Advisories', url: 'https://www.cisa.gov/cybersecurity-advisories/all.xml', tier: 2 },
-    { name: 'US-CERT Alerts', url: 'https://www.us-cert.gov/ncas/alerts.xml', tier: 2 },
-    // Tier 3 - Context
-    { name: 'SANS ISC', url: 'https://isc.sans.edu/rssfeed_full.xml', tier: 3 },
-    { name: 'Schneier on Security', url: 'https://www.schneier.com/feed/atom/', tier: 3 },
-    { name: 'Krebs on Security', url: 'https://krebsonsecurity.com/feed/', tier: 3 },
-    // Tier 4 - Technical
-    { name: 'NVD CVE Feed', url: 'https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml', tier: 4 },
-    { name: 'Exploit-DB', url: 'https://www.exploit-db.com/rss.xml', tier: 4 },
-  ];
-  const ins = db.prepare('INSERT INTO threat_feeds (name, url, tier) VALUES (?, ?, ?)');
-  for (const f of defaultFeeds) ins.run(f.name, f.url, f.tier);
-}
-
-// Migration: add owner column if missing
-try { db.exec("ALTER TABLE standard_requirements ADD COLUMN owner TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
-
-// Migration: add classification column to documents
-try { db.exec("ALTER TABLE documents ADD COLUMN classification TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
-
-// Migration: add linked_processes column to soa_entries (JSON array of process IDs)
-try { db.exec("ALTER TABLE soa_entries ADD COLUMN linked_processes TEXT DEFAULT '[]'"); } catch(e) { /* already exists */ }
-
-// Migration: add auditee column to audits
-try { db.exec("ALTER TABLE audits ADD COLUMN auditee TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
-
-// Migration: add recurrence fields to audits
-try { db.exec("ALTER TABLE audits ADD COLUMN recurrence TEXT DEFAULT 'none'"); } catch(e) { /* already exists */ }
-try { db.exec("ALTER TABLE audits ADD COLUMN recurrence_end_date TEXT DEFAULT NULL"); } catch(e) { /* already exists */ }
-try { db.exec("ALTER TABLE audits ADD COLUMN parent_audit_id INTEGER DEFAULT NULL"); } catch(e) { /* already exists */ }
-try { db.exec("ALTER TABLE audits ADD COLUMN instance_number INTEGER DEFAULT 1"); } catch(e) { /* already exists */ }
-
-// Migration: add standards field (JSON array) to audits for multi-standard audits
-try { db.exec("ALTER TABLE audits ADD COLUMN standards TEXT DEFAULT '[]'"); } catch(e) { /* already exists */ }
-
-// Migration: add standard field to audit_checklist to track which standard each item belongs to
-try { db.exec("ALTER TABLE audit_checklist ADD COLUMN standard TEXT DEFAULT ''"); } catch(e) { /* already exists */ }
-
-// Migration: add evidence_files field (JSON array) to audit_checklist for file evidence
-try { db.exec("ALTER TABLE audit_checklist ADD COLUMN evidence_files TEXT DEFAULT '[]'"); } catch(e) { /* already exists */ }
-
-// Migration: add regulatory column to soa_entries
-try { db.exec("ALTER TABLE soa_entries ADD COLUMN regulatory INTEGER DEFAULT 0"); } catch(e) { /* already exists */ }
-
-// Ensure org_mission has at least one row
-const missionRow = db.prepare('SELECT COUNT(*) as c FROM org_mission').get();
-if (missionRow.c === 0) { db.prepare("INSERT INTO org_mission (content) VALUES ('')").run(); }
+// Database is initialized via db.initDatabase() in startServer() below
+// Schema and migrations are handled in db.js and schema.js
+// Supports both SQLite (local) and PostgreSQL (Cloud Run) via DB_TYPE env var
 
 // --- Helper: compute next due date ---
 function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth) {
@@ -2645,8 +2207,7 @@ app.post('/api/admin/webhooks/:id/reset-failures', (req, res) => {
 
 // ===== SAML/SSO ENDPOINTS =====
 
-// Initialize SAML config if not exists
-db.prepare(`INSERT OR IGNORE INTO saml_config (id) VALUES (1)`).run();
+// SAML config is initialized in db.js seedSQLiteData()/seedPostgresData()
 
 // Get SAML configuration
 app.get('/api/admin/saml/config', (req, res) => {
@@ -2939,21 +2500,7 @@ app.post('/api/admin/saml/test', (req, res) => {
   });
 });
 
-// Add sso_provider column to users if not exists
-try {
-  db.prepare("SELECT sso_provider FROM users LIMIT 1").get();
-} catch {
-  db.prepare("ALTER TABLE users ADD COLUMN sso_provider TEXT DEFAULT ''").run();
-}
-
-// Seed default admin user if none exist
-const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
-if (userCount === 0) {
-  db.prepare(`
-    INSERT INTO users (name, email, role, permissions, status)
-    VALUES ('System Administrator', 'admin@example.com', 'admin', '["org","risk","ops","audit","admin"]', 'active')
-  `).run();
-}
+// Database migrations and seeding are handled in db.js
 
 // SPA fallback
 app.get('*', (req, res) => {
@@ -2975,6 +2522,20 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled rejection at:', promise, 'reason:', reason);
 });
 
-app.listen(PORT, () => {
-  console.log(`Let The Frame Work running at http://localhost:${PORT}`);
-});
+// Start server with database initialization
+async function startServer() {
+  try {
+    // Initialize database (SQLite or PostgreSQL based on DB_TYPE env var)
+    await db.initDatabase();
+    console.log(`Database type: ${db.isPostgreSQL() ? 'PostgreSQL' : 'SQLite'}`);
+
+    app.listen(PORT, () => {
+      console.log(`Let The Frame Work running at http://localhost:${PORT}`);
+    });
+  } catch (err) {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  }
+}
+
+startServer();
