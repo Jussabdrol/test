@@ -1,0 +1,51 @@
+version: '3.8'
+
+# Local development environment with PostgreSQL
+# Usage:
+#   docker-compose up -d        # Start PostgreSQL
+#   npm run dev:pg              # Run app with PostgreSQL
+#   docker-compose down         # Stop PostgreSQL
+#   docker-compose down -v      # Stop and remove data
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: lettheframework-db
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: localdev123
+      POSTGRES_DB: lettheframework
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d lettheframework"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Optional: Run the app in Docker too (for full container testing)
+  app:
+    build: .
+    container_name: lettheframework-app
+    environment:
+      PORT: 8080
+      DB_TYPE: postgresql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: appuser
+      DB_PASSWORD: localdev123
+      DB_NAME: lettheframework
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+    profiles:
+      - full  # Only starts with: docker-compose --profile full up
+
+volumes:
+  postgres_data:

@@ -5,7 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "dev:pg": "DB_TYPE=postgresql DB_HOST=localhost DB_PORT=5432 DB_USER=appuser DB_PASSWORD=localdev123 DB_NAME=lettheframework node server.js",
+    "db:start": "docker-compose up -d postgres",
+    "db:stop": "docker-compose down",
+    "db:reset": "docker-compose down -v && docker-compose up -d postgres"
   },
   "engines": {
     "node": ">=20.0.0"
