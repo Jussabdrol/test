@@ -542,7 +542,7 @@ app.get('/api/audits', async (req, res) => {
   const parentAudits = await db.prepare(sql).all(...params);
 
   // Helper function to get audit stats
-  const getAuditStats = (auditId) => ({
+  const getAuditStats = async (auditId) => ({
     checklist_count: (await db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(auditId)).c,
     assessed_count: (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(auditId)).c,
     nc_count: (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(auditId)).c,
@@ -552,13 +552,13 @@ app.get('/api/audits', async (req, res) => {
 
   // Attach counts and ALL events (including parent as event #1) for each parent
   for (const a of parentAudits) {
-    const parentStats = getAuditStats(a.id);
+    const parentStats = await getAuditStats(a.id);
     Object.assign(a, parentStats);
 
     // Get child events for recurring audits
     const childAudits = await db.prepare('SELECT * FROM audits WHERE parent_audit_id = ? ORDER BY instance_number, planned_date').all(a.id);
     for (const c of childAudits) {
-      Object.assign(c, getAuditStats(c.id));
+      Object.assign(c, await getAuditStats(c.id));
     }
     a.child_events = childAudits;
 
@@ -613,59 +613,55 @@ app.post('/api/audits', async (req, res) => {
   const standardsArray = standards && Array.isArray(standards) ? standards : (standard ? [standard] : ['ISO 9001']);
   const primaryStandard = standardsArray[0] || 'ISO 9001';
 
-  const createAudit = db.transaction(() => {
-    // Create the parent audit (instance 1)
-    const result = await db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1
-    );
-    const parentAuditId = result.lastInsertRowid;
+  // Create the parent audit (instance 1)
+  const result = await db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1
+  );
+  const parentAuditId = result.lastInsertRowid;
 
-    // Auto-create checklist items from selected requirements, including the standard
-    if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
-      const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
-      const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
-      let order = 1;
-      for (const reqId of requirement_ids) {
-        const req = getReq.get(reqId);
-        if (req) {
-          insertCl.run(parentAuditId, req.clause, req.title, req.standard, order++);
-        }
+  // Auto-create checklist items from selected requirements, including the standard
+  if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
+    const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
+    const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
+    let order = 1;
+    for (const reqId of requirement_ids) {
+      const req = await getReq.get(reqId);
+      if (req) {
+        await insertCl.run(parentAuditId, req.clause, req.title, req.standard, order++);
       }
     }
+  }
 
-    // Create recurring audit events as child audits if recurrence is set
-    if (recurrence && recurrence !== 'none' && planned_date && recurrence_end_date) {
-      let nextDate = getNextRecurrenceDate(planned_date, recurrence);
-      const endDate = new Date(recurrence_end_date);
-      let instanceNum = 2;
+  // Create recurring audit events as child audits if recurrence is set
+  if (recurrence && recurrence !== 'none' && planned_date && recurrence_end_date) {
+    let nextDate = getNextRecurrenceDate(planned_date, recurrence);
+    const endDate = new Date(recurrence_end_date);
+    let instanceNum = 2;
 
-      while (nextDate && new Date(nextDate) <= endDate) {
-        const recurResult = await db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-          title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date, parentAuditId, instanceNum
-        );
+    while (nextDate && new Date(nextDate) <= endDate) {
+      const recurResult = await db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date, parentAuditId, instanceNum
+      );
 
-        // Copy checklist items to recurring audit
-        if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
-          const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
-          const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
-          let order = 1;
-          for (const reqId of requirement_ids) {
-            const req = getReq.get(reqId);
-            if (req) {
-              insertCl.run(recurResult.lastInsertRowid, req.clause, req.title, req.standard, order++);
-            }
+      // Copy checklist items to recurring audit
+      if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
+        const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
+        const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
+        let order = 1;
+        for (const reqId of requirement_ids) {
+          const req = await getReq.get(reqId);
+          if (req) {
+            await insertCl.run(recurResult.lastInsertRowid, req.clause, req.title, req.standard, order++);
           }
         }
-
-        nextDate = getNextRecurrenceDate(nextDate, recurrence);
-        instanceNum++;
       }
+
+      nextDate = getNextRecurrenceDate(nextDate, recurrence);
+      instanceNum++;
     }
+  }
 
-    return await db.prepare('SELECT * FROM audits WHERE id = ?').get(parentAuditId);
-  });
-
-  const audit = createAudit();
+  const audit = await db.prepare('SELECT * FROM audits WHERE id = ?').get(parentAuditId);
   res.status(201).json(audit);
 });
 
@@ -1541,19 +1537,28 @@ app.get('/api/documents/:id/download', async (req, res) => {
 
 // Entity type resolution helpers
 const entityResolvers = {
-  risk: id => await db.prepare('SELECT id, title as name FROM risks WHERE id = ?').get(id),
-  task: id => await db.prepare('SELECT id, title as name FROM tasks WHERE id = ?').get(id),
-  action: id => await db.prepare('SELECT id, title as name FROM actions WHERE id = ?').get(id),
-  requirement: id => { const r = await db.prepare('SELECT id, clause, title, standard FROM standard_requirements WHERE id = ?').get(id); return r ? { id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` } : null; },
-  audit: id => await db.prepare('SELECT id, title as name FROM audits WHERE id = ?').get(id),
-  ncr: id => { const n = await db.prepare('SELECT id, clause, description FROM non_conformities WHERE id = ?').get(id); return n ? { id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` } : null; },
-  role: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'role'").get(id),
-  process: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'process'").get(id),
-  system: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'system'").get(id),
-  asset: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'asset'").get(id),
-  facility: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'facility'").get(id),
-  document: id => await db.prepare('SELECT id, title as name FROM documents WHERE id = ?').get(id),
-  treatment: id => { const t = await db.prepare('SELECT id, description FROM risk_treatments WHERE id = ?').get(id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
+  risk: async id => db.prepare('SELECT id, title as name FROM risks WHERE id = ?').get(id),
+  task: async id => db.prepare('SELECT id, title as name FROM tasks WHERE id = ?').get(id),
+  action: async id => db.prepare('SELECT id, title as name FROM actions WHERE id = ?').get(id),
+  requirement: async id => {
+    const r = await db.prepare('SELECT id, clause, title, standard FROM standard_requirements WHERE id = ?').get(id);
+    return r ? { id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` } : null;
+  },
+  audit: async id => db.prepare('SELECT id, title as name FROM audits WHERE id = ?').get(id),
+  ncr: async id => {
+    const n = await db.prepare('SELECT id, clause, description FROM non_conformities WHERE id = ?').get(id);
+    return n ? { id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` } : null;
+  },
+  role: async id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'role'").get(id),
+  process: async id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'process'").get(id),
+  system: async id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'system'").get(id),
+  asset: async id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'asset'").get(id),
+  facility: async id => db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'facility'").get(id),
+  document: async id => db.prepare('SELECT id, title as name FROM documents WHERE id = ?').get(id),
+  treatment: async id => {
+    const t = await db.prepare('SELECT id, description FROM risk_treatments WHERE id = ?').get(id);
+    return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null;
+  },
 };
 
 // Get all cross-links for an entity
@@ -1563,16 +1568,16 @@ app.get('/api/cross-links/:type/:id', async (req, res) => {
     SELECT * FROM cross_links WHERE (source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?)
   `).all(type, id, type, id);
 
-  const resolved = links.map(l => {
+  const resolved = await Promise.all(links.map(async l => {
     const isSource = l.source_type === type && l.source_id === parseInt(id);
     const otherType = isSource ? l.target_type : l.source_type;
     const otherId = isSource ? l.target_id : l.source_id;
     const resolver = entityResolvers[otherType];
-    const entity = resolver ? resolver(otherId) : null;
+    const entity = resolver ? await resolver(otherId) : null;
     return { link_id: l.id, type: otherType, id: otherId, name: entity ? entity.name : `${otherType} #${otherId}` };
-  }).filter(l => l.name);
+  }));
 
-  res.json(resolved);
+  res.json(resolved.filter(l => l.name));
 });
 
 // Add a cross-link
@@ -1761,7 +1766,7 @@ app.get('/api/admin/audit-log', async (req, res) => {
 });
 
 // Helper function to log audit actions
-function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '') {
+async function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '') {
   await db.prepare(`
     INSERT INTO admin_audit_log (user_id, user_name, action, entity_type, entity_id, entity_name, details)
     VALUES (?, ?, ?, ?, ?, ?, ?)
