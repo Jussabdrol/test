@@ -542,7 +542,7 @@ app.get('/api/audits', async (req, res) => {
   const parentAudits = await db.prepare(sql).all(...params);
 
   // Helper function to get audit stats
-  const getAuditStats = (auditId) => ({
+  const getAuditStats = async (auditId) => ({
     checklist_count: (await db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(auditId)).c,
     assessed_count: (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(auditId)).c,
     nc_count: (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(auditId)).c,
@@ -552,13 +552,13 @@ app.get('/api/audits', async (req, res) => {
 
   // Attach counts and ALL events (including parent as event #1) for each parent
   for (const a of parentAudits) {
-    const parentStats = getAuditStats(a.id);
+    const parentStats = await getAuditStats(a.id);
     Object.assign(a, parentStats);
 
     // Get child events for recurring audits
     const childAudits = await db.prepare('SELECT * FROM audits WHERE parent_audit_id = ? ORDER BY instance_number, planned_date').all(a.id);
     for (const c of childAudits) {
-      Object.assign(c, getAuditStats(c.id));
+      Object.assign(c, await getAuditStats(c.id));
     }
     a.child_events = childAudits;
 
