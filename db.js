@@ -418,6 +418,41 @@ async function close() {
   }
 }
 
+/**
+ * Execute a function within a transaction - ASYNC
+ * @param {Function} fn - Async function to execute within transaction
+ * @returns {Promise<any>} - Result of the function
+ */
+async function transaction(fn) {
+  if (isPostgres) {
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await fn();
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } else {
+    // For SQLite with async functions, manually handle BEGIN/COMMIT
+    // Since SQLite operations are synchronous under the hood, the async
+    // function executes synchronously and we can wrap it properly
+    db.exec('BEGIN');
+    try {
+      const result = await fn();
+      db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+}
+
 module.exports = {
   // Initialization
   initDatabase,
@@ -427,6 +462,7 @@ module.exports = {
   get,
   run,
   exec,
+  transaction,
 
   // Sync-compatible API (for existing server.js code)
   prepare,

@@ -542,13 +542,14 @@ app.get('/api/audits', async (req, res) => {
   const parentAudits = await db.prepare(sql).all(...params);
 
   // Helper function to get audit stats
-  const getAuditStats = async (auditId) => ({
-    checklist_count: (await db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(auditId)).c,
-    assessed_count: (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(auditId)).c,
-    nc_count: (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(auditId)).c,
-    ncr_count: (await db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(auditId)).c,
-    open_nc_count: (await db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(auditId)).c
-  });
+  const getAuditStats = async (auditId) => {
+    const checklist_count = (await db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(auditId)).c;
+    const assessed_count = (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(auditId)).c;
+    const nc_count = (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(auditId)).c;
+    const ncr_count = (await db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(auditId)).c;
+    const open_nc_count = (await db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(auditId)).c;
+    return { checklist_count, assessed_count, nc_count, ncr_count, open_nc_count };
+  };
 
   // Attach counts and ALL events (including parent as event #1) for each parent
   for (const a of parentAudits) {
@@ -613,60 +614,64 @@ app.post('/api/audits', async (req, res) => {
   const standardsArray = standards && Array.isArray(standards) ? standards : (standard ? [standard] : ['ISO 9001']);
   const primaryStandard = standardsArray[0] || 'ISO 9001';
 
-  const createAudit = db.transaction(() => {
-    // Create the parent audit (instance 1)
-    const result = await db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1
-    );
-    const parentAuditId = result.lastInsertRowid;
+  try {
+    const audit = await db.transaction(async () => {
+      // Create the parent audit (instance 1)
+      const result = await db.run(
+        `INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1
+      );
+      const parentAuditId = result.lastInsertRowid;
 
-    // Auto-create checklist items from selected requirements, including the standard
-    if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
-      const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
-      const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
-      let order = 1;
-      for (const reqId of requirement_ids) {
-        const req = getReq.get(reqId);
-        if (req) {
-          insertCl.run(parentAuditId, req.clause, req.title, req.standard, order++);
-        }
-      }
-    }
-
-    // Create recurring audit events as child audits if recurrence is set
-    if (recurrence && recurrence !== 'none' && planned_date && recurrence_end_date) {
-      let nextDate = getNextRecurrenceDate(planned_date, recurrence);
-      const endDate = new Date(recurrence_end_date);
-      let instanceNum = 2;
-
-      while (nextDate && new Date(nextDate) <= endDate) {
-        const recurResult = await db.prepare(`INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-          title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date, parentAuditId, instanceNum
-        );
-
-        // Copy checklist items to recurring audit
-        if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
-          const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)');
-          const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
-          let order = 1;
-          for (const reqId of requirement_ids) {
-            const req = getReq.get(reqId);
-            if (req) {
-              insertCl.run(recurResult.lastInsertRowid, req.clause, req.title, req.standard, order++);
-            }
+      // Auto-create checklist items from selected requirements, including the standard
+      if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
+        let order = 1;
+        for (const reqId of requirement_ids) {
+          const reqRow = await db.get('SELECT * FROM standard_requirements WHERE id = ?', reqId);
+          if (reqRow) {
+            await db.run('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)',
+              parentAuditId, reqRow.clause, reqRow.title, reqRow.standard, order++);
           }
         }
-
-        nextDate = getNextRecurrenceDate(nextDate, recurrence);
-        instanceNum++;
       }
-    }
 
-    return await db.prepare('SELECT * FROM audits WHERE id = ?').get(parentAuditId);
-  });
+      // Create recurring audit events as child audits if recurrence is set
+      if (recurrence && recurrence !== 'none' && planned_date && recurrence_end_date) {
+        let nextDate = getNextRecurrenceDate(planned_date, recurrence);
+        const endDate = new Date(recurrence_end_date);
+        let instanceNum = 2;
 
-  const audit = createAudit();
-  res.status(201).json(audit);
+        while (nextDate && new Date(nextDate) <= endDate) {
+          const recurResult = await db.run(
+            `INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date, parentAuditId, instanceNum
+          );
+
+          // Copy checklist items to recurring audit
+          if (requirement_ids && Array.isArray(requirement_ids) && requirement_ids.length > 0) {
+            let order = 1;
+            for (const reqId of requirement_ids) {
+              const reqRow = await db.get('SELECT * FROM standard_requirements WHERE id = ?', reqId);
+              if (reqRow) {
+                await db.run('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)',
+                  recurResult.lastInsertRowid, reqRow.clause, reqRow.title, reqRow.standard, order++);
+              }
+            }
+          }
+
+          nextDate = getNextRecurrenceDate(nextDate, recurrence);
+          instanceNum++;
+        }
+      }
+
+      return await db.get('SELECT * FROM audits WHERE id = ?', parentAuditId);
+    });
+
+    res.status(201).json(audit);
+  } catch (err) {
+    console.error('Error creating audit:', err);
+    res.status(500).json({ error: 'Failed to create audit' });
+  }
 });
 
 // Update audit
@@ -999,17 +1004,16 @@ app.post('/api/requirements/bulk', async (req, res) => {
   const { standard, items } = req.body;
   if (!items || !Array.isArray(items)) return res.status(400).json({ error: 'items array is required' });
   const std = standard || 'ISO 9001';
-  const existing = (await db.prepare('SELECT clause FROM standard_requirements WHERE standard = ?').all(std)).map(r => r.clause);
-  const insert = await db.prepare('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)');
+  const existing = (await db.all('SELECT clause FROM standard_requirements WHERE standard = ?', std)).map(r => r.clause);
   let inserted = 0;
-  const bulkInsert = db.transaction((items) => {
+  await db.transaction(async () => {
     for (const item of items) {
       if (existing.includes(item.clause)) continue;
-      insert.run(std, item.clause, item.title || '', item.description || '', item.category || '', item.sort_order ?? 0);
+      await db.run('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+        std, item.clause, item.title || '', item.description || '', item.category || '', item.sort_order ?? 0);
       inserted++;
     }
   });
-  bulkInsert(items);
   res.status(201).json({ inserted });
 });
 
@@ -1129,9 +1133,12 @@ app.post('/api/threat-feeds/:id/fetch', async (req, res) => {
     }
 
     // Upsert items
-    const upsert = await db.prepare(`INSERT INTO threat_items (feed_id, guid, title, description, link, pub_date) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(feed_id, guid) DO UPDATE SET title=excluded.title, description=excluded.description, link=excluded.link, pub_date=excluded.pub_date`);
-    const insertMany = db.transaction((items) => { for (const i of items) upsert.run(feed.id, i.guid || i.title, i.title, i.description, i.link, i.pub_date); });
-    insertMany(items);
+    await db.transaction(async () => {
+      for (const i of items) {
+        await db.run(`INSERT INTO threat_items (feed_id, guid, title, description, link, pub_date) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(feed_id, guid) DO UPDATE SET title=excluded.title, description=excluded.description, link=excluded.link, pub_date=excluded.pub_date`,
+          feed.id, i.guid || i.title, i.title, i.description, i.link, i.pub_date);
+      }
+    });
 
     // Update last_fetched
     await db.prepare("UPDATE threat_feeds SET last_fetched = datetime('now') WHERE id = ?").run(feed.id);
@@ -1541,19 +1548,19 @@ app.get('/api/documents/:id/download', async (req, res) => {
 
 // Entity type resolution helpers
 const entityResolvers = {
-  risk: id => await db.prepare('SELECT id, title as name FROM risks WHERE id = ?').get(id),
-  task: id => await db.prepare('SELECT id, title as name FROM tasks WHERE id = ?').get(id),
-  action: id => await db.prepare('SELECT id, title as name FROM actions WHERE id = ?').get(id),
-  requirement: id => { const r = await db.prepare('SELECT id, clause, title, standard FROM standard_requirements WHERE id = ?').get(id); return r ? { id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` } : null; },
-  audit: id => await db.prepare('SELECT id, title as name FROM audits WHERE id = ?').get(id),
-  ncr: id => { const n = await db.prepare('SELECT id, clause, description FROM non_conformities WHERE id = ?').get(id); return n ? { id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` } : null; },
-  role: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'role'").get(id),
-  process: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'process'").get(id),
-  system: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'system'").get(id),
-  asset: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'asset'").get(id),
-  facility: id => await db.prepare("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'facility'").get(id),
-  document: id => await db.prepare('SELECT id, title as name FROM documents WHERE id = ?').get(id),
-  treatment: id => { const t = await db.prepare('SELECT id, description FROM risk_treatments WHERE id = ?').get(id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
+  risk: async (id) => await db.get('SELECT id, title as name FROM risks WHERE id = ?', id),
+  task: async (id) => await db.get('SELECT id, title as name FROM tasks WHERE id = ?', id),
+  action: async (id) => await db.get('SELECT id, title as name FROM actions WHERE id = ?', id),
+  requirement: async (id) => { const r = await db.get('SELECT id, clause, title, standard FROM standard_requirements WHERE id = ?', id); return r ? { id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` } : null; },
+  audit: async (id) => await db.get('SELECT id, title as name FROM audits WHERE id = ?', id),
+  ncr: async (id) => { const n = await db.get('SELECT id, clause, description FROM non_conformities WHERE id = ?', id); return n ? { id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` } : null; },
+  role: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'role'", id),
+  process: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'process'", id),
+  system: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'system'", id),
+  asset: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'asset'", id),
+  facility: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'facility'", id),
+  document: async (id) => await db.get('SELECT id, title as name FROM documents WHERE id = ?', id),
+  treatment: async (id) => { const t = await db.get('SELECT id, description FROM risk_treatments WHERE id = ?', id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
 };
 
 // Get all cross-links for an entity
@@ -1706,7 +1713,7 @@ app.post('/api/admin/users', async (req, res) => {
     `).run(name, email, role || 'user', department || '', JSON.stringify(permissions || ['org','risk','ops','audit']),
            status || 'active', expiry_date || null, notes || '');
 
-    logAuditAction(null, 'System', 'user_created', 'user', result.lastInsertRowid, name);
+    await logAuditAction(null, 'System', 'user_created', 'user', result.lastInsertRowid, name);
     res.status(201).json(await db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Email already exists' });
@@ -1731,7 +1738,7 @@ app.put('/api/admin/users/:id', async (req, res) => {
   params.push(req.params.id);
 
   await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  logAuditAction(null, 'System', 'user_updated', 'user', user.id, user.name);
+  await logAuditAction(null, 'System', 'user_updated', 'user', user.id, user.name);
   res.json(await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id));
 });
 
@@ -1740,7 +1747,7 @@ app.delete('/api/admin/users/:id', async (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   await db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
-  logAuditAction(null, 'System', 'user_deleted', 'user', user.id, user.name);
+  await logAuditAction(null, 'System', 'user_deleted', 'user', user.id, user.name);
   res.json({ success: true });
 });
 
@@ -1761,11 +1768,11 @@ app.get('/api/admin/audit-log', async (req, res) => {
 });
 
 // Helper function to log audit actions
-function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '') {
-  await db.prepare(`
+async function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '') {
+  await db.run(`
     INSERT INTO admin_audit_log (user_id, user_name, action, entity_type, entity_id, entity_name, details)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(userId, userName, action, entityType, entityId, entityName, details);
+  `, userId, userName, action, entityType, entityId, entityName, details);
 }
 
 // Admin: System Settings
@@ -1790,7 +1797,7 @@ app.put('/api/admin/settings', async (req, res) => {
     upsert.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
   }
 
-  logAuditAction(null, 'System', 'settings_updated', 'settings', null, null, JSON.stringify(Object.keys(settings)));
+  await logAuditAction(null, 'System', 'settings_updated', 'settings', null, null, JSON.stringify(Object.keys(settings)));
   res.json({ success: true });
 });
 
@@ -1814,7 +1821,7 @@ app.post('/api/admin/api-keys', async (req, res) => {
     VALUES (?, ?, ?, ?, ?)
   `).run(name, keyHash, keyPrefix, JSON.stringify(permissions || ['read']), expires_at || null);
 
-  logAuditAction(null, 'System', 'api_key_created', 'api_key', result.lastInsertRowid, name);
+  await logAuditAction(null, 'System', 'api_key_created', 'api_key', result.lastInsertRowid, name);
 
   // Return the full key only once (won't be stored/retrievable later)
   res.status(201).json({
@@ -1832,7 +1839,7 @@ app.delete('/api/admin/api-keys/:id', async (req, res) => {
   if (!key) return res.status(404).json({ error: 'API key not found' });
 
   await db.prepare("UPDATE api_keys SET status = 'revoked' WHERE id = ?").run(req.params.id);
-  logAuditAction(null, 'System', 'api_key_revoked', 'api_key', key.id, key.name);
+  await logAuditAction(null, 'System', 'api_key_revoked', 'api_key', key.id, key.name);
   res.json({ success: true });
 });
 
@@ -1850,7 +1857,7 @@ app.post('/api/admin/webhooks', async (req, res) => {
     VALUES (?, ?, ?, ?, ?)
   `).run(name, url, JSON.stringify(events || []), secret || '', status || 'active');
 
-  logAuditAction(null, 'System', 'webhook_created', 'webhook', result.lastInsertRowid, name);
+  await logAuditAction(null, 'System', 'webhook_created', 'webhook', result.lastInsertRowid, name);
   res.status(201).json(await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(result.lastInsertRowid));
 });
 
@@ -1864,7 +1871,7 @@ app.put('/api/admin/webhooks/:id', async (req, res) => {
   `).run(name || webhook.name, url || webhook.url, JSON.stringify(events || JSON.parse(webhook.events)),
          secret !== undefined ? secret : webhook.secret, status || webhook.status, req.params.id);
 
-  logAuditAction(null, 'System', 'webhook_updated', 'webhook', webhook.id, webhook.name);
+  await logAuditAction(null, 'System', 'webhook_updated', 'webhook', webhook.id, webhook.name);
   res.json(await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id));
 });
 
@@ -1873,7 +1880,7 @@ app.delete('/api/admin/webhooks/:id', async (req, res) => {
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
   await db.prepare('DELETE FROM webhooks WHERE id = ?').run(req.params.id);
-  logAuditAction(null, 'System', 'webhook_deleted', 'webhook', webhook.id, webhook.name);
+  await logAuditAction(null, 'System', 'webhook_deleted', 'webhook', webhook.id, webhook.name);
   res.json({ success: true });
 });
 
@@ -1916,7 +1923,7 @@ app.get('/api/admin/export', async (req, res) => {
   // Cross-links
   data.crossLinks = await db.prepare('SELECT * FROM cross_links').all();
 
-  logAuditAction(null, 'System', 'data_exported', 'system', null, null, `Format: ${format}, Includes: ${includes.join(',')}`);
+  await logAuditAction(null, 'System', 'data_exported', 'system', null, null, `Format: ${format}, Includes: ${includes.join(',')}`);
 
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Content-Disposition', `attachment; filename="ltfw-export-${new Date().toISOString().split('T')[0]}.json"`);
@@ -1965,7 +1972,7 @@ app.post('/api/admin/backups', async (req, res) => {
   if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir);
   fs.writeFileSync(path.join(backupsDir, filename), content);
 
-  logAuditAction(null, 'System', 'backup_created', 'backup', result.lastInsertRowid, filename);
+  await logAuditAction(null, 'System', 'backup_created', 'backup', result.lastInsertRowid, filename);
   res.status(201).json(await db.prepare('SELECT * FROM backups WHERE id = ?').get(result.lastInsertRowid));
 });
 
@@ -1992,7 +1999,7 @@ app.delete('/api/admin/backups/:id', async (req, res) => {
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
   await db.prepare('DELETE FROM backups WHERE id = ?').run(req.params.id);
-  logAuditAction(null, 'System', 'backup_deleted', 'backup', backup.id, backup.filename);
+  await logAuditAction(null, 'System', 'backup_deleted', 'backup', backup.id, backup.filename);
   res.json({ success: true });
 });
 
@@ -2015,7 +2022,7 @@ app.post('/api/admin/cleanup', async (req, res) => {
     result.affected = r.changes;
   }
 
-  logAuditAction(null, 'System', 'data_cleanup', 'system', null, null, `Type: ${type}, Affected: ${result.affected}`);
+  await logAuditAction(null, 'System', 'data_cleanup', 'system', null, null, `Type: ${type}, Affected: ${result.affected}`);
   res.json(result);
 });
 
@@ -2129,7 +2136,7 @@ app.post('/api/admin/import', async (req, res) => {
       result.imported.audits = count;
     }
 
-    logAuditAction(null, 'System', 'data_imported', 'system', null, null, JSON.stringify(result.imported));
+    await logAuditAction(null, 'System', 'data_imported', 'system', null, null, JSON.stringify(result.imported));
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2260,7 +2267,7 @@ app.put('/api/admin/saml/config', async (req, res) => {
     allowed_domains || ''
   );
 
-  logAuditAction(null, 'System', 'saml_config_updated', 'saml', 1, null, `Enabled: ${enabled}`);
+  await logAuditAction(null, 'System', 'saml_config_updated', 'saml', 1, null, `Enabled: ${enabled}`);
   res.json({ success: true });
 });
 
@@ -2379,7 +2386,7 @@ app.post('/saml/callback', express.urlencoded({ extended: true }), async (req, r
       `).run(name, email, config.default_role || 'user', JSON.stringify(['org', 'risk', 'ops', 'audit']));
 
       user = await db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
-      logAuditAction(user.id, user.name, 'user_provisioned_saml', 'user', user.id, user.name);
+      await logAuditAction(user.id, user.name, 'user_provisioned_saml', 'user', user.id, user.name);
     } else if (!user) {
       return res.status(403).send('User not found and auto-provisioning is disabled');
     } else {
@@ -2396,7 +2403,7 @@ app.post('/saml/callback', express.urlencoded({ extended: true }), async (req, r
       VALUES (?, ?, ?, ?)
     `).run(sessionId, user.id, email, expiresAt);
 
-    logAuditAction(user.id, user.name, 'saml_login', 'user', user.id, user.name);
+    await logAuditAction(user.id, user.name, 'saml_login', 'user', user.id, user.name);
 
     // Redirect to app with session token
     res.send(`
@@ -2427,7 +2434,7 @@ app.get('/saml/logout', async (req, res) => {
     const session = await db.prepare('SELECT * FROM saml_sessions WHERE id = ?').get(sessionId);
     if (session) {
       await db.prepare('DELETE FROM saml_sessions WHERE id = ?').run(sessionId);
-      logAuditAction(session.user_id, 'User', 'saml_logout', 'user', session.user_id, session.name_id);
+      await logAuditAction(session.user_id, 'User', 'saml_logout', 'user', session.user_id, session.name_id);
     }
   }
   res.redirect('/');
