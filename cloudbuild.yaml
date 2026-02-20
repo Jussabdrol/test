@@ -7,7 +7,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/lettheframework']
 
-  # Deploy container image to Cloud Run with Cloud SQL
+  # Deploy container image to Cloud Run (connects to Supabase PostgreSQL)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -29,19 +29,9 @@ steps:
       - '0'
       - '--max-instances'
       - '10'
-      # Cloud SQL connection (uncomment and configure for PostgreSQL)
-      # - '--add-cloudsql-instances'
-      # - '${PROJECT_ID}:us-central1:lettheframework-db'
-      # - '--set-env-vars'
-      # - 'DB_TYPE=postgresql,CLOUD_SQL_CONNECTION_NAME=${PROJECT_ID}:us-central1:lettheframework-db,DB_USER=appuser,DB_NAME=lettheframework'
+      # Set Supabase env vars via secrets:
       # - '--set-secrets'
-      # - 'DB_PASSWORD=db-password:latest'
-
-# Substitution variables (can be overridden)
-substitutions:
-  _DB_INSTANCE_NAME: 'lettheframework-db'
-  _DB_NAME: 'lettheframework'
-  _DB_USER: 'appuser'
+      # - 'SUPABASE_DB_URL=supabase-db-url:latest,NEXT_PUBLIC_SUPABASE_URL=supabase-url:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=supabase-anon-key:latest,SESSION_SECRET=session-secret:latest'
 
 images:
   - 'gcr.io/$PROJECT_ID/lettheframework'

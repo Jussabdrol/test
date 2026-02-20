@@ -1,5 +1,2 @@
 node_modules/
-tasks.db*
 .env
-uploads/*
-!uploads/.gitkeep

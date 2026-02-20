@@ -5,9 +5,5 @@ npm-debug.log
 *.md
 .env
 .env.*
-tasks.db*
-uploads/*
-!uploads/.gitkeep
-backups/
 *.log
 .DS_Store

@@ -1,0 +1,391 @@
+-- =============================================================================
+-- Supabase Migration – Let The Frame Work
+-- Run this in your Supabase project's SQL Editor (Dashboard → SQL Editor)
+-- =============================================================================
+
+-- Tasks & recurring task management
+CREATE TABLE IF NOT EXISTS tasks (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  assignee TEXT DEFAULT '',
+  category TEXT DEFAULT 'General',
+  priority TEXT DEFAULT 'Medium' CHECK(priority IN ('Low','Medium','High','Critical')),
+  recurrence TEXT NOT NULL DEFAULT 'daily' CHECK(recurrence IN ('daily','weekly','biweekly','monthly','quarterly','yearly','custom')),
+  custom_days INTEGER DEFAULT NULL,
+  day_of_week INTEGER DEFAULT NULL,
+  day_of_month INTEGER DEFAULT NULL,
+  start_date TEXT NOT NULL,
+  next_due TEXT NOT NULL,
+  is_active INTEGER DEFAULT 1,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS completions (
+  id SERIAL PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  completed_by TEXT DEFAULT '',
+  completed_at TIMESTAMP DEFAULT NOW(),
+  notes TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS actions (
+  id SERIAL PRIMARY KEY,
+  completion_id INTEGER NOT NULL REFERENCES completions(id) ON DELETE CASCADE,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  assignee TEXT DEFAULT '',
+  priority TEXT DEFAULT 'Medium' CHECK(priority IN ('Low','Medium','High','Critical')),
+  status TEXT DEFAULT 'open' CHECK(status IN ('open','in_progress','resolved','closed')),
+  due_date TEXT DEFAULT NULL,
+  resolved_by TEXT DEFAULT '',
+  resolved_at TIMESTAMP DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Audit management
+CREATE TABLE IF NOT EXISTS audits (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  standard TEXT DEFAULT 'ISO 9001',
+  scope TEXT DEFAULT '',
+  lead_auditor TEXT DEFAULT '',
+  audit_team TEXT DEFAULT '',
+  auditee TEXT DEFAULT '',
+  status TEXT DEFAULT 'planned' CHECK(status IN ('planned','in_progress','completed','cancelled')),
+  planned_date TEXT DEFAULT NULL,
+  completed_date TEXT DEFAULT NULL,
+  summary TEXT DEFAULT '',
+  recurrence TEXT DEFAULT 'none',
+  recurrence_end_date TEXT DEFAULT NULL,
+  parent_audit_id INTEGER DEFAULT NULL,
+  instance_number INTEGER DEFAULT 1,
+  standards TEXT DEFAULT '[]',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS audit_checklist (
+  id SERIAL PRIMARY KEY,
+  audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+  clause TEXT NOT NULL,
+  requirement TEXT DEFAULT '',
+  evidence TEXT DEFAULT '',
+  finding TEXT DEFAULT '',
+  rating TEXT DEFAULT 'not_assessed' CHECK(rating IN ('not_assessed','conforming','observation','minor_nc','major_nc')),
+  notes TEXT DEFAULT '',
+  sort_order INTEGER DEFAULT 0,
+  standard TEXT DEFAULT '',
+  evidence_files TEXT DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS non_conformities (
+  id SERIAL PRIMARY KEY,
+  audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+  checklist_item_id INTEGER DEFAULT NULL REFERENCES audit_checklist(id) ON DELETE SET NULL,
+  clause TEXT DEFAULT '',
+  description TEXT NOT NULL,
+  severity TEXT DEFAULT 'minor' CHECK(severity IN ('minor','major')),
+  root_cause TEXT DEFAULT '',
+  correction TEXT DEFAULT '',
+  corrective_action TEXT DEFAULT '',
+  responsible TEXT DEFAULT '',
+  due_date TEXT DEFAULT NULL,
+  status TEXT DEFAULT 'open' CHECK(status IN ('open','in_progress','closed','verified')),
+  closed_date TEXT DEFAULT NULL,
+  verification_notes TEXT DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Standards & requirements
+CREATE TABLE IF NOT EXISTS standard_requirements (
+  id SERIAL PRIMARY KEY,
+  standard TEXT NOT NULL DEFAULT 'ISO 9001',
+  clause TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  description TEXT DEFAULT '',
+  category TEXT DEFAULT '',
+  sort_order INTEGER DEFAULT 0,
+  owner TEXT DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Risk management
+CREATE TABLE IF NOT EXISTS risks (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  category TEXT DEFAULT 'Information Security',
+  source TEXT DEFAULT '',
+  asset TEXT DEFAULT '',
+  threat TEXT DEFAULT '',
+  vulnerability TEXT DEFAULT '',
+  likelihood INTEGER DEFAULT 3 CHECK(likelihood BETWEEN 1 AND 5),
+  impact INTEGER DEFAULT 3 CHECK(impact BETWEEN 1 AND 5),
+  inherent_score INTEGER DEFAULT 9,
+  risk_owner TEXT DEFAULT '',
+  status TEXT DEFAULT 'identified' CHECK(status IN ('identified','analyzing','treating','accepted','closed')),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS risk_treatments (
+  id SERIAL PRIMARY KEY,
+  risk_id INTEGER NOT NULL REFERENCES risks(id) ON DELETE CASCADE,
+  treatment_type TEXT DEFAULT 'mitigate' CHECK(treatment_type IN ('mitigate','accept','transfer','avoid')),
+  description TEXT DEFAULT '',
+  control_reference TEXT DEFAULT '',
+  requirement_id INTEGER DEFAULT NULL REFERENCES standard_requirements(id) ON DELETE SET NULL,
+  responsible TEXT DEFAULT '',
+  due_date TEXT DEFAULT NULL,
+  status TEXT DEFAULT 'planned' CHECK(status IN ('planned','in_progress','implemented','verified')),
+  residual_likelihood INTEGER DEFAULT NULL,
+  residual_impact INTEGER DEFAULT NULL,
+  notes TEXT DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Statement of Applicability
+CREATE TABLE IF NOT EXISTS soa_entries (
+  id SERIAL PRIMARY KEY,
+  requirement_id INTEGER NOT NULL REFERENCES standard_requirements(id) ON DELETE CASCADE,
+  applicable INTEGER DEFAULT 1,
+  justification TEXT DEFAULT '',
+  implementation_status TEXT DEFAULT 'not_implemented' CHECK(implementation_status IN ('not_implemented','partial','implemented')),
+  notes TEXT DEFAULT '',
+  linked_processes TEXT DEFAULT '[]',
+  regulatory INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Organizational planning
+CREATE TABLE IF NOT EXISTS org_mission (
+  id SERIAL PRIMARY KEY,
+  content TEXT DEFAULT '',
+  vision TEXT DEFAULT '',
+  values_text TEXT DEFAULT '',
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS org_kpis (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  module TEXT DEFAULT 'custom',
+  target_value REAL DEFAULT NULL,
+  unit TEXT DEFAULT '',
+  frequency TEXT DEFAULT 'monthly',
+  is_auto INTEGER DEFAULT 0,
+  auto_source TEXT DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS org_kpi_values (
+  id SERIAL PRIMARY KEY,
+  kpi_id INTEGER NOT NULL REFERENCES org_kpis(id) ON DELETE CASCADE,
+  value REAL NOT NULL,
+  period TEXT NOT NULL,
+  recorded_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS org_architecture (
+  id SERIAL PRIMARY KEY,
+  arch_type TEXT NOT NULL CHECK(arch_type IN ('role','process','system','asset','facility')),
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  parent_id INTEGER DEFAULT NULL,
+  owner TEXT DEFAULT '',
+  status TEXT DEFAULT 'active',
+  metadata TEXT DEFAULT '{}',
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Document control
+CREATE TABLE IF NOT EXISTS documents (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  doc_type TEXT DEFAULT 'policy' CHECK(doc_type IN ('policy','procedure','work_instruction','record','form','report','other')),
+  version TEXT DEFAULT '1.0',
+  owner TEXT DEFAULT '',
+  status TEXT DEFAULT 'draft' CHECK(status IN ('draft','review','approved','obsolete')),
+  file_name TEXT DEFAULT '',
+  file_path TEXT DEFAULT '',
+  file_size INTEGER DEFAULT 0,
+  mime_type TEXT DEFAULT '',
+  linked_module TEXT DEFAULT '',
+  linked_ref_type TEXT DEFAULT '',
+  linked_ref_id INTEGER DEFAULT NULL,
+  review_date TEXT DEFAULT NULL,
+  classification TEXT DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Cross-linking
+CREATE TABLE IF NOT EXISTS cross_links (
+  id SERIAL PRIMARY KEY,
+  source_type TEXT NOT NULL,
+  source_id INTEGER NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(source_type, source_id, target_type, target_id)
+);
+
+-- Threat intelligence
+CREATE TABLE IF NOT EXISTS threat_feeds (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  tier INTEGER DEFAULT 1 CHECK(tier BETWEEN 1 AND 4),
+  enabled INTEGER DEFAULT 1,
+  last_fetched TEXT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS threat_items (
+  id SERIAL PRIMARY KEY,
+  feed_id INTEGER NOT NULL REFERENCES threat_feeds(id) ON DELETE CASCADE,
+  guid TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  link TEXT DEFAULT '',
+  pub_date TEXT DEFAULT '',
+  status TEXT DEFAULT 'new' CHECK(status IN ('new','reviewed','dismissed','risk_created')),
+  created_risk_id INTEGER DEFAULT NULL,
+  fetched_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(feed_id, guid)
+);
+
+-- Users & authentication
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  password TEXT DEFAULT NULL,
+  role TEXT DEFAULT 'user' CHECK(role IN ('viewer','user','manager','admin')),
+  department TEXT DEFAULT '',
+  permissions TEXT DEFAULT '["org","risk","ops","audit"]',
+  status TEXT DEFAULT 'active' CHECK(status IN ('active','pending','suspended','inactive')),
+  last_active TEXT DEFAULT NULL,
+  expiry_date TEXT DEFAULT NULL,
+  notes TEXT DEFAULT '',
+  sso_provider TEXT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- System settings
+CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Admin audit log
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER DEFAULT NULL,
+  user_name TEXT DEFAULT 'System',
+  action TEXT NOT NULL,
+  entity_type TEXT DEFAULT NULL,
+  entity_id INTEGER DEFAULT NULL,
+  entity_name TEXT DEFAULT NULL,
+  details TEXT DEFAULT '',
+  ip_address TEXT DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- API keys
+CREATE TABLE IF NOT EXISTS api_keys (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  key_hash TEXT NOT NULL,
+  key_prefix TEXT NOT NULL,
+  permissions TEXT DEFAULT '["read"]',
+  last_used TEXT DEFAULT NULL,
+  expires_at TEXT DEFAULT NULL,
+  status TEXT DEFAULT 'active' CHECK(status IN ('active','revoked')),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Webhooks
+CREATE TABLE IF NOT EXISTS webhooks (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  events TEXT DEFAULT '[]',
+  secret TEXT DEFAULT '',
+  status TEXT DEFAULT 'active' CHECK(status IN ('active','paused')),
+  last_triggered TEXT DEFAULT NULL,
+  failure_count INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Backups
+CREATE TABLE IF NOT EXISTS backups (
+  id SERIAL PRIMARY KEY,
+  filename TEXT NOT NULL,
+  size INTEGER DEFAULT 0,
+  type TEXT DEFAULT 'manual' CHECK(type IN ('manual','scheduled')),
+  status TEXT DEFAULT 'completed' CHECK(status IN ('in_progress','completed','failed')),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- SAML / SSO
+CREATE TABLE IF NOT EXISTS saml_config (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled INTEGER DEFAULT 0,
+  entity_id TEXT DEFAULT '',
+  sso_url TEXT DEFAULT '',
+  slo_url TEXT DEFAULT '',
+  certificate TEXT DEFAULT '',
+  name_id_format TEXT DEFAULT 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+  attribute_mapping TEXT DEFAULT '{"email":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress","name":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/displayname","groups":"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"}',
+  auto_provision INTEGER DEFAULT 1,
+  default_role TEXT DEFAULT 'user',
+  allowed_domains TEXT DEFAULT '',
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS saml_sessions (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name_id TEXT NOT NULL,
+  session_index TEXT DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW(),
+  expires_at TEXT NOT NULL
+);
+
+-- =============================================================================
+-- Seed default data
+-- =============================================================================
+
+-- Organization mission (singleton row)
+INSERT INTO org_mission (content) VALUES ('') ON CONFLICT DO NOTHING;
+
+-- SAML config (singleton row)
+INSERT INTO saml_config (id, enabled) VALUES (1, 0) ON CONFLICT DO NOTHING;
+
+-- Default threat feeds
+INSERT INTO threat_feeds (name, url, tier) VALUES
+  ('CERT-EU Latest', 'https://cert.europa.eu/publications/security-advisories/rss', 1),
+  ('NCSC-UK Advisories', 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml', 1),
+  ('ENISA News', 'https://www.enisa.europa.eu/rss.xml', 1),
+  ('CISA Advisories', 'https://www.cisa.gov/cybersecurity-advisories/all.xml', 2),
+  ('US-CERT Alerts', 'https://www.us-cert.gov/ncas/alerts.xml', 2),
+  ('SANS ISC', 'https://isc.sans.edu/rssfeed_full.xml', 3),
+  ('Schneier on Security', 'https://www.schneier.com/feed/atom/', 3),
+  ('Krebs on Security', 'https://krebsonsecurity.com/feed/', 3),
+  ('NVD CVE Feed', 'https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml', 4),
+  ('Exploit-DB', 'https://www.exploit-db.com/rss.xml', 4)
+ON CONFLICT DO NOTHING;
