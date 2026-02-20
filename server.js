@@ -1743,7 +1743,7 @@ app.get('/api/link-references', async (req, res) => {
 // ===== ADMIN API ENDPOINTS =====
 
 // Admin: System Overview Stats
-app.get('/api/admin/overview', async (req, res) => {
+app.get('/api/admin/overview', requireAdmin, async (req, res) => {
   const stats = {
     // Database stats (Supabase PostgreSQL – size via pg_database_size)
     databaseSize: await (async () => { try { const r = await db.get("SELECT pg_database_size(current_database()) as size"); return r?.size || 0; } catch { return 0; } })(),
@@ -1789,39 +1789,85 @@ app.get('/api/admin/overview', async (req, res) => {
   res.json(stats);
 });
 
+// Admin-only middleware
+function requireAdmin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: 'Authentication required' });
+  if (req.session.userRole !== 'admin') return res.status(403).json({ error: 'Administrator access required' });
+  next();
+}
+
 // Admin: Users CRUD
-app.get('/api/admin/users', async (req, res) => {
-  const { status, role } = req.query;
-  let sql = 'SELECT * FROM users WHERE 1=1';
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  const { status, role, search } = req.query;
+  let sql = 'SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE 1=1';
   const params = [];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (role) { sql += ' AND role = ?'; params.push(role); }
+  if (search) {
+    sql += ' AND (name ILIKE ? OR email ILIKE ? OR department ILIKE ?)';
+    const pattern = `%${search}%`;
+    params.push(pattern, pattern, pattern);
+  }
   sql += ' ORDER BY name';
   res.json(await db.prepare(sql).all(...params));
 });
 
-app.post('/api/admin/users', async (req, res) => {
-  const { name, email, role, department, permissions, status, expiry_date, notes } = req.body;
-  if (!name || !email) return res.status(400).json({ error: 'Name and email required' });
+app.get('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const user = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json(user);
+});
+
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
+  const { name, email, password, role, department, permissions, status, expiry_date, notes } = req.body;
+  if (!name || !email) return res.status(400).json({ error: 'Name and email are required' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) return res.status(400).json({ error: 'Invalid email format' });
 
   try {
+    const hashedPassword = await bcrypt.hash(password, 10);
     const result = await db.prepare(`
-      INSERT INTO users (name, email, role, department, permissions, status, expiry_date, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(name, email, role || 'user', department || '', JSON.stringify(permissions || ['org','risk','ops','audit']),
+      INSERT INTO users (name, email, password, role, department, permissions, status, expiry_date, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, email.toLowerCase().trim(), hashedPassword, role || 'user', department || '',
+           JSON.stringify(permissions || ['org','risk','ops','audit']),
            status || 'active', expiry_date || null, notes || '');
 
-    await logAuditAction(null, 'System', 'user_created', 'user', result.lastInsertRowid, name);
-    res.status(201).json(await db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
+    const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
+    await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_created', 'user', result.lastInsertRowid, name);
+
+    const newUser = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json(newUser);
   } catch (e) {
-    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Email already exists' });
-    throw e;
+    if (e.message.includes('unique') || e.message.includes('UNIQUE') || e.message.includes('duplicate')) {
+      return res.status(409).json({ error: 'A user with this email already exists' });
+    }
+    console.error('Create user error:', e);
+    res.status(500).json({ error: 'Failed to create user' });
   }
 });
 
-app.put('/api/admin/users/:id', async (req, res) => {
+app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+
+  // Prevent self-demotion from admin
+  if (parseInt(req.params.id) === req.session.userId) {
+    if (req.body.role && req.body.role !== 'admin') {
+      return res.status(400).json({ error: 'You cannot change your own admin role. Ask another admin.' });
+    }
+    if (req.body.status && req.body.status !== 'active') {
+      return res.status(400).json({ error: 'You cannot deactivate your own account.' });
+    }
+  }
+
+  if (req.body.email) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(req.body.email)) return res.status(400).json({ error: 'Invalid email format' });
+    req.body.email = req.body.email.toLowerCase().trim();
+  }
 
   const fields = ['name', 'email', 'role', 'department', 'permissions', 'status', 'expiry_date', 'notes'];
   const updates = [];
@@ -1832,25 +1878,60 @@ app.put('/api/admin/users/:id', async (req, res) => {
       params.push(f === 'permissions' ? JSON.stringify(req.body[f]) : req.body[f]);
     }
   }
+
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
 
-  await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  await logAuditAction(null, 'System', 'user_updated', 'user', user.id, user.name);
-  res.json(await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id));
+  try {
+    await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
+    await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_updated', 'user', user.id, user.name,
+      JSON.stringify(Object.keys(req.body).filter(k => k !== 'password')));
+    const updated = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ?').get(req.params.id);
+    res.json(updated);
+  } catch (e) {
+    if (e.message.includes('unique') || e.message.includes('UNIQUE') || e.message.includes('duplicate')) {
+      return res.status(409).json({ error: 'A user with this email already exists' });
+    }
+    console.error('Update user error:', e);
+    res.status(500).json({ error: 'Failed to update user' });
+  }
 });
 
-app.delete('/api/admin/users/:id', async (req, res) => {
+// Admin: Reset user password
+app.put('/api/admin/users/:id/password', requireAdmin, async (req, res) => {
+  const { password } = req.body;
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+  await db.prepare("UPDATE users SET password = ?, updated_at = datetime('now') WHERE id = ?").run(hashedPassword, req.params.id);
+
+  const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
+  await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_password_reset', 'user', user.id, user.name);
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  if (parseInt(req.params.id) === req.session.userId) {
+    return res.status(400).json({ error: 'You cannot delete your own account.' });
+  }
+
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   await db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
-  await logAuditAction(null, 'System', 'user_deleted', 'user', user.id, user.name);
+  const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
+  await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_deleted', 'user', user.id, user.name);
   res.json({ success: true });
 });
 
 // Admin: Audit Log
-app.get('/api/admin/audit-log', async (req, res) => {
+app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
   const { action, entity_type, user_name, limit = 100, offset = 0 } = req.query;
   let sql = 'SELECT * FROM admin_audit_log WHERE 1=1';
   const params = [];
@@ -1874,7 +1955,7 @@ async function logAuditAction(userId, userName, action, entityType, entityId, en
 }
 
 // Admin: System Settings
-app.get('/api/admin/settings', async (req, res) => {
+app.get('/api/admin/settings', requireAdmin, async (req, res) => {
   const settings = await db.prepare('SELECT * FROM system_settings').all();
   const result = {};
   for (const s of settings) {
@@ -1884,7 +1965,7 @@ app.get('/api/admin/settings', async (req, res) => {
   res.json(result);
 });
 
-app.put('/api/admin/settings', async (req, res) => {
+app.put('/api/admin/settings', requireAdmin, async (req, res) => {
   const settings = req.body;
   const upsert = db.prepare(`
     INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
@@ -1900,11 +1981,11 @@ app.put('/api/admin/settings', async (req, res) => {
 });
 
 // Admin: API Keys
-app.get('/api/admin/api-keys', async (req, res) => {
+app.get('/api/admin/api-keys', requireAdmin, async (req, res) => {
   res.json(await db.prepare("SELECT id, name, key_prefix, permissions, last_used, expires_at, status, created_at FROM api_keys ORDER BY created_at DESC").all());
 });
 
-app.post('/api/admin/api-keys', async (req, res) => {
+app.post('/api/admin/api-keys', requireAdmin, async (req, res) => {
   const { name, permissions, expires_at } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
 
@@ -1931,7 +2012,7 @@ app.post('/api/admin/api-keys', async (req, res) => {
   });
 });
 
-app.delete('/api/admin/api-keys/:id', async (req, res) => {
+app.delete('/api/admin/api-keys/:id', requireAdmin, async (req, res) => {
   const key = await db.prepare('SELECT * FROM api_keys WHERE id = ?').get(req.params.id);
   if (!key) return res.status(404).json({ error: 'API key not found' });
 
@@ -1941,11 +2022,11 @@ app.delete('/api/admin/api-keys/:id', async (req, res) => {
 });
 
 // Admin: Webhooks
-app.get('/api/admin/webhooks', async (req, res) => {
+app.get('/api/admin/webhooks', requireAdmin, async (req, res) => {
   res.json(await db.prepare('SELECT * FROM webhooks ORDER BY created_at DESC').all());
 });
 
-app.post('/api/admin/webhooks', async (req, res) => {
+app.post('/api/admin/webhooks', requireAdmin, async (req, res) => {
   const { name, url, events, secret, status } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'Name and URL required' });
 
@@ -1958,7 +2039,7 @@ app.post('/api/admin/webhooks', async (req, res) => {
   res.status(201).json(await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/admin/webhooks/:id', async (req, res) => {
+app.put('/api/admin/webhooks/:id', requireAdmin, async (req, res) => {
   const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
@@ -1972,7 +2053,7 @@ app.put('/api/admin/webhooks/:id', async (req, res) => {
   res.json(await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/admin/webhooks/:id', async (req, res) => {
+app.delete('/api/admin/webhooks/:id', requireAdmin, async (req, res) => {
   const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
@@ -1982,7 +2063,7 @@ app.delete('/api/admin/webhooks/:id', async (req, res) => {
 });
 
 // Admin: Data Export
-app.get('/api/admin/export', async (req, res) => {
+app.get('/api/admin/export', requireAdmin, async (req, res) => {
   const { format = 'json', include } = req.query;
   const includes = include ? include.split(',') : ['tasks', 'risks', 'audits', 'architecture', 'requirements', 'documents'];
 
@@ -2028,7 +2109,7 @@ app.get('/api/admin/export', async (req, res) => {
 });
 
 // Admin: Create Backup
-app.post('/api/admin/backups', async (req, res) => {
+app.post('/api/admin/backups', requireAdmin, async (req, res) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const filename = `backup-${timestamp}.json`;
 
@@ -2074,11 +2155,11 @@ app.post('/api/admin/backups', async (req, res) => {
   res.status(201).json(await db.prepare('SELECT * FROM backups WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.get('/api/admin/backups', async (req, res) => {
+app.get('/api/admin/backups', requireAdmin, async (req, res) => {
   res.json(await db.prepare("SELECT * FROM backups ORDER BY created_at DESC").all());
 });
 
-app.get('/api/admin/backups/:id/download', async (req, res) => {
+app.get('/api/admin/backups/:id/download', requireAdmin, async (req, res) => {
   const backup = await db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
   if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
@@ -2090,7 +2171,7 @@ app.get('/api/admin/backups/:id/download', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/backups/:id', async (req, res) => {
+app.delete('/api/admin/backups/:id', requireAdmin, async (req, res) => {
   const backup = await db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
   if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
@@ -2101,7 +2182,7 @@ app.delete('/api/admin/backups/:id', async (req, res) => {
 });
 
 // Admin: Data Cleanup
-app.post('/api/admin/cleanup', async (req, res) => {
+app.post('/api/admin/cleanup', requireAdmin, async (req, res) => {
   const { type } = req.body;
   let result = { affected: 0 };
 
@@ -2124,7 +2205,7 @@ app.post('/api/admin/cleanup', async (req, res) => {
 });
 
 // Admin: Data Import
-app.post('/api/admin/import', async (req, res) => {
+app.post('/api/admin/import', requireAdmin, async (req, res) => {
   const data = req.body;
   const result = { imported: {}, errors: [] };
 
@@ -2241,7 +2322,7 @@ app.post('/api/admin/import', async (req, res) => {
 });
 
 // Admin: Test Webhook
-app.post('/api/admin/webhooks/:id/test', async (req, res) => {
+app.post('/api/admin/webhooks/:id/test', requireAdmin, async (req, res) => {
   const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
@@ -2301,7 +2382,7 @@ app.post('/api/admin/webhooks/:id/test', async (req, res) => {
 });
 
 // Admin: Reset Webhook Failures
-app.post('/api/admin/webhooks/:id/reset-failures', async (req, res) => {
+app.post('/api/admin/webhooks/:id/reset-failures', requireAdmin, async (req, res) => {
   const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
@@ -2314,7 +2395,7 @@ app.post('/api/admin/webhooks/:id/reset-failures', async (req, res) => {
 // SAML config is initialized in db.js seedSQLiteData()/seedPostgresData()
 
 // Get SAML configuration
-app.get('/api/admin/saml/config', async (req, res) => {
+app.get('/api/admin/saml/config', requireAdmin, async (req, res) => {
   const config = await db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
   // Don't expose the full certificate in the API response
   if (config && config.certificate) {
@@ -2325,7 +2406,7 @@ app.get('/api/admin/saml/config', async (req, res) => {
 });
 
 // Update SAML configuration
-app.put('/api/admin/saml/config', async (req, res) => {
+app.put('/api/admin/saml/config', requireAdmin, async (req, res) => {
   const {
     enabled, entity_id, sso_url, slo_url, certificate,
     name_id_format, attribute_mapping, auto_provision,
@@ -2568,7 +2649,7 @@ app.get('/api/auth/session', async (req, res) => {
 });
 
 // Test SAML configuration
-app.post('/api/admin/saml/test', async (req, res) => {
+app.post('/api/admin/saml/test', requireAdmin, async (req, res) => {
   const config = await db.prepare('SELECT * FROM saml_config WHERE id = 1').get();
 
   const issues = [];

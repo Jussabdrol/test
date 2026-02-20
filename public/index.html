@@ -98,7 +98,7 @@
     <div class="user-widget" id="user-widget">
       <div class="user-widget-info">
         <span class="user-widget-icon">&#128100;</span>
-        <span class="user-widget-name" id="user-name">User</span>
+        <span class="user-widget-name" id="current-user-name">User</span>
       </div>
       <button class="user-widget-logout" onclick="logout()" title="Sign out">Sign Out</button>
     </div>
@@ -1970,17 +1970,34 @@
         <h3 id="user-modal-title">Add User</h3>
         <button class="modal-close" onclick="closeUserModal()">&times;</button>
       </div>
+      <div id="user-modal-error" class="modal-error hidden"></div>
       <form id="user-form" onsubmit="saveUser(event)">
         <input type="hidden" id="user-id">
         <div class="form-row">
           <div class="form-group">
-            <label for="user-name">Full Name *</label>
-            <input type="text" id="user-name" required placeholder="John Doe">
+            <label for="user-fullname">Full Name *</label>
+            <input type="text" id="user-fullname" required placeholder="John Doe">
           </div>
           <div class="form-group">
             <label for="user-email">Email *</label>
             <input type="email" id="user-email" required placeholder="john@example.com">
           </div>
+        </div>
+        <div id="user-password-section">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="user-password">Password *</label>
+              <input type="password" id="user-password" minlength="6" placeholder="Minimum 6 characters">
+            </div>
+            <div class="form-group">
+              <label for="user-password-confirm">Confirm Password *</label>
+              <input type="password" id="user-password-confirm" minlength="6" placeholder="Repeat password">
+            </div>
+          </div>
+        </div>
+        <div id="reset-pw-section" class="hidden" style="margin-bottom:16px">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="openResetPasswordModal()">Reset Password</button>
+          <span style="font-size:12px;color:var(--text-muted);margin-left:8px">Set a new password for this user</span>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -1994,9 +2011,8 @@
           </div>
           <div class="form-group">
             <label for="user-department">Department</label>
-            <select id="user-department">
-              <option value="">-- Select --</option>
-            </select>
+            <input type="text" id="user-department" list="department-list" placeholder="Type or select...">
+            <datalist id="department-list"></datalist>
           </div>
         </div>
         <div class="form-group">
@@ -2030,7 +2046,33 @@
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeUserModal()">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save User</button>
+          <button type="submit" class="btn btn-primary" id="user-save-btn">Save User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Reset Password Modal -->
+  <div id="reset-pw-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeResetPasswordModal()"></div>
+    <div class="modal-content" style="max-width:420px">
+      <div class="modal-header">
+        <h3>Reset Password</h3>
+        <button class="modal-close" onclick="closeResetPasswordModal()">&times;</button>
+      </div>
+      <div id="reset-pw-error" class="modal-error hidden"></div>
+      <form id="reset-pw-form" onsubmit="submitResetPassword(event)">
+        <div class="form-group">
+          <label for="reset-pw-new">New Password *</label>
+          <input type="password" id="reset-pw-new" required minlength="6" placeholder="Minimum 6 characters">
+        </div>
+        <div class="form-group">
+          <label for="reset-pw-confirm">Confirm Password *</label>
+          <input type="password" id="reset-pw-confirm" required minlength="6" placeholder="Repeat password">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeResetPasswordModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Reset Password</button>
         </div>
       </form>
     </div>
