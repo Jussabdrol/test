@@ -16,7 +16,7 @@ async function loadCurrentUser() {
     const data = await res.json();
     if (data.authenticated && data.user) {
       currentUser = data.user;
-      const nameEl = document.getElementById('user-name');
+      const nameEl = document.getElementById('current-user-name');
       if (nameEl) nameEl.textContent = data.user.name;
     }
   } catch (err) {
@@ -5493,7 +5493,7 @@ async function loadAdminOverview() {
   } else {
     activityList.innerHTML = stats.recentAuditLogs.map(log => {
       const actionIcons = {
-        user_created: '&#128100;', user_updated: '&#128100;', user_deleted: '&#128100;',
+        user_created: '&#128100;', user_updated: '&#128100;', user_deleted: '&#128100;', user_password_reset: '&#128274;',
         settings_updated: '&#9881;', data_exported: '&#128229;', backup_created: '&#128190;',
         api_key_created: '&#128273;', webhook_created: '&#128279;'
       };
@@ -5514,7 +5514,7 @@ async function loadAdminOverview() {
 
 function formatAuditAction(action) {
   const map = {
-    user_created: 'User created', user_updated: 'User updated', user_deleted: 'User deleted',
+    user_created: 'User created', user_updated: 'User updated', user_deleted: 'User deleted', user_password_reset: 'Password reset',
     settings_updated: 'Settings updated', data_exported: 'Data exported', backup_created: 'Backup created',
     backup_deleted: 'Backup deleted', data_cleanup: 'Data cleanup', api_key_created: 'API key created',
     api_key_revoked: 'API key revoked', webhook_created: 'Webhook created', webhook_updated: 'Webhook updated',
@@ -5523,13 +5523,32 @@ function formatAuditAction(action) {
   return map[action] || action.replace(/_/g, ' ');
 }
 
+// --- Toast notification ---
+function showToast(message, type = 'success') {
+  const existing = document.querySelector('.toast-notification');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.className = `toast-notification toast-${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3500);
+}
+
 // --- Admin: User Management ---
+let userSearchDebounce = null;
+
 async function loadAdminUsers() {
   const params = new URLSearchParams();
   if (adminUserFilters.status) params.set('status', adminUserFilters.status);
   if (adminUserFilters.role) params.set('role', adminUserFilters.role);
+  if (adminUserFilters.search) params.set('search', adminUserFilters.search);
 
-  const users = await api(`/api/admin/users?${params}`);
+  let users;
+  try {
+    users = await api(`/api/admin/users?${params}`);
+    if (users.error) { showToast(users.error, 'error'); return; }
+  } catch (e) { showToast('Failed to load users', 'error'); return; }
 
   // Stats
   const statsEl = document.getElementById('admin-users-stats');
@@ -5552,7 +5571,7 @@ async function loadAdminUsers() {
   filtersEl.innerHTML = `
     <input type="text" placeholder="&#128269; Search users..." value="${esc(adminUserFilters.search || '')}"
       style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;min-width:180px"
-      oninput="adminUserFilters.search=this.value;loadAdminUsers()">
+      oninput="adminUserFilters.search=this.value;clearTimeout(userSearchDebounce);userSearchDebounce=setTimeout(loadAdminUsers,300)">
     <select onchange="adminUserFilters.status=this.value;loadAdminUsers()">
       <option value="">All Status</option>
       <option value="active" ${adminUserFilters.status==='active'?'selected':''}>Active</option>
@@ -5569,20 +5588,9 @@ async function loadAdminUsers() {
     </select>
   `;
 
-  // Apply search filter on client side
-  let filteredUsers = users;
-  if (adminUserFilters.search) {
-    const searchLower = adminUserFilters.search.toLowerCase();
-    filteredUsers = users.filter(u =>
-      u.name.toLowerCase().includes(searchLower) ||
-      u.email.toLowerCase().includes(searchLower) ||
-      (u.department && u.department.toLowerCase().includes(searchLower))
-    );
-  }
-
   // Table
   const tbody = document.getElementById('admin-users-body');
-  if (filteredUsers.length === 0) {
+  if (users.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No users found</td></tr>';
     return;
   }
@@ -5590,19 +5598,34 @@ async function loadAdminUsers() {
   const roleLabels = { viewer: 'Viewer', user: 'User', manager: 'Manager', admin: 'Administrator' };
   const roleBadge = r => r === 'admin' ? 'badge-critical' : r === 'manager' ? 'badge-high' : r === 'user' ? 'badge-medium' : 'badge-low';
   const statusBadge = s => s === 'active' ? 'badge-low' : s === 'pending' ? 'badge-medium' : s === 'suspended' ? 'badge-high' : 'badge-inactive';
+  const isSelf = id => currentUser && currentUser.id === id;
 
-  tbody.innerHTML = filteredUsers.map(u => {
+  tbody.innerHTML = users.map(u => {
     let permissions = [];
     try { permissions = JSON.parse(u.permissions || '[]'); } catch(e) {}
     const permLabels = permissions.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(', ');
     const lastActive = u.last_active ? new Date(u.last_active).toLocaleDateString() : 'Never';
+    const selfTag = isSelf(u.id) ? ' <span style="font-size:10px;color:var(--primary)">(you)</span>' : '';
+
+    const menuItems = [
+      { label: '&#9998; Edit', onclick: `openUserModal(${u.id})` },
+    ];
+    if (!isSelf(u.id)) {
+      menuItems.push(
+        u.status === 'active'
+          ? { label: '&#128683; Suspend', onclick: `toggleUserStatus(${u.id}, 'suspended')` }
+          : { label: '&#9989; Activate', onclick: `toggleUserStatus(${u.id}, 'active')` }
+      );
+      menuItems.push('sep');
+      menuItems.push({ label: '&#128465; Delete', onclick: `deleteUser(${u.id}, '${esc(u.name)}')`, cls: 'danger' });
+    }
 
     return `<tr>
       <td>
         <div style="display:flex;align-items:center;gap:10px">
           <div class="user-avatar">${u.name.charAt(0).toUpperCase()}</div>
           <div>
-            <strong style="cursor:pointer;color:var(--primary)" onclick="openUserModal(${u.id})">${esc(u.name)}</strong>
+            <strong style="cursor:pointer;color:var(--primary)" onclick="openUserModal(${u.id})">${esc(u.name)}</strong>${selfTag}
             ${u.department ? `<div style="font-size:11px;color:var(--text-muted)">${esc(u.department)}</div>` : ''}
           </div>
         </div>
@@ -5612,54 +5635,78 @@ async function loadAdminUsers() {
       <td><span style="font-size:12px;color:var(--text-muted)">${permLabels || '-'}</span></td>
       <td><span style="font-size:12px">${lastActive}</span></td>
       <td><span class="badge ${statusBadge(u.status)}">${u.status}</span></td>
-      <td>
-        ${actionMenu([
-          { label: '&#9998; Edit', onclick: `openUserModal(${u.id})` },
-          u.status === 'active' ? { label: '&#128683; Suspend', onclick: `toggleUserStatus(${u.id}, 'suspended')` } : { label: '&#9989; Activate', onclick: `toggleUserStatus(${u.id}, 'active')` },
-          'sep',
-          { label: '&#128465; Delete', onclick: `deleteUser(${u.id})`, cls: 'danger' },
-        ])}
-      </td>
+      <td>${actionMenu(menuItems)}</td>
     </tr>`;
   }).join('');
 }
 
-function openUserModal(id) {
-  document.getElementById('user-form').reset();
+function showModalError(containerId, msg) {
+  const el = document.getElementById(containerId);
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function hideModalError(containerId) {
+  const el = document.getElementById(containerId);
+  el.textContent = '';
+  el.classList.add('hidden');
+}
+
+async function openUserModal(id) {
+  const form = document.getElementById('user-form');
+  form.reset();
   document.getElementById('user-id').value = '';
-  document.getElementById('user-modal-title').textContent = 'Add User';
+  hideModalError('user-modal-error');
 
-  // Populate department dropdown from roles
-  api('/api/architecture?arch_type=role').then(roles => {
-    const deptSelect = document.getElementById('user-department');
-    deptSelect.innerHTML = '<option value="">-- Select --</option>' +
-      roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
-  });
+  const isEdit = !!id;
+  document.getElementById('user-modal-title').textContent = isEdit ? 'Edit User' : 'Add User';
+  document.getElementById('user-save-btn').textContent = isEdit ? 'Save Changes' : 'Create User';
 
-  if (id) {
-    api(`/api/admin/users`).then(users => {
-      const u = users.find(x => x.id === id);
-      if (u) {
-        document.getElementById('user-modal-title').textContent = 'Edit User';
-        document.getElementById('user-id').value = u.id;
-        document.getElementById('user-name').value = u.name;
-        document.getElementById('user-email').value = u.email;
-        document.getElementById('user-role').value = u.role;
-        document.getElementById('user-department').value = u.department || '';
-        document.getElementById('user-status').value = u.status;
-        document.getElementById('user-expiry').value = u.expiry_date || '';
-        document.getElementById('user-notes').value = u.notes || '';
+  // Password section: show for create, hide for edit (show reset button instead)
+  document.getElementById('user-password-section').classList.toggle('hidden', isEdit);
+  document.getElementById('reset-pw-section').classList.toggle('hidden', !isEdit);
+  if (!isEdit) {
+    document.getElementById('user-password').required = true;
+    document.getElementById('user-password-confirm').required = true;
+  } else {
+    document.getElementById('user-password').required = false;
+    document.getElementById('user-password-confirm').required = false;
+  }
 
-        // Set permissions
-        let perms = [];
-        try { perms = JSON.parse(u.permissions || '[]'); } catch(e) {}
-        document.getElementById('perm-org').checked = perms.includes('org');
-        document.getElementById('perm-risk').checked = perms.includes('risk');
-        document.getElementById('perm-ops').checked = perms.includes('ops');
-        document.getElementById('perm-audit').checked = perms.includes('audit');
-        document.getElementById('perm-admin').checked = perms.includes('admin');
-      }
-    });
+  // Populate department datalist from architecture roles
+  try {
+    const roles = await api('/api/architecture?arch_type=role');
+    const datalist = document.getElementById('department-list');
+    if (Array.isArray(roles)) {
+      datalist.innerHTML = roles.map(r => `<option value="${esc(r.name)}">`).join('');
+    }
+  } catch(e) { /* datalist stays empty, user can still type freely */ }
+
+  if (isEdit) {
+    try {
+      const u = await api(`/api/admin/users/${id}`);
+      if (u.error) { showToast(u.error, 'error'); return; }
+
+      document.getElementById('user-id').value = u.id;
+      document.getElementById('user-fullname').value = u.name;
+      document.getElementById('user-email').value = u.email;
+      document.getElementById('user-role').value = u.role;
+      document.getElementById('user-department').value = u.department || '';
+      document.getElementById('user-status').value = u.status;
+      document.getElementById('user-expiry').value = u.expiry_date || '';
+      document.getElementById('user-notes').value = u.notes || '';
+
+      let perms = [];
+      try { perms = JSON.parse(u.permissions || '[]'); } catch(e) {}
+      document.getElementById('perm-org').checked = perms.includes('org');
+      document.getElementById('perm-risk').checked = perms.includes('risk');
+      document.getElementById('perm-ops').checked = perms.includes('ops');
+      document.getElementById('perm-audit').checked = perms.includes('audit');
+      document.getElementById('perm-admin').checked = perms.includes('admin');
+    } catch(e) {
+      showToast('Failed to load user details', 'error');
+      return;
+    }
   }
 
   document.getElementById('user-modal').classList.remove('hidden');
@@ -5667,11 +5714,15 @@ function openUserModal(id) {
 
 function closeUserModal() {
   document.getElementById('user-modal').classList.add('hidden');
+  hideModalError('user-modal-error');
 }
 
 async function saveUser(e) {
   e.preventDefault();
+  hideModalError('user-modal-error');
+
   const id = document.getElementById('user-id').value;
+  const isEdit = !!id;
 
   const permissions = [];
   if (document.getElementById('perm-org').checked) permissions.push('org');
@@ -5681,35 +5732,132 @@ async function saveUser(e) {
   if (document.getElementById('perm-admin').checked) permissions.push('admin');
 
   const body = {
-    name: document.getElementById('user-name').value,
-    email: document.getElementById('user-email').value,
+    name: document.getElementById('user-fullname').value.trim(),
+    email: document.getElementById('user-email').value.trim(),
     role: document.getElementById('user-role').value,
-    department: document.getElementById('user-department').value,
+    department: document.getElementById('user-department').value.trim(),
     permissions,
     status: document.getElementById('user-status').value,
     expiry_date: document.getElementById('user-expiry').value || null,
-    notes: document.getElementById('user-notes').value,
+    notes: document.getElementById('user-notes').value.trim(),
   };
 
-  if (id) {
-    await api(`/api/admin/users/${id}`, { method: 'PUT', body });
-  } else {
-    await api('/api/admin/users', { method: 'POST', body });
+  if (!body.name || !body.email) {
+    showModalError('user-modal-error', 'Name and email are required.');
+    return;
   }
 
-  closeUserModal();
-  loadAdminUsers();
+  // For new users, validate and include password
+  if (!isEdit) {
+    const pw = document.getElementById('user-password').value;
+    const pwConfirm = document.getElementById('user-password-confirm').value;
+    if (!pw || pw.length < 6) {
+      showModalError('user-modal-error', 'Password must be at least 6 characters.');
+      return;
+    }
+    if (pw !== pwConfirm) {
+      showModalError('user-modal-error', 'Passwords do not match.');
+      return;
+    }
+    body.password = pw;
+  }
+
+  const saveBtn = document.getElementById('user-save-btn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  try {
+    let result;
+    if (isEdit) {
+      result = await api(`/api/admin/users/${id}`, { method: 'PUT', body });
+    } else {
+      result = await api('/api/admin/users', { method: 'POST', body });
+    }
+
+    if (result.error) {
+      showModalError('user-modal-error', result.error);
+      return;
+    }
+
+    closeUserModal();
+    showToast(isEdit ? `User "${body.name}" updated successfully` : `User "${body.name}" created successfully`);
+    loadAdminUsers();
+  } catch(e) {
+    showModalError('user-modal-error', 'An unexpected error occurred. Please try again.');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = isEdit ? 'Save Changes' : 'Create User';
+  }
 }
 
 async function toggleUserStatus(id, status) {
-  await api(`/api/admin/users/${id}`, { method: 'PUT', body: { status } });
-  loadAdminUsers();
+  try {
+    const result = await api(`/api/admin/users/${id}`, { method: 'PUT', body: { status } });
+    if (result.error) { showToast(result.error, 'error'); return; }
+    showToast(`User ${status === 'active' ? 'activated' : 'suspended'} successfully`);
+    loadAdminUsers();
+  } catch(e) {
+    showToast('Failed to update user status', 'error');
+  }
 }
 
-async function deleteUser(id) {
-  if (!confirm('Delete this user? This cannot be undone.')) return;
-  await api(`/api/admin/users/${id}`, { method: 'DELETE' });
-  loadAdminUsers();
+async function deleteUser(id, name) {
+  if (!confirm(`Permanently delete user "${name || ''}"? This action cannot be undone.`)) return;
+  try {
+    const result = await api(`/api/admin/users/${id}`, { method: 'DELETE' });
+    if (result.error) { showToast(result.error, 'error'); return; }
+    showToast('User deleted successfully');
+    loadAdminUsers();
+  } catch(e) {
+    showToast('Failed to delete user', 'error');
+  }
+}
+
+// --- Password Reset ---
+function openResetPasswordModal() {
+  document.getElementById('reset-pw-form').reset();
+  hideModalError('reset-pw-error');
+  document.getElementById('reset-pw-modal').classList.remove('hidden');
+}
+
+function closeResetPasswordModal() {
+  document.getElementById('reset-pw-modal').classList.add('hidden');
+  hideModalError('reset-pw-error');
+}
+
+async function submitResetPassword(e) {
+  e.preventDefault();
+  hideModalError('reset-pw-error');
+
+  const pw = document.getElementById('reset-pw-new').value;
+  const pwConfirm = document.getElementById('reset-pw-confirm').value;
+
+  if (!pw || pw.length < 6) {
+    showModalError('reset-pw-error', 'Password must be at least 6 characters.');
+    return;
+  }
+  if (pw !== pwConfirm) {
+    showModalError('reset-pw-error', 'Passwords do not match.');
+    return;
+  }
+
+  const userId = document.getElementById('user-id').value;
+  if (!userId) {
+    showModalError('reset-pw-error', 'No user selected.');
+    return;
+  }
+
+  try {
+    const result = await api(`/api/admin/users/${userId}/password`, { method: 'PUT', body: { password: pw } });
+    if (result.error) {
+      showModalError('reset-pw-error', result.error);
+      return;
+    }
+    closeResetPasswordModal();
+    showToast('Password reset successfully');
+  } catch(e) {
+    showModalError('reset-pw-error', 'Failed to reset password. Please try again.');
+  }
 }
 
 // --- Admin: Audit Log ---
