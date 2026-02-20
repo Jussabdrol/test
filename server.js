@@ -1,9 +1,9 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const db = require('./db');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const session = require('express-session');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -52,21 +52,68 @@ async function deleteFromSupabase(storagePath) {
 
 app.use(express.json());
 
-// Trust proxy for Cloud Run (needed for secure cookies behind load balancer)
+// Trust proxy for Cloud Run / Vercel (needed for secure cookies behind load balancer)
 app.set('trust proxy', 1);
 
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'lettheframework-secret-key-change-in-production',
-  resave: false,
-  saveUninitialized: false,
-  proxy: true,
-  cookie: {
-    secure: 'auto', // Automatically use secure cookies when HTTPS is detected
-    httpOnly: true,
-    sameSite: 'lax',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
-  }
-}));
+// ---------------------------------------------------------------------------
+// Stateless JWT-like token helpers (HMAC-SHA256, no external dependency)
+// Tokens are stored in an httpOnly cookie so the frontend doesn't change.
+// ---------------------------------------------------------------------------
+const TOKEN_SECRET = process.env.SESSION_SECRET || 'lettheframework-secret-key-change-in-production';
+const TOKEN_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours in ms
+
+function createToken(payload) {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify({ ...payload, iat: Date.now(), exp: Date.now() + TOKEN_MAX_AGE })).toString('base64url');
+  const signature = crypto.createHmac('sha256', TOKEN_SECRET).update(`${header}.${body}`).digest('base64url');
+  return `${header}.${body}.${signature}`;
+}
+
+function verifyToken(token) {
+  if (!token) return null;
+  try {
+    const [header, body, signature] = token.split('.');
+    const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(`${header}.${body}`).digest('base64url');
+    if (signature !== expected) return null;
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
+    if (payload.exp < Date.now()) return null;
+    return payload;
+  } catch { return null; }
+}
+
+// Middleware: parse token from cookie and attach to req
+const cookieParser = require('cookie-parser');
+app.use(cookieParser());
+
+app.use((req, res, next) => {
+  const token = req.cookies?.session_token;
+  const payload = verifyToken(token);
+  // Attach a session-like object for backward compatibility with existing route code
+  req.session = {
+    userId: payload?.userId || null,
+    userRole: payload?.userRole || null,
+    // save() issues a new cookie (called explicitly after login)
+    save(cb) {
+      const newToken = createToken({ userId: req.session.userId, userRole: req.session.userRole });
+      res.cookie('session_token', newToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production' || req.protocol === 'https',
+        sameSite: 'lax',
+        maxAge: TOKEN_MAX_AGE,
+        path: '/',
+      });
+      if (cb) cb(null);
+    },
+    // destroy() clears the cookie (called on logout)
+    destroy(cb) {
+      res.clearCookie('session_token', { path: '/' });
+      req.session.userId = null;
+      req.session.userRole = null;
+      if (cb) cb(null);
+    },
+  };
+  next();
+});
 
 // Health check endpoint for Cloud Run (must be before auth middleware)
 app.get('/health', async (req, res) => {
@@ -104,7 +151,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // --- Database Setup ---
 // Database is initialized via db.initDatabase() in startServer() below
 // Schema and migrations are handled in db.js and schema.js
-// Supports both SQLite (local) and PostgreSQL (Cloud Run) via DB_TYPE env var
+// Uses Supabase PostgreSQL – no local file system dependencies
 
 // --- Helper: compute next due date ---
 function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth) {
@@ -726,14 +773,14 @@ app.put('/api/audits/:id', async (req, res) => {
   // Add checklist items from newly selected requirements (skip existing clauses)
   if (req.body.requirement_ids && Array.isArray(req.body.requirement_ids)) {
     const existingClauses = (await db.prepare('SELECT clause FROM audit_checklist WHERE audit_id = ?').all(req.params.id)).map(c => c.clause);
-    const insertCl = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)');
-    const getReq = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
+    const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)');
+    const getReq = db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
     const maxOrder = (await db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ?').get(req.params.id)).m;
     let order = maxOrder + 1;
     for (const reqId of req.body.requirement_ids) {
-      const r = getReq.get(reqId);
+      const r = await getReq.get(reqId);
       if (r && !existingClauses.includes(r.clause)) {
-        insertCl.run(req.params.id, r.clause, r.title, order++);
+        await insertCl.run(req.params.id, r.clause, r.title, order++);
       }
     }
   }
@@ -1412,12 +1459,12 @@ app.get('/api/kpis/auto', async (req, res) => {
     high_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks WHERE inherent_score >= 15').get()).v,
     open_treatments: (await db.prepare("SELECT COUNT(*) as v FROM risk_treatments WHERE status IN ('planned','in_progress')").get()).v,
     // SoA counts from Annex A requirements (applicable by default unless explicitly set to 0)
-    soa_applicable: await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
+    soa_applicable: (await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
       LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
-      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1)`).get().v,
-    soa_implemented: await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
+      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1)`).get()).v,
+    soa_implemented: (await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
       LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
-      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1) AND soa.implementation_status = 'implemented'`).get().v,
+      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1) AND soa.implementation_status = 'implemented'`).get()).v,
     threat_items_new: (await db.prepare("SELECT COUNT(*) as v FROM threat_items WHERE status = 'new'").get()).v,
     // Document Control
     total_documents: (await db.prepare('SELECT COUNT(*) as v FROM documents').get()).v,
@@ -1619,14 +1666,16 @@ app.get('/api/cross-links/:type/:id', async (req, res) => {
     SELECT * FROM cross_links WHERE (source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?)
   `).all(type, id, type, id);
 
-  const resolved = links.map(l => {
+  const resolved = [];
+  for (const l of links) {
     const isSource = l.source_type === type && l.source_id === parseInt(id);
     const otherType = isSource ? l.target_type : l.source_type;
     const otherId = isSource ? l.target_id : l.source_id;
     const resolver = entityResolvers[otherType];
-    const entity = resolver ? resolver(otherId) : null;
-    return { link_id: l.id, type: otherType, id: otherId, name: entity ? entity.name : `${otherType} #${otherId}` };
-  }).filter(l => l.name);
+    const entity = resolver ? await resolver(otherId) : null;
+    const name = entity ? entity.name : `${otherType} #${otherId}`;
+    if (name) resolved.push({ link_id: l.id, type: otherType, id: otherId, name });
+  }
 
   res.json(resolved);
 });
@@ -1696,8 +1745,8 @@ app.get('/api/link-references', async (req, res) => {
 // Admin: System Overview Stats
 app.get('/api/admin/overview', async (req, res) => {
   const stats = {
-    // Database stats (SQLite only; returns 0 on PostgreSQL/serverless)
-    databaseSize: (() => { try { const fs = require('fs'); return fs.statSync(path.join(__dirname, 'tasks.db')).size; } catch (e) { return 0; } })(),
+    // Database stats (Supabase PostgreSQL – size via pg_database_size)
+    databaseSize: await (async () => { try { const r = await db.get("SELECT pg_database_size(current_database()) as size"); return r?.size || 0; } catch { return 0; } })(),
 
     // Module counts
     tasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks').get()).c,
@@ -1837,13 +1886,13 @@ app.get('/api/admin/settings', async (req, res) => {
 
 app.put('/api/admin/settings', async (req, res) => {
   const settings = req.body;
-  const upsert = await db.prepare(`
+  const upsert = db.prepare(`
     INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
   `);
 
   for (const [key, value] of Object.entries(settings)) {
-    upsert.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+    await upsert.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
   }
 
   await logAuditAction(null, 'System', 'settings_updated', 'settings', null, null, JSON.stringify(Object.keys(settings)));
@@ -1860,7 +1909,6 @@ app.post('/api/admin/api-keys', async (req, res) => {
   if (!name) return res.status(400).json({ error: 'Name required' });
 
   // Generate a random API key
-  const crypto = require('crypto');
   const key = 'ltfw_' + crypto.randomBytes(24).toString('hex');
   const keyHash = crypto.createHash('sha256').update(key).digest('hex');
   const keyPrefix = key.substring(0, 12) + '...';
@@ -1959,7 +2007,7 @@ app.get('/api/admin/export', async (req, res) => {
   }
   if (includes.includes('architecture')) {
     data.architecture = await db.prepare('SELECT * FROM org_architecture').all();
-    data.kpis = await db.prepare('SELECT * FROM kpis').all();
+    data.kpis = await db.prepare('SELECT * FROM org_kpis').all();
   }
   if (includes.includes('requirements')) {
     data.requirements = await db.prepare('SELECT * FROM standard_requirements').all();
@@ -2000,8 +2048,8 @@ app.post('/api/admin/backups', async (req, res) => {
     requirements: await db.prepare('SELECT * FROM standard_requirements').all(),
     soaEntries: await db.prepare('SELECT * FROM soa_entries').all(),
     documents: await db.prepare('SELECT * FROM documents').all(),
-    kpis: await db.prepare('SELECT * FROM kpis').all(),
-    kpiValues: await db.prepare('SELECT * FROM kpi_values').all(),
+    kpis: await db.prepare('SELECT * FROM org_kpis').all(),
+    kpiValues: await db.prepare('SELECT * FROM org_kpi_values').all(),
     crossLinks: await db.prepare('SELECT * FROM cross_links').all(),
     threatFeeds: await db.prepare('SELECT * FROM threat_feeds').all(),
     users: await db.prepare('SELECT * FROM users').all(),
@@ -2084,13 +2132,13 @@ app.post('/api/admin/import', async (req, res) => {
     // Import tasks
     if (data.tasks && Array.isArray(data.tasks)) {
       let count = 0;
-      const insertTask = await db.prepare(`
+      const insertTask = db.prepare(`
         INSERT OR IGNORE INTO tasks (title, description, assignee, category, priority, recurrence, next_due, is_active, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const task of data.tasks) {
         try {
-          insertTask.run(task.title, task.description || '', task.assignee || '', task.category || '',
+          await insertTask.run(task.title, task.description || '', task.assignee || '', task.category || '',
             task.priority || 'medium', task.recurrence || 'monthly', task.next_due || null, task.is_active !== false ? 1 : 0);
           count++;
         } catch (e) { /* Skip duplicates */ }
@@ -2101,14 +2149,14 @@ app.post('/api/admin/import', async (req, res) => {
     // Import risks
     if (data.risks && Array.isArray(data.risks)) {
       let count = 0;
-      const insertRisk = await db.prepare(`
-        INSERT OR IGNORE INTO risks (title, description, category, status, owner, threat, vulnerability, asset_system, likelihood, impact, created_at)
+      const insertRisk = db.prepare(`
+        INSERT OR IGNORE INTO risks (title, description, category, status, risk_owner, threat, vulnerability, asset, likelihood, impact, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const risk of data.risks) {
         try {
-          insertRisk.run(risk.title, risk.description || '', risk.category || '', risk.status || 'identified',
-            risk.owner || '', risk.threat || '', risk.vulnerability || '', risk.asset_system || '',
+          await insertRisk.run(risk.title, risk.description || '', risk.category || '', risk.status || 'identified',
+            risk.risk_owner || risk.owner || '', risk.threat || '', risk.vulnerability || '', risk.asset || risk.asset_system || '',
             risk.likelihood || 3, risk.impact || 3);
           count++;
         } catch (e) { /* Skip duplicates */ }
@@ -2119,13 +2167,13 @@ app.post('/api/admin/import', async (req, res) => {
     // Import architecture items
     if (data.architecture && Array.isArray(data.architecture)) {
       let count = 0;
-      const insertArch = await db.prepare(`
+      const insertArch = db.prepare(`
         INSERT OR IGNORE INTO org_architecture (arch_type, name, description, owner, parent_id, status, created_at)
         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const item of data.architecture) {
         try {
-          insertArch.run(item.arch_type || 'role', item.name, item.description || '', item.owner || '',
+          await insertArch.run(item.arch_type || 'role', item.name, item.description || '', item.owner || '',
             item.parent_id || null, item.status || 'active');
           count++;
         } catch (e) { /* Skip duplicates */ }
@@ -2136,14 +2184,14 @@ app.post('/api/admin/import', async (req, res) => {
     // Import requirements
     if (data.requirements && Array.isArray(data.requirements)) {
       let count = 0;
-      const insertReq = await db.prepare(`
-        INSERT OR IGNORE INTO standard_requirements (standard, clause, title, description, guidance, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      const insertReq = db.prepare(`
+        INSERT OR IGNORE INTO standard_requirements (standard, clause, title, description, category, created_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
       `);
-      for (const req of data.requirements) {
+      for (const item of data.requirements) {
         try {
-          insertReq.run(req.standard || '', req.clause || '', req.title, req.description || '',
-            req.guidance || '', req.status || 'not_started');
+          await insertReq.run(item.standard || '', item.clause || '', item.title, item.description || '',
+            item.category || '');
           count++;
         } catch (e) { /* Skip duplicates */ }
       }
@@ -2153,13 +2201,13 @@ app.post('/api/admin/import', async (req, res) => {
     // Import documents
     if (data.documents && Array.isArray(data.documents)) {
       let count = 0;
-      const insertDoc = await db.prepare(`
+      const insertDoc = db.prepare(`
         INSERT OR IGNORE INTO documents (title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const doc of data.documents) {
         try {
-          insertDoc.run(doc.title, doc.description || '', doc.doc_type || 'policy', doc.version || '1.0',
+          await insertDoc.run(doc.title, doc.description || '', doc.doc_type || 'policy', doc.version || '1.0',
             doc.owner || '', doc.status || 'draft', doc.classification || 'internal',
             doc.linked_module || '', doc.review_date || null);
           count++;
@@ -2171,14 +2219,14 @@ app.post('/api/admin/import', async (req, res) => {
     // Import audits
     if (data.audits && Array.isArray(data.audits)) {
       let count = 0;
-      const insertAudit = await db.prepare(`
-        INSERT OR IGNORE INTO audits (title, type, standard, lead_auditor, scope, status, scheduled_date, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      const insertAudit = db.prepare(`
+        INSERT OR IGNORE INTO audits (title, standard, lead_auditor, scope, status, planned_date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const audit of data.audits) {
         try {
-          insertAudit.run(audit.title, audit.type || 'internal', audit.standard || '', audit.lead_auditor || '',
-            audit.scope || '', audit.status || 'planned', audit.scheduled_date || null);
+          await insertAudit.run(audit.title, audit.standard || '', audit.lead_auditor || '',
+            audit.scope || '', audit.status || 'planned', audit.planned_date || audit.scheduled_date || null);
           count++;
         } catch (e) { /* Skip duplicates */ }
       }
@@ -2356,7 +2404,7 @@ app.get('/saml/login', async (req, res) => {
   }
 
   const baseUrl = `${req.protocol}://${req.get('host')}`;
-  const requestId = '_' + require('crypto').randomBytes(16).toString('hex');
+  const requestId = '_' + crypto.randomBytes(16).toString('hex');
   const issueInstant = new Date().toISOString();
 
   // Create SAML AuthnRequest
@@ -2444,7 +2492,7 @@ app.post('/saml/callback', express.urlencoded({ extended: true }), async (req, r
     }
 
     // Create session
-    const sessionId = require('crypto').randomBytes(32).toString('hex');
+    const sessionId = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
 
     await db.prepare(`
@@ -2581,9 +2629,9 @@ process.on('unhandledRejection', (reason, promise) => {
 // Start server with database initialization
 async function startServer() {
   try {
-    // Initialize database (SQLite or PostgreSQL based on DB_TYPE env var)
+    // Initialize Supabase PostgreSQL database
     await db.initDatabase();
-    console.log(`Database type: ${db.isPostgreSQL() ? 'PostgreSQL' : 'SQLite'}`);
+    console.log('Database: Supabase PostgreSQL');
 
     app.listen(PORT, () => {
       console.log(`Let The Frame Work running at http://localhost:${PORT}`);

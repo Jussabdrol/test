@@ -1,15 +1,11 @@
 {
   "name": "recurring-task-manager",
-  "version": "1.0.0",
-  "description": "Track and manage recurring tasks within a business context",
+  "version": "2.0.0",
+  "description": "Track and manage recurring tasks within a business context – Supabase PostgreSQL backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
-    "dev:pg": "DB_TYPE=postgresql DB_HOST=localhost DB_PORT=5432 DB_USER=appuser DB_PASSWORD=localdev123 DB_NAME=lettheframework node server.js",
-    "db:start": "docker-compose up -d postgres",
-    "db:stop": "docker-compose down",
-    "db:reset": "docker-compose down -v && docker-compose up -d postgres"
+    "dev": "node server.js"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -17,9 +13,8 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.0.0",
+    "cookie-parser": "^1.4.7",
     "express": "^4.21.0",
-    "express-session": "^1.18.0",
     "multer": "^2.0.2",
     "pg": "^8.11.3"
   }
