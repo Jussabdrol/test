@@ -1,26 +1,54 @@
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
 const db = require('./db');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const session = require('express-session');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// File upload setup
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
-    cb(null, `${Date.now()}_${base}${ext}`);
-  }
-});
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+// Supabase Storage client
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
+const UPLOADS_BUCKET = 'uploads';
+
+// File upload setup - use memory storage; files are sent to Supabase Storage
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+// Helper: generate a unique storage path for an uploaded file
+function storageKey(folder, originalname) {
+  const ext = path.extname(originalname);
+  const base = path.basename(originalname, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `${folder}/${Date.now()}_${base}${ext}`;
+}
+
+// Helper: upload a buffer to Supabase Storage; returns the storage path
+async function uploadToSupabase(folder, file) {
+  const key = storageKey(folder, file.originalname);
+  const { error } = await supabase.storage
+    .from(UPLOADS_BUCKET)
+    .upload(key, file.buffer, { contentType: file.mimetype, upsert: false });
+  if (error) throw new Error(`Supabase upload failed: ${error.message}`);
+  return key;
+}
+
+// Helper: get a short-lived signed download URL from Supabase Storage
+async function getSignedUrl(storagePath, expiresIn = 300) {
+  const { data, error } = await supabase.storage
+    .from(UPLOADS_BUCKET)
+    .createSignedUrl(storagePath, expiresIn);
+  if (error) throw new Error(`Supabase signed URL failed: ${error.message}`);
+  return data.signedUrl;
+}
+
+// Helper: delete a file from Supabase Storage (ignores "not found" errors)
+async function deleteFromSupabase(storagePath) {
+  await supabase.storage.from(UPLOADS_BUCKET).remove([storagePath]);
+}
 
 app.use(express.json());
 
@@ -72,7 +100,6 @@ app.get('/login', async (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(uploadsDir));
 
 // --- Database Setup ---
 // Database is initialized via db.initDatabase() in startServer() below
@@ -789,6 +816,13 @@ app.post('/api/checklist/:id/evidence', upload.single('file'), async (req, res) 
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
+  let storagePath;
+  try {
+    storagePath = await uploadToSupabase('evidence', req.file);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+
   // Parse existing evidence_files array
   let evidenceFiles = [];
   try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
@@ -798,7 +832,7 @@ app.post('/api/checklist/:id/evidence', upload.single('file'), async (req, res) 
     id: Date.now(),
     type: 'file',
     name: req.file.originalname,
-    path: req.file.filename,
+    path: storagePath,
     size: req.file.size,
     mime: req.file.mimetype,
     uploaded_at: new Date().toISOString()
@@ -820,9 +854,12 @@ app.get('/api/checklist/:id/evidence/:fileId/download', async (req, res) => {
   const file = evidenceFiles.find(f => f.id == req.params.fileId);
   if (!file || file.type !== 'file') return res.status(404).json({ error: 'File not found' });
 
-  const filePath = path.join(uploadsDir, file.path);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
-  res.download(filePath, file.name);
+  try {
+    const signedUrl = await getSignedUrl(file.path);
+    res.redirect(signedUrl);
+  } catch (err) {
+    res.status(404).json({ error: 'File not found in storage' });
+  }
 });
 
 // Delete evidence file from checklist item
@@ -837,10 +874,9 @@ app.delete('/api/checklist/:id/evidence/:fileId', async (req, res) => {
   if (fileIndex === -1) return res.status(404).json({ error: 'Evidence item not found' });
 
   const file = evidenceFiles[fileIndex];
-  // Delete actual file if it's a file type
+  // Delete actual file from Supabase Storage if it's a file type
   if (file.type === 'file' && file.path) {
-    const filePath = path.join(uploadsDir, file.path);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await deleteFromSupabase(file.path);
   }
 
   // Remove from array
@@ -1491,9 +1527,17 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
   const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date, classification } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
   const file = req.file;
+  let storagePath = '';
+  if (file) {
+    try {
+      storagePath = await uploadToSupabase('documents', file);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   const result = await db.prepare(`INSERT INTO documents (title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     title, description || '', doc_type || 'policy', version || '1.0', owner || '', status || 'draft',
-    file ? file.originalname : '', file ? file.filename : '', file ? file.size : 0, file ? file.mimetype : '',
+    file ? file.originalname : '', storagePath, file ? file.size : 0, file ? file.mimetype : '',
     linked_module || '', linked_ref_type || '', linked_ref_id || null, review_date || null, classification || ''
   );
   res.status(201).json(await db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid));
@@ -1504,16 +1548,21 @@ app.put('/api/documents/:id', upload.single('file'), async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Document not found' });
   const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date, classification } = req.body;
   const file = req.file;
-  // If new file uploaded, delete old one
-  if (file && existing.file_path) {
-    const oldPath = path.join(uploadsDir, existing.file_path);
-    if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+  let storagePath = file ? '' : existing.file_path;
+  if (file) {
+    try {
+      storagePath = await uploadToSupabase('documents', file);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    // Delete the old file from Supabase Storage
+    if (existing.file_path) await deleteFromSupabase(existing.file_path);
   }
   await db.prepare(`UPDATE documents SET title=?, description=?, doc_type=?, version=?, owner=?, status=?, file_name=?, file_path=?, file_size=?, mime_type=?, linked_module=?, linked_ref_type=?, linked_ref_id=?, review_date=?, classification=?, updated_at=datetime('now') WHERE id=?`).run(
     title || existing.title, description !== undefined ? description : existing.description,
     doc_type || existing.doc_type, version || existing.version, owner !== undefined ? owner : existing.owner,
     status || existing.status,
-    file ? file.originalname : existing.file_name, file ? file.filename : existing.file_path,
+    file ? file.originalname : existing.file_name, storagePath,
     file ? file.size : existing.file_size, file ? file.mimetype : existing.mime_type,
     linked_module !== undefined ? linked_module : existing.linked_module,
     linked_ref_type !== undefined ? linked_ref_type : existing.linked_ref_type,
@@ -1528,10 +1577,7 @@ app.put('/api/documents/:id', upload.single('file'), async (req, res) => {
 app.delete('/api/documents/:id', async (req, res) => {
   const doc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
-  if (doc.file_path) {
-    const filePath = path.join(uploadsDir, doc.file_path);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  }
+  if (doc.file_path) await deleteFromSupabase(doc.file_path);
   await db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
@@ -1539,9 +1585,12 @@ app.delete('/api/documents/:id', async (req, res) => {
 app.get('/api/documents/:id/download', async (req, res) => {
   const doc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
   if (!doc || !doc.file_path) return res.status(404).json({ error: 'File not found' });
-  const filePath = path.join(uploadsDir, doc.file_path);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
-  res.download(filePath, doc.file_name);
+  try {
+    const signedUrl = await getSignedUrl(doc.file_path);
+    res.redirect(signedUrl);
+  } catch (err) {
+    res.status(404).json({ error: 'File not found in storage' });
+  }
 });
 
 // --- Universal Cross-Linking API ---
@@ -1647,8 +1696,8 @@ app.get('/api/link-references', async (req, res) => {
 // Admin: System Overview Stats
 app.get('/api/admin/overview', async (req, res) => {
   const stats = {
-    // Database stats
-    databaseSize: fs.statSync(path.join(__dirname, 'tasks.db')).size,
+    // Database stats (SQLite only; returns 0 on PostgreSQL/serverless)
+    databaseSize: (() => { try { const fs = require('fs'); return fs.statSync(path.join(__dirname, 'tasks.db')).size; } catch (e) { return 0; } })(),
 
     // Module counts
     tasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks').get()).c,
@@ -1962,15 +2011,16 @@ app.post('/api/admin/backups', async (req, res) => {
   const content = JSON.stringify(data, null, 2);
   const size = Buffer.byteLength(content, 'utf8');
 
+  // Upload backup to Supabase Storage
+  const { error: uploadError } = await supabase.storage
+    .from(UPLOADS_BUCKET)
+    .upload(`backups/${filename}`, Buffer.from(content, 'utf8'), { contentType: 'application/json', upsert: false });
+  if (uploadError) return res.status(500).json({ error: `Backup storage failed: ${uploadError.message}` });
+
   // Save backup record
   const result = await db.prepare(`
     INSERT INTO backups (filename, size, type, status) VALUES (?, ?, ?, 'completed')
   `).run(filename, size, req.body.type || 'manual');
-
-  // Save backup file
-  const backupsDir = path.join(__dirname, 'backups');
-  if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir);
-  fs.writeFileSync(path.join(backupsDir, filename), content);
 
   await logAuditAction(null, 'System', 'backup_created', 'backup', result.lastInsertRowid, filename);
   res.status(201).json(await db.prepare('SELECT * FROM backups WHERE id = ?').get(result.lastInsertRowid));
@@ -1984,20 +2034,19 @@ app.get('/api/admin/backups/:id/download', async (req, res) => {
   const backup = await db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
   if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
-  const filePath = path.join(__dirname, 'backups', backup.filename);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Backup file not found' });
-
-  res.download(filePath, backup.filename);
+  try {
+    const signedUrl = await getSignedUrl(`backups/${backup.filename}`);
+    res.redirect(signedUrl);
+  } catch (err) {
+    res.status(404).json({ error: 'Backup file not found in storage' });
+  }
 });
 
 app.delete('/api/admin/backups/:id', async (req, res) => {
   const backup = await db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
   if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
-  // Delete file
-  const filePath = path.join(__dirname, 'backups', backup.filename);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-
+  await deleteFromSupabase(`backups/${backup.filename}`);
   await db.prepare('DELETE FROM backups WHERE id = ?').run(req.params.id);
   await logAuditAction(null, 'System', 'backup_deleted', 'backup', backup.id, backup.filename);
   res.json({ success: true });
