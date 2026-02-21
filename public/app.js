@@ -114,6 +114,7 @@ function switchView(view) {
   else if (view === 'audit-plan') loadAuditPlan();
   else if (view === 'audit-execute') loadAuditExecuteView();
   else if (view === 'audit-ncrs') loadNcrs();
+  else if (view === 'audit-statistics') loadAuditStatistics();
   else if (view === 'audit-requirements') loadRequirements();
   else if (view === 'threat-intelligence') loadThreatIntelligence();
   else if (view === 'risk-identification') loadRiskIdentification();
@@ -2481,6 +2482,107 @@ async function saveChecklistEdit() {
   loadAuditExecution(auditId);
 }
 
+// --- Audit Statistics View ---
+async function loadAuditStatistics() {
+  const content = document.getElementById('audit-stats-content');
+  content.innerHTML = '<div class="empty-state">Loading...</div>';
+  const [audits, ncrs] = await Promise.all([
+    api('/api/audits'),
+    api('/api/ncrs'),
+  ]);
+
+  // Flatten all audit events
+  const allEvents = [];
+  for (const a of audits) {
+    if (a.all_events && a.all_events.length > 0) {
+      for (const ev of a.all_events) allEvents.push({ ...ev, parent_title: a.title, standard: a.standard });
+    } else {
+      allEvents.push({ ...a, parent_title: a.title });
+    }
+  }
+
+  const totalEvents = allEvents.length;
+  const completedEvents = allEvents.filter(e => e.status === 'completed').length;
+  const inProgressEvents = allEvents.filter(e => e.status === 'in_progress').length;
+  const plannedEvents = allEvents.filter(e => e.status === 'planned').length;
+  const completionRate = totalEvents > 0 ? Math.round((completedEvents / totalEvents) * 100) : 0;
+
+  const openNcrs = ncrs.filter(n => n.status === 'open' || n.status === 'in_progress').length;
+  const closedNcrs = ncrs.filter(n => n.status === 'closed' || n.status === 'verified').length;
+  const majorNcrs = ncrs.filter(n => n.severity === 'major').length;
+  const minorNcrs = ncrs.filter(n => n.severity === 'minor').length;
+
+  // Group NCRs by audit standard
+  const ncrByStandard = {};
+  for (const n of ncrs) {
+    const std = n.ncr_standard || n.audit_standard || 'Unknown';
+    if (!ncrByStandard[std]) ncrByStandard[std] = { total: 0, open: 0, closed: 0 };
+    ncrByStandard[std].total++;
+    if (n.status === 'open' || n.status === 'in_progress') ncrByStandard[std].open++;
+    else ncrByStandard[std].closed++;
+  }
+
+  // Group audits by status for history — use planned_date as fallback since parentAsEvent doesn't always carry completed_date
+  const recentCompleted = allEvents
+    .filter(e => e.status === 'completed')
+    .sort((a, b) => (b.completed_date || b.planned_date || '').localeCompare(a.completed_date || a.planned_date || ''))
+    .slice(0, 10);
+
+  let html = `
+    <div class="stats-grid" style="margin-bottom:24px">
+      <div class="stat-card"><div class="stat-value">${totalEvents}</div><div class="stat-label">Total Audit Events</div></div>
+      <div class="stat-card done"><div class="stat-value">${completedEvents}</div><div class="stat-label">Completed</div></div>
+      <div class="stat-card today"><div class="stat-value">${inProgressEvents}</div><div class="stat-label">In Progress</div></div>
+      <div class="stat-card"><div class="stat-value">${plannedEvents}</div><div class="stat-label">Planned</div></div>
+      <div class="stat-card ${completionRate >= 80 ? 'done' : completionRate >= 50 ? 'today' : 'overdue'}"><div class="stat-value">${completionRate}%</div><div class="stat-label">Completion Rate</div></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">
+      <div class="card">
+        <h3 class="section-title" style="margin:0 0 16px">Non-Conformity Summary</h3>
+        <div class="stats-grid">
+          <div class="stat-card"><div class="stat-value">${ncrs.length}</div><div class="stat-label">Total NCRs</div></div>
+          <div class="stat-card ${openNcrs > 0 ? 'overdue' : 'done'}"><div class="stat-value">${openNcrs}</div><div class="stat-label">Open</div></div>
+          <div class="stat-card done"><div class="stat-value">${closedNcrs}</div><div class="stat-label">Closed</div></div>
+          <div class="stat-card ${majorNcrs > 0 ? 'overdue' : ''}"><div class="stat-value">${majorNcrs}</div><div class="stat-label">Major</div></div>
+          <div class="stat-card ${minorNcrs > 0 ? 'today' : ''}"><div class="stat-value">${minorNcrs}</div><div class="stat-label">Minor</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 class="section-title" style="margin:0 0 16px">NCRs by Standard</h3>
+        ${Object.keys(ncrByStandard).length === 0
+          ? '<div class="empty-state" style="padding:20px">No NCRs recorded yet</div>'
+          : `<table class="data-table"><thead><tr><th>Standard</th><th>Total</th><th>Open</th><th>Closed</th></tr></thead><tbody>
+              ${Object.entries(ncrByStandard).map(([std, d]) => `<tr>
+                <td><span class="badge badge-inactive" style="font-size:11px">${esc(std)}</span></td>
+                <td>${d.total}</td>
+                <td>${d.open > 0 ? `<span class="badge badge-high">${d.open}</span>` : '<span style="color:var(--text-muted)">0</span>'}</td>
+                <td>${d.closed > 0 ? `<span class="badge badge-low">${d.closed}</span>` : '<span style="color:var(--text-muted)">0</span>'}</td>
+              </tr>`).join('')}
+            </tbody></table>`}
+      </div>
+    </div>
+
+    <h3 class="section-title">Recent Completed Audits</h3>
+    ${recentCompleted.length === 0
+      ? '<div class="empty-state">No completed audits yet</div>'
+      : `<table class="data-table"><thead><tr><th>Audit</th><th>Standard</th><th>Completed</th><th>Checklist</th><th>NCs Found</th></tr></thead><tbody>
+          ${recentCompleted.map(e => {
+            const audit = audits.find(a => a.id === e.id || (a.all_events && a.all_events.some(ev => ev.id === e.id)));
+            const eventNcrs = ncrs.filter(n => n.audit_id === e.id);
+            return `<tr>
+              <td style="cursor:pointer;color:var(--primary);font-weight:500" onclick="switchToExecute(${e.id})">${esc(e.parent_title || e.title || '')}</td>
+              <td>${esc(e.standard || '-')}</td>
+              <td>${e.completed_date || e.planned_date || '-'}</td>
+              <td>${e.assessed_count || 0}/${e.checklist_count || 0}</td>
+              <td>${eventNcrs.length > 0 ? `<span class="badge badge-high">${eventNcrs.length}</span>` : '<span style="color:var(--text-muted)">0</span>'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody></table>`}`;
+
+  content.innerHTML = html;
+}
+
 // --- Non-Conformities View ---
 async function loadNcrs() {
   const params = new URLSearchParams();
@@ -2525,10 +2627,10 @@ function renderNcrTable(ncrs) {
       <td><span class="badge badge-inactive" style="font-size:11px">${esc(n.ncr_standard || n.audit_standard || '-')}</span></td>
       <td>${esc(n.audit_title)}</td>
       <td>${esc(n.clause || '-')}</td>
-      <td><span class="badge ${sevBadge}">${n.severity}</span></td>
+      <td><span class="badge ${sevBadge}">${n.severity.charAt(0).toUpperCase() + n.severity.slice(1)}</span></td>
       <td>${esc(n.responsible || '-')}</td>
       <td>${n.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + n.due_date + '</span>' : n.due_date) : '-'}</td>
-      <td><span class="badge ${stBadge}">${n.status}</span></td>
+      <td><span class="badge ${stBadge}">${n.status.replace(/_/g, ' ')}</span></td>
       <td>${actionMenu([
         ...(n.status === 'open' ? [{ label: '&#9654; Start', onclick: `updateNcrStatus(${n.id},'in_progress')`, cls: 'primary' }] : []),
         ...(n.status === 'in_progress' ? [{ label: '&#10003; Close', onclick: `updateNcrStatus(${n.id},'closed')`, cls: 'success' }] : []),
@@ -2567,10 +2669,22 @@ async function openNcrModal(id) {
   document.getElementById('ncr-modal-title').textContent = 'New Non-Conformity';
   document.getElementById('ncr-status-row').classList.add('hidden');
 
-  // Populate audit dropdown
+  // Populate audit dropdown — flatten all events for recurring audits
   const audits = await api('/api/audits');
-  document.getElementById('ncr-audit-id').innerHTML = audits.map(a =>
-    `<option value="${a.id}">${esc(a.title)}</option>`
+  const allAuditEvents = [];
+  for (const a of audits) {
+    if (a.all_events && a.all_events.length > 0) {
+      for (const ev of a.all_events) {
+        if (ev.status !== 'cancelled') {
+          allAuditEvents.push({ id: ev.id, label: a.total_instances > 1 ? `${a.title} — Event #${ev.instance_number || 1} (${ev.planned_date || 'No date'})` : a.title });
+        }
+      }
+    } else {
+      allAuditEvents.push({ id: a.id, label: a.title });
+    }
+  }
+  document.getElementById('ncr-audit-id').innerHTML = '<option value="">-- Select Audit --</option>' + allAuditEvents.map(e =>
+    `<option value="${e.id}">${esc(e.label)}</option>`
   ).join('');
 
   // Populate clause datalist from requirements
@@ -3741,7 +3855,7 @@ async function loadRiskIdentification() {
 
   for (const r of risks) {
     const cls = riskScoreClass(r.inherent_score);
-    const stBadge = r.status === 'closed' ? 'badge-low' : r.status === 'accepted' ? 'badge-medium' : r.status === 'treating' ? 'badge-medium' : 'badge-high';
+    const stBadge = r.status === 'closed' ? 'badge-low' : r.status === 'accepted' ? 'badge-medium' : r.status === 'treating' ? 'badge-medium' : r.status === 'analyzing' ? 'badge-medium' : 'badge-high';
     const links = allLinks[r.id] || [];
     const linkCount = links.length;
     const collapseId = `risk-cl-${r.id}`;
@@ -3754,7 +3868,7 @@ async function loadRiskIdentification() {
         <div class="risk-col-cat"><span style="font-size:12px">${esc(r.category || '-')}</span></div>
         <div class="risk-col-owner"><span style="font-size:12px">${esc(r.risk_owner || '-')}</span></div>
         <div class="risk-col-score"><span class="badge risk-score-badge ${cls}">${r.inherent_score}</span></div>
-        <div class="risk-col-status"><span class="badge ${stBadge}">${r.status}</span></div>
+        <div class="risk-col-status"><span class="badge ${stBadge}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span></div>
         <div class="risk-col-treat">${r.treatment_count > 0 ? `<span style="font-size:12px">${r.treatment_count}${r.open_treatments > 0 ? ` (${r.open_treatments} open)` : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
         <div class="risk-col-links">
           ${linkCount > 0 ? `<span style="cursor:pointer;font-size:12px" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">${linkCount} linked <span class="cl-toggle-icon">+</span></span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
@@ -4042,7 +4156,7 @@ function buildTreatmentDetail(treatments, treatmentLinks) {
       <div class="treat-sub-ref"><span style="font-size:12px;color:var(--primary)">${linkCount > 0 ? `${linkCount} link${linkCount !== 1 ? 's' : ''}` : '-'}</span></div>
       <div class="treat-sub-resp"><span style="font-size:12px">${t.responsible ? esc(t.responsible) : '-'}</span></div>
       <div class="treat-sub-due"><span style="font-size:12px">${t.due_date || '-'}</span></div>
-      <div class="treat-sub-st"><span class="badge ${stBadge}">${t.status}</span></div>
+      <div class="treat-sub-st"><span class="badge ${stBadge}">${t.status.replace(/_/g, ' ')}</span></div>
       <div class="treat-sub-act">
         ${actionMenu([
           ...(t.status === 'planned' ? [{ label: '&#9654; Start', onclick: `updateTreatmentStatus(${t.id},'in_progress')` }] : []),
@@ -4512,6 +4626,11 @@ let orgChartZoom = 1;
 async function loadArchitecture() {
   const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
   const list = document.getElementById('arch-list');
+
+  // Update Add button label to match current tab
+  const archSingular = { role: 'Role', process: 'Process', system: 'System', asset: 'Asset', facility: 'Facility' };
+  const addBtn = document.querySelector('#view-architecture .view-header button.btn-primary');
+  if (addBtn) addBtn.textContent = '+ Add ' + (archSingular[currentArchTab] || 'Item');
 
   // Show/hide org chart section based on tab
   const orgChartSection = document.getElementById('org-chart-section');
