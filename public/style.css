@@ -224,7 +224,7 @@ body {
   transition: margin-left .3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .sidebar.collapsed ~ .content { margin-left: 64px; }
-.view-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; }
+.view-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; padding-right: 340px; }
 .view-header h2 {
   font-size: 28px;
   font-weight: 800;
@@ -904,7 +904,7 @@ body {
 .req-table { width: 100%; }
 .req-table-head {
   display: grid;
-  grid-template-columns: 80px 1fr 100px 100px 80px 130px 44px;
+  grid-template-columns: 80px 1fr 100px 80px 130px 44px;
   padding: 12px 20px;
   background: rgba(99, 102, 241, 0.05);
   font-size: 11px;
@@ -916,7 +916,7 @@ body {
 }
 .req-table-row {
   display: grid;
-  grid-template-columns: 80px 1fr 100px 100px 80px 130px 44px;
+  grid-template-columns: 80px 1fr 100px 80px 130px 44px;
   padding: 12px 20px;
   background: var(--card-bg);
   border-bottom: 1px solid var(--border);
@@ -1400,6 +1400,7 @@ body {
   .logo h1, .nav-link { font-size: 0; }
   .logo-icon { font-size: 26px; }
   .content { margin-left: 68px; padding: 24px; }
+  .view-header { padding-right: 180px; }
   .dashboard-columns { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
