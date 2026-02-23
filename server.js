@@ -92,9 +92,17 @@ app.use((req, res, next) => {
   req.session = {
     userId: payload?.userId || null,
     userRole: payload?.userRole || null,
+    organizationId: payload?.organizationId || null,
+    viewingOrgId: payload?.viewingOrgId || null,
+    get orgId() { return this.viewingOrgId || this.organizationId; },
     // save() issues a new cookie (called explicitly after login)
     save(cb) {
-      const newToken = createToken({ userId: req.session.userId, userRole: req.session.userRole });
+      const newToken = createToken({
+        userId: req.session.userId,
+        userRole: req.session.userRole,
+        organizationId: req.session.organizationId,
+        viewingOrgId: req.session.viewingOrgId,
+      });
       res.cookie('session_token', newToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production' || req.protocol === 'https',
@@ -109,6 +117,8 @@ app.use((req, res, next) => {
       res.clearCookie('session_token', { path: '/' });
       req.session.userId = null;
       req.session.userRole = null;
+      req.session.organizationId = null;
+      req.session.viewingOrgId = null;
       if (cb) cb(null);
     },
   };
@@ -190,7 +200,15 @@ app.get('/api/auth/check', async (req, res) => {
   if (req.session.userId) {
     const user = await db.prepare('SELECT id, name, email, role, permissions FROM users WHERE id = ?').get(req.session.userId);
     if (user) {
-      return res.json({ authenticated: true, user });
+      return res.json({
+        authenticated: true,
+        user: {
+          ...user,
+          organizationId: req.session.organizationId,
+          viewingOrgId: req.session.viewingOrgId,
+          orgId: req.session.orgId,
+        }
+      });
     }
   }
   res.json({ authenticated: false });
@@ -223,6 +241,8 @@ app.post('/api/auth/login', async (req, res) => {
 
     req.session.userId = user.id;
     req.session.userRole = user.role;
+    req.session.organizationId = user.organization_id || null;
+    req.session.viewingOrgId = null;
 
     // Explicitly save session to ensure it's persisted before responding
     req.session.save((saveErr) => {
@@ -256,8 +276,9 @@ app.post('/api/auth/logout', async (req, res) => {
 // Get all tasks with optional filters
 app.get('/api/tasks', async (req, res) => {
   const { active, assignee, category, priority, overdue } = req.query;
-  let sql = 'SELECT * FROM tasks WHERE 1=1';
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = 'SELECT * FROM tasks WHERE organization_id = ?';
+  const params = [orgId];
 
   if (active !== undefined) {
     sql += ' AND is_active = ?';
@@ -287,38 +308,39 @@ app.get('/api/tasks', async (req, res) => {
 // Get dashboard stats
 app.get('/api/dashboard', async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
+  const orgId = getOrgId(req);
   const stats = {
-    totalActive: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1').get()).c,
-    dueToday: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due = ?').get(today)).c,
-    overdue: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due < ?').get(today)).c,
-    completedThisWeek: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-7 days')`).get()).c,
-    completedThisMonth: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-30 days')`).get()).c,
-    byCategory: await db.prepare('SELECT category, COUNT(*) as count FROM tasks WHERE is_active = 1 GROUP BY category').all(),
-    byPriority: await db.prepare('SELECT priority, COUNT(*) as count FROM tasks WHERE is_active = 1 GROUP BY priority').all(),
-    byAssignee: await db.prepare("SELECT assignee, COUNT(*) as count FROM tasks WHERE is_active = 1 AND assignee != '' GROUP BY assignee").all(),
-    upcomingTasks: await db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due >= ? ORDER BY next_due ASC LIMIT 10').all(today),
-    overdueTasks: await db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due < ? ORDER BY next_due ASC').all(today),
-    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress')").get()).c,
-    overdueActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress') AND due_date < ? AND due_date IS NOT NULL").get(today)).c,
+    totalActive: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND organization_id = ?').get(orgId)).c,
+    dueToday: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due = ? AND organization_id = ?').get(today, orgId)).c,
+    overdue: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due < ? AND organization_id = ?').get(today, orgId)).c,
+    completedThisWeek: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-7 days') AND organization_id = ?`).get(orgId)).c,
+    completedThisMonth: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-30 days') AND organization_id = ?`).get(orgId)).c,
+    byCategory: await db.prepare('SELECT category, COUNT(*) as count FROM tasks WHERE is_active = 1 AND organization_id = ? GROUP BY category').all(orgId),
+    byPriority: await db.prepare('SELECT priority, COUNT(*) as count FROM tasks WHERE is_active = 1 AND organization_id = ? GROUP BY priority').all(orgId),
+    byAssignee: await db.prepare("SELECT assignee, COUNT(*) as count FROM tasks WHERE is_active = 1 AND assignee != '' AND organization_id = ? GROUP BY assignee").all(orgId),
+    upcomingTasks: await db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due >= ? AND organization_id = ? ORDER BY next_due ASC LIMIT 10').all(today, orgId),
+    overdueTasks: await db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due < ? AND organization_id = ? ORDER BY next_due ASC').all(today, orgId),
+    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress') AND organization_id = ?").get(orgId)).c,
+    overdueActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress') AND due_date < ? AND due_date IS NOT NULL AND organization_id = ?").get(today, orgId)).c,
   };
 
   // KPI: Actions per check
-  const totalCompletions = (await db.prepare('SELECT COUNT(*) as c FROM completions').get()).c;
-  const totalActionsAll = (await db.prepare('SELECT COUNT(*) as c FROM actions').get()).c;
+  const totalCompletions = (await db.prepare('SELECT COUNT(*) as c FROM completions WHERE organization_id = ?').get(orgId)).c;
+  const totalActionsAll = (await db.prepare('SELECT COUNT(*) as c FROM actions WHERE organization_id = ?').get(orgId)).c;
   stats.actionsPerCheck = totalCompletions > 0 ? +(totalActionsAll / totalCompletions).toFixed(2) : 0;
   stats.totalCompletions = totalCompletions;
   stats.totalActionsCount = totalActionsAll;
 
   // Actions per check this month vs last month
-  const actionsThisMonth = (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month')").get()).c;
-  const completionsThisMonth = (await db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month')").get()).c;
-  const actionsLastMonth = (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month','-1 month') AND created_at < date('now','start of month')").get()).c;
-  const completionsLastMonth = (await db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month','-1 month') AND completed_at < date('now','start of month')").get()).c;
+  const actionsThisMonth = (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month') AND organization_id = ?").get(orgId)).c;
+  const completionsThisMonth = (await db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month') AND organization_id = ?").get(orgId)).c;
+  const actionsLastMonth = (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE created_at >= date('now','start of month','-1 month') AND created_at < date('now','start of month') AND organization_id = ?").get(orgId)).c;
+  const completionsLastMonth = (await db.prepare("SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now','start of month','-1 month') AND completed_at < date('now','start of month') AND organization_id = ?").get(orgId)).c;
   stats.actionsPerCheckThisMonth = completionsThisMonth > 0 ? +(actionsThisMonth / completionsThisMonth).toFixed(2) : 0;
   stats.actionsPerCheckLastMonth = completionsLastMonth > 0 ? +(actionsLastMonth / completionsLastMonth).toFixed(2) : 0;
 
   // KPI: On-time completion trend (last 30 days vs previous 30 days)
-  const allTasks = await db.prepare('SELECT id, recurrence, custom_days FROM tasks').all();
+  const allTasks = await db.prepare('SELECT id, recurrence, custom_days FROM tasks WHERE organization_id = ?').all(orgId);
   const taskRecMap = {};
   for (const t of allTasks) taskRecMap[t.id] = t;
 
@@ -330,8 +352,8 @@ app.get('/api/dashboard', async (req, res) => {
     }
   }
 
-  const recent30 = await db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-30 days') ORDER BY completed_at ASC").all();
-  const prev30 = await db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-60 days') AND completed_at < date('now','-30 days') ORDER BY completed_at ASC").all();
+  const recent30 = await db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-30 days') AND organization_id = ? ORDER BY completed_at ASC").all(orgId);
+  const prev30 = await db.prepare("SELECT task_id, completed_at FROM completions WHERE completed_at >= date('now','-60 days') AND completed_at < date('now','-30 days') AND organization_id = ? ORDER BY completed_at ASC").all(orgId);
 
   function calcOnTimeRate(completions) {
     if (completions.length === 0) return null;
@@ -378,9 +400,10 @@ app.post('/api/tasks', async (req, res) => {
   const startDt = start_date || new Date().toISOString().split('T')[0];
   const nextDue = startDt;
 
+  const orgId = getOrgId(req);
   const result = await db.prepare(`
-    INSERT INTO tasks (title, description, assignee, category, priority, recurrence, custom_days, day_of_week, day_of_month, start_date, next_due)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (title, description, assignee, category, priority, recurrence, custom_days, day_of_week, day_of_month, start_date, next_due, organization_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     title,
     description || '',
@@ -392,7 +415,8 @@ app.post('/api/tasks', async (req, res) => {
     day_of_week || null,
     day_of_month || null,
     startDt,
-    nextDue
+    nextDue,
+    orgId
   );
 
   const task = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
@@ -429,10 +453,12 @@ app.post('/api/tasks/:id/complete', async (req, res) => {
   const task = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
-  const completionResult = await db.prepare('INSERT INTO completions (task_id, completed_by, notes) VALUES (?, ?, ?)').run(
+  const orgId = getOrgId(req);
+  const completionResult = await db.prepare('INSERT INTO completions (task_id, completed_by, notes, organization_id) VALUES (?, ?, ?, ?)').run(
     task.id,
     req.body.completed_by || '',
-    req.body.notes || ''
+    req.body.notes || '',
+    orgId
   );
 
   const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
@@ -452,13 +478,14 @@ app.delete('/api/tasks/:id', async (req, res) => {
 // Get completion history
 app.get('/api/completions', async (req, res) => {
   const { task_id, limit } = req.query;
+  const orgId = getOrgId(req);
   let sql = `SELECT c.*, t.title as task_title,
     (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id) as action_count,
     (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id AND a.status IN ('open','in_progress')) as open_action_count
-    FROM completions c JOIN tasks t ON c.task_id = t.id`;
-  const params = [];
+    FROM completions c JOIN tasks t ON c.task_id = t.id WHERE c.organization_id = ?`;
+  const params = [orgId];
   if (task_id) {
-    sql += ' WHERE c.task_id = ?';
+    sql += ' AND c.task_id = ?';
     params.push(task_id);
   }
   sql += ' ORDER BY c.completed_at DESC LIMIT ?';
@@ -468,8 +495,9 @@ app.get('/api/completions', async (req, res) => {
 
 // Get unique assignees and categories for filters
 app.get('/api/meta', async (req, res) => {
-  const assignees = (await db.prepare("SELECT DISTINCT assignee FROM tasks WHERE assignee != '' ORDER BY assignee").all()).map(r => r.assignee);
-  const categories = (await db.prepare('SELECT DISTINCT category FROM tasks ORDER BY category').all()).map(r => r.category);
+  const orgId = getOrgId(req);
+  const assignees = (await db.prepare("SELECT DISTINCT assignee FROM tasks WHERE assignee != '' AND organization_id = ? ORDER BY assignee").all(orgId)).map(r => r.assignee);
+  const categories = (await db.prepare('SELECT DISTINCT category FROM tasks WHERE organization_id = ? ORDER BY category').all(orgId)).map(r => r.category);
   res.json({ assignees, categories });
 });
 
@@ -480,7 +508,8 @@ app.get('/api/yearly', async (req, res) => {
   const endDate = `${year}-12-31`;
 
   // Get all active tasks and project their due dates across the year
-  const tasks = await db.prepare('SELECT * FROM tasks WHERE is_active = 1').all();
+  const orgId = getOrgId(req);
+  const tasks = await db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND organization_id = ?').all(orgId);
   const dueDates = {}; // { "2026-03-15": [{ task_id, title, ... }] }
 
   for (const task of tasks) {
@@ -514,8 +543,8 @@ app.get('/api/yearly', async (req, res) => {
   const completions = await db.prepare(
     `SELECT c.*, t.title, t.assignee, t.category, t.priority, t.recurrence
      FROM completions c JOIN tasks t ON c.task_id = t.id
-     WHERE c.completed_at >= ? AND c.completed_at <= ?`
-  ).all(startDate, endDate + ' 23:59:59');
+     WHERE c.completed_at >= ? AND c.completed_at <= ? AND c.organization_id = ?`
+  ).all(startDate, endDate + ' 23:59:59', orgId);
 
   const completedDates = {};
   for (const c of completions) {
@@ -541,8 +570,9 @@ app.get('/api/yearly', async (req, res) => {
 // Get all actions with optional filters
 app.get('/api/actions', async (req, res) => {
   const { task_id, completion_id, status } = req.query;
-  let sql = `SELECT a.*, t.title as task_title FROM actions a JOIN tasks t ON a.task_id = t.id WHERE 1=1`;
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = `SELECT a.*, t.title as task_title FROM actions a JOIN tasks t ON a.task_id = t.id WHERE a.organization_id = ?`;
+  const params = [orgId];
   if (task_id) { sql += ' AND a.task_id = ?'; params.push(task_id); }
   if (completion_id) { sql += ' AND a.completion_id = ?'; params.push(completion_id); }
   if (status) { sql += ' AND a.status = ?'; params.push(status); }
@@ -562,10 +592,11 @@ app.post('/api/actions', async (req, res) => {
   const { completion_id, task_id, title, description, assignee, priority, due_date } = req.body;
   if (!title || !completion_id || !task_id) return res.status(400).json({ error: 'title, completion_id, and task_id are required' });
 
+  const orgId = getOrgId(req);
   const result = await db.prepare(`
-    INSERT INTO actions (completion_id, task_id, title, description, assignee, priority, due_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(completion_id, task_id, title, description || '', assignee || '', priority || 'Medium', due_date || null);
+    INSERT INTO actions (completion_id, task_id, title, description, assignee, priority, due_date, organization_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(completion_id, task_id, title, description || '', assignee || '', priority || 'Medium', due_date || null, orgId);
 
   const action = await db.prepare('SELECT * FROM actions WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(action);
@@ -609,8 +640,9 @@ app.delete('/api/actions/:id', async (req, res) => {
 // List audits (returns parent audits with ALL events attached including first instance)
 app.get('/api/audits', async (req, res) => {
   const { status, include_children } = req.query;
-  let sql = 'SELECT * FROM audits WHERE parent_audit_id IS NULL';
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = 'SELECT * FROM audits WHERE parent_audit_id IS NULL AND organization_id = ?';
+  const params = [orgId];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   sql += ' ORDER BY planned_date DESC, created_at DESC';
   const parentAudits = await db.prepare(sql).all(...params);
@@ -691,9 +723,10 @@ app.post('/api/audits', async (req, res) => {
   try {
     const audit = await db.transaction(async () => {
       // Create the parent audit (instance 1)
+      const orgId = getOrgId(req);
       const result = await db.run(
-        `INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1
+        `INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1, orgId
       );
       const parentAuditId = result.lastInsertRowid;
 
@@ -963,13 +996,14 @@ app.post('/api/checklist/:id/evidence-link', async (req, res) => {
 // List NCs (optionally filter by audit)
 app.get('/api/ncrs', async (req, res) => {
   const { audit_id, status } = req.query;
+  const orgId = getOrgId(req);
   let sql = `SELECT n.*, a.title as audit_title, a.standard as audit_standard,
     COALESCE(cl.standard, a.standard) as ncr_standard
     FROM non_conformities n
     JOIN audits a ON n.audit_id = a.id
     LEFT JOIN audit_checklist cl ON n.checklist_item_id = cl.id
-    WHERE 1=1`;
-  const params = [];
+    WHERE a.organization_id = ?`;
+  const params = [orgId];
   if (audit_id) { sql += ' AND n.audit_id = ?'; params.push(audit_id); }
   if (status) { sql += ' AND n.status = ?'; params.push(status); }
   sql += ' ORDER BY n.created_at DESC';
@@ -1023,8 +1057,9 @@ app.delete('/api/ncrs/:id', async (req, res) => {
 // List requirements (optionally filter by standard), enriched with audit history
 app.get('/api/requirements', async (req, res) => {
   const { standard } = req.query;
-  let sql = 'SELECT * FROM standard_requirements WHERE 1=1';
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = 'SELECT * FROM standard_requirements WHERE organization_id = ?';
+  const params = [orgId];
   if (standard) { sql += ' AND standard = ?'; params.push(standard); }
   sql += ' ORDER BY standard, sort_order, clause';
   const reqs = await db.prepare(sql).all(...params);
@@ -1068,7 +1103,8 @@ app.get('/api/requirements', async (req, res) => {
 
 // Get unique standards list
 app.get('/api/requirements/standards', async (req, res) => {
-  const standards = (await db.prepare('SELECT DISTINCT standard FROM standard_requirements ORDER BY standard').all()).map(r => r.standard);
+  const orgId = getOrgId(req);
+  const standards = (await db.prepare('SELECT DISTINCT standard FROM standard_requirements WHERE organization_id = ? ORDER BY standard').all(orgId)).map(r => r.standard);
   res.json(standards);
 });
 
@@ -1076,8 +1112,9 @@ app.get('/api/requirements/standards', async (req, res) => {
 app.post('/api/requirements', async (req, res) => {
   const { standard, clause, title, description, category, sort_order, owner } = req.body;
   if (!clause) return res.status(400).json({ error: 'Clause is required' });
-  const result = await db.prepare(`INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order, owner) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-    standard || 'ISO 9001', clause, title || '', description || '', category || '', sort_order ?? 0, owner || ''
+  const orgId = getOrgId(req);
+  const result = await db.prepare(`INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order, owner, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    standard || 'ISO 9001', clause, title || '', description || '', category || '', sort_order ?? 0, owner || '', orgId
   );
   res.status(201).json(await db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -1086,14 +1123,15 @@ app.post('/api/requirements', async (req, res) => {
 app.post('/api/requirements/bulk', async (req, res) => {
   const { standard, items } = req.body;
   if (!items || !Array.isArray(items)) return res.status(400).json({ error: 'items array is required' });
+  const orgId = getOrgId(req);
   const std = standard || 'ISO 9001';
-  const existing = (await db.all('SELECT clause FROM standard_requirements WHERE standard = ?', std)).map(r => r.clause);
+  const existing = (await db.all('SELECT clause FROM standard_requirements WHERE standard = ? AND organization_id = ?', std, orgId)).map(r => r.clause);
   let inserted = 0;
   await db.transaction(async () => {
     for (const item of items) {
       if (existing.includes(item.clause)) continue;
-      await db.run('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-        std, item.clause, item.title || '', item.description || '', item.category || '', item.sort_order ?? 0);
+      await db.run('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        std, item.clause, item.title || '', item.description || '', item.category || '', item.sort_order ?? 0, orgId);
       inserted++;
     }
   });
@@ -1137,7 +1175,8 @@ app.delete('/api/requirements/:id', async (req, res) => {
 
 // List feeds
 app.get('/api/threat-feeds', async (req, res) => {
-  const feeds = await db.prepare('SELECT * FROM threat_feeds ORDER BY tier, name').all();
+  const orgId = getOrgId(req);
+  const feeds = await db.prepare('SELECT * FROM threat_feeds WHERE organization_id = ? ORDER BY tier, name').all(orgId);
   for (const f of feeds) {
     f.item_count = (await db.prepare('SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ?').get(f.id)).c;
     f.new_count = (await db.prepare("SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ? AND status = 'new'").get(f.id)).c;
@@ -1149,7 +1188,8 @@ app.get('/api/threat-feeds', async (req, res) => {
 app.post('/api/threat-feeds', async (req, res) => {
   const { name, url, tier } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'name and url required' });
-  const result = await db.prepare('INSERT INTO threat_feeds (name, url, tier) VALUES (?, ?, ?)').run(name, url, tier || 1);
+  const orgId = getOrgId(req);
+  const result = await db.prepare('INSERT INTO threat_feeds (name, url, tier, organization_id) VALUES (?, ?, ?, ?)').run(name, url, tier || 1, orgId);
   res.status(201).json(await db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(result.lastInsertRowid));
 });
 
@@ -1268,8 +1308,9 @@ function stripTags(str) {
 // List risks
 app.get('/api/risks', async (req, res) => {
   const { status, category } = req.query;
-  let sql = 'SELECT * FROM risks WHERE 1=1';
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = 'SELECT * FROM risks WHERE organization_id = ?';
+  const params = [orgId];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (category) { sql += ' AND category = ?'; params.push(category); }
   sql += ' ORDER BY inherent_score DESC, created_at DESC';
@@ -1294,8 +1335,9 @@ app.get('/api/risks/:id', async (req, res) => {
 app.post('/api/risks', async (req, res) => {
   const { title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
-  const result = await db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', likelihood || 3, impact || 3, risk_owner || '', status || 'identified'
+  const orgId = getOrgId(req);
+  const result = await db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', likelihood || 3, impact || 3, risk_owner || '', status || 'identified', orgId
   );
   res.status(201).json(await db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -1328,8 +1370,9 @@ app.delete('/api/risks/:id', async (req, res) => {
 
 app.get('/api/treatments', async (req, res) => {
   const { risk_id, status } = req.query;
-  let sql = `SELECT rt.*, r.title as risk_title, sr.clause, sr.title as requirement_title FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE 1=1`;
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = `SELECT rt.*, r.title as risk_title, sr.clause, sr.title as requirement_title FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE r.organization_id = ?`;
+  const params = [orgId];
   if (risk_id) { sql += ' AND rt.risk_id = ?'; params.push(risk_id); }
   if (status) { sql += ' AND rt.status = ?'; params.push(status); }
   sql += ' ORDER BY rt.created_at DESC';
@@ -1371,12 +1414,13 @@ app.delete('/api/treatments/:id', async (req, res) => {
 
 app.get('/api/soa', async (req, res) => {
   // Get all Annex A requirements with their SoA status
+  const orgId = getOrgId(req);
   const reqs = await db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes, soa.linked_processes, soa.regulatory
     FROM standard_requirements sr LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
-    WHERE sr.standard = 'ISO 27001 Annex A'
-    ORDER BY sr.sort_order, sr.clause`).all();
+    WHERE sr.standard = 'ISO 27001 Annex A' AND sr.organization_id = ?
+    ORDER BY sr.sort_order, sr.clause`).all(orgId);
   // Attach linked risk treatments (via requirement_id OR control_reference)
-  const allProcesses = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process'").all();
+  const allProcesses = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process' AND organization_id = ?").all(orgId);
   for (const r of reqs) {
     // Get treatments linked by requirement_id
     const linkedById = await db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ?`).all(r.id);
@@ -1422,18 +1466,31 @@ app.put('/api/soa/:requirementId', async (req, res) => {
 
 // Mission
 app.get('/api/mission', async (req, res) => {
-  res.json(await db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
+  const orgId = getOrgId(req);
+  let mission = await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(orgId);
+  if (!mission) {
+    await db.prepare('INSERT INTO org_mission (content, organization_id) VALUES (?, ?)').run('', orgId);
+    mission = await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(orgId);
+  }
+  res.json(mission);
 });
 
 app.put('/api/mission', async (req, res) => {
   const { content, vision, values_text } = req.body;
   await db.prepare("UPDATE org_mission SET content = ?, vision = ?, values_text = ?, updated_at = datetime('now') WHERE id = 1").run(content || '', vision || '', values_text || '');
-  res.json(await db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
+  const orgId = getOrgId(req);
+  let mission = await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(orgId);
+  if (!mission) {
+    await db.prepare('INSERT INTO org_mission (content, organization_id) VALUES (?, ?)').run('', orgId);
+    mission = await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(orgId);
+  }
+  res.json(mission);
 });
 
 // KPIs
 app.get('/api/kpis', async (req, res) => {
-  const kpis = await db.prepare('SELECT * FROM org_kpis ORDER BY module, name').all();
+  const orgId = getOrgId(req);
+  const kpis = await db.prepare('SELECT * FROM org_kpis WHERE organization_id = ? ORDER BY module, name').all(orgId);
   for (const k of kpis) {
     k.values = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? ORDER BY period DESC LIMIT 12').all(k.id);
   }
@@ -1443,37 +1500,38 @@ app.get('/api/kpis', async (req, res) => {
 // Auto-KPI data
 app.get('/api/kpis/auto', async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
+  const orgId = getOrgId(req);
   const auto = {
     // Task Management
-    tasks_active: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1').get()).v,
-    tasks_overdue: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1 AND next_due < ?').get(today)).v,
-    completions_this_month: (await db.prepare("SELECT COUNT(*) as v FROM completions WHERE completed_at >= date('now','start of month')").get()).v,
+    tasks_active: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1 AND organization_id = ?').get(orgId)).v,
+    tasks_overdue: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1 AND next_due < ? AND organization_id = ?').get(today, orgId)).v,
+    completions_this_month: (await db.prepare("SELECT COUNT(*) as v FROM completions WHERE completed_at >= date('now','start of month') AND organization_id = ?").get(orgId)).v,
     // Audits & Compliance
-    audits_planned: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'planned'").get()).v,
-    audits_completed: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'completed'").get()).v,
-    open_ncrs: (await db.prepare("SELECT COUNT(*) as v FROM non_conformities WHERE status IN ('open','in_progress')").get()).v,
-    open_actions: (await db.prepare("SELECT COUNT(*) as v FROM actions WHERE status IN ('open','in_progress')").get()).v,
-    standards_count: (await db.prepare('SELECT COUNT(DISTINCT standard) as v FROM standard_requirements').get()).v,
+    audits_planned: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'planned' AND organization_id = ?").get(orgId)).v,
+    audits_completed: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'completed' AND organization_id = ?").get(orgId)).v,
+    open_ncrs: (await db.prepare("SELECT COUNT(*) as v FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE n.status IN ('open','in_progress') AND a.organization_id = ?").get(orgId)).v,
+    open_actions: (await db.prepare("SELECT COUNT(*) as v FROM actions WHERE status IN ('open','in_progress') AND organization_id = ?").get(orgId)).v,
+    standards_count: (await db.prepare('SELECT COUNT(DISTINCT standard) as v FROM standard_requirements WHERE organization_id = ?').get(orgId)).v,
     // Risk Management
-    total_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks').get()).v,
-    high_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks WHERE inherent_score >= 15').get()).v,
-    open_treatments: (await db.prepare("SELECT COUNT(*) as v FROM risk_treatments WHERE status IN ('planned','in_progress')").get()).v,
+    total_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks WHERE organization_id = ?').get(orgId)).v,
+    high_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks WHERE inherent_score >= 15 AND organization_id = ?').get(orgId)).v,
+    open_treatments: (await db.prepare("SELECT COUNT(*) as v FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id WHERE rt.status IN ('planned','in_progress') AND r.organization_id = ?").get(orgId)).v,
     // SoA counts from Annex A requirements (applicable by default unless explicitly set to 0)
     soa_applicable: (await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
       LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
-      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1)`).get()).v,
+      WHERE sr.standard = 'ISO 27001 Annex A' AND sr.organization_id = ? AND (soa.applicable IS NULL OR soa.applicable = 1)`).get(orgId)).v,
     soa_implemented: (await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
       LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
-      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1) AND soa.implementation_status = 'implemented'`).get()).v,
-    threat_items_new: (await db.prepare("SELECT COUNT(*) as v FROM threat_items WHERE status = 'new'").get()).v,
+      WHERE sr.standard = 'ISO 27001 Annex A' AND sr.organization_id = ? AND (soa.applicable IS NULL OR soa.applicable = 1) AND soa.implementation_status = 'implemented'`).get(orgId)).v,
+    threat_items_new: (await db.prepare("SELECT COUNT(*) as v FROM threat_items ti JOIN threat_feeds tf ON ti.feed_id = tf.id WHERE ti.status = 'new' AND tf.organization_id = ?").get(orgId)).v,
     // Document Control
-    total_documents: (await db.prepare('SELECT COUNT(*) as v FROM documents').get()).v,
-    docs_due_review: (await db.prepare('SELECT COUNT(*) as v FROM documents WHERE review_date IS NOT NULL AND review_date <= ?').get(today)).v,
+    total_documents: (await db.prepare('SELECT COUNT(*) as v FROM documents WHERE organization_id = ?').get(orgId)).v,
+    docs_due_review: (await db.prepare('SELECT COUNT(*) as v FROM documents WHERE review_date IS NOT NULL AND review_date <= ? AND organization_id = ?').get(today, orgId)).v,
     // Architecture
-    arch_processes: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'process'").get()).v,
-    arch_roles: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'role'").get()).v,
-    arch_systems: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'system'").get()).v,
-    arch_facilities: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'facility'").get()).v,
+    arch_processes: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'process' AND organization_id = ?").get(orgId)).v,
+    arch_roles: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'role' AND organization_id = ?").get(orgId)).v,
+    arch_systems: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'system' AND organization_id = ?").get(orgId)).v,
+    arch_facilities: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'facility' AND organization_id = ?").get(orgId)).v,
   };
   res.json(auto);
 });
@@ -1481,8 +1539,9 @@ app.get('/api/kpis/auto', async (req, res) => {
 app.post('/api/kpis', async (req, res) => {
   const { name, description, module, target_value, unit, frequency } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
-  const result = await db.prepare('INSERT INTO org_kpis (name, description, module, target_value, unit, frequency) VALUES (?, ?, ?, ?, ?, ?)').run(
-    name, description || '', module || 'custom', target_value || null, unit || '', frequency || 'monthly'
+  const orgId = getOrgId(req);
+  const result = await db.prepare('INSERT INTO org_kpis (name, description, module, target_value, unit, frequency, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+    name, description || '', module || 'custom', target_value || null, unit || '', frequency || 'monthly', orgId
   );
   res.status(201).json(await db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -1521,8 +1580,9 @@ app.post('/api/kpis/:id/values', async (req, res) => {
 // Architecture
 app.get('/api/architecture', async (req, res) => {
   const { arch_type } = req.query;
-  let sql = 'SELECT * FROM org_architecture WHERE 1=1';
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = 'SELECT * FROM org_architecture WHERE organization_id = ?';
+  const params = [orgId];
   if (arch_type) { sql += ' AND arch_type = ?'; params.push(arch_type); }
   sql += ' ORDER BY arch_type, sort_order, name';
   res.json(await db.prepare(sql).all(...params));
@@ -1531,8 +1591,9 @@ app.get('/api/architecture', async (req, res) => {
 app.post('/api/architecture', async (req, res) => {
   const { arch_type, name, description, parent_id, owner, status, metadata } = req.body;
   if (!arch_type || !name) return res.status(400).json({ error: 'arch_type and name are required' });
-  const result = await db.prepare('INSERT INTO org_architecture (arch_type, name, description, parent_id, owner, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-    arch_type, name, description || '', parent_id || null, owner || '', status || 'active', metadata || '{}'
+  const orgId = getOrgId(req);
+  const result = await db.prepare('INSERT INTO org_architecture (arch_type, name, description, parent_id, owner, status, metadata, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+    arch_type, name, description || '', parent_id || null, owner || '', status || 'active', metadata || '{}', orgId
   );
   res.status(201).json(await db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -1560,8 +1621,9 @@ app.delete('/api/architecture/:id', async (req, res) => {
 
 app.get('/api/documents', async (req, res) => {
   const { doc_type, status, linked_module, classification } = req.query;
-  let sql = 'SELECT * FROM documents WHERE 1=1';
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = 'SELECT * FROM documents WHERE organization_id = ?';
+  const params = [orgId];
   if (doc_type) { sql += ' AND doc_type = ?'; params.push(doc_type); }
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (linked_module) { sql += ' AND linked_module = ?'; params.push(linked_module); }
@@ -1582,10 +1644,11 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
       return res.status(500).json({ error: err.message });
     }
   }
-  const result = await db.prepare(`INSERT INTO documents (title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  const orgId = getOrgId(req);
+  const result = await db.prepare(`INSERT INTO documents (title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     title, description || '', doc_type || 'policy', version || '1.0', owner || '', status || 'draft',
     file ? file.originalname : '', storagePath, file ? file.size : 0, file ? file.mimetype : '',
-    linked_module || '', linked_ref_type || '', linked_ref_id || null, review_date || null, classification || ''
+    linked_module || '', linked_ref_type || '', linked_ref_id || null, review_date || null, classification || '', orgId
   );
   res.status(201).json(await db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -1706,20 +1769,21 @@ app.delete('/api/cross-links/:id', async (req, res) => {
 // List linkable entities by type
 app.get('/api/linkable/:type', async (req, res) => {
   const { type } = req.params;
+  const orgId = getOrgId(req);
   let items = [];
-  if (type === 'risk') items = await db.prepare('SELECT id, title as name FROM risks ORDER BY title').all();
-  else if (type === 'task') items = await db.prepare('SELECT id, title as name FROM tasks ORDER BY title').all();
-  else if (type === 'requirement') items = await db.prepare("SELECT id, clause || ' - ' || title || ' (' || standard || ')' as name FROM standard_requirements ORDER BY standard, sort_order").all();
-  else if (type === 'audit') items = await db.prepare('SELECT id, title as name FROM audits ORDER BY title').all();
-  else if (type === 'role') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'role' ORDER BY name").all();
-  else if (type === 'process') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process' ORDER BY name").all();
-  else if (type === 'system') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'system' ORDER BY name").all();
-  else if (type === 'asset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'asset' ORDER BY name").all();
-  else if (type === 'facility') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'facility' ORDER BY name").all();
-  else if (type === 'document') items = await db.prepare('SELECT id, title as name FROM documents ORDER BY title').all();
-  else if (type === 'ncr') items = await db.prepare("SELECT id, clause || ' - ' || substr(description, 1, 60) as name FROM non_conformities ORDER BY id DESC").all();
-  else if (type === 'treatment') items = await db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments ORDER BY id DESC").all();
-  else if (type === 'action') items = await db.prepare('SELECT id, title as name FROM actions ORDER BY id DESC').all();
+  if (type === 'risk') items = await db.prepare('SELECT id, title as name FROM risks WHERE organization_id = ? ORDER BY title').all(orgId);
+  else if (type === 'task') items = await db.prepare('SELECT id, title as name FROM tasks WHERE organization_id = ? ORDER BY title').all(orgId);
+  else if (type === 'requirement') items = await db.prepare("SELECT id, clause || ' - ' || title || ' (' || standard || ')' as name FROM standard_requirements WHERE organization_id = ? ORDER BY standard, sort_order").all(orgId);
+  else if (type === 'audit') items = await db.prepare('SELECT id, title as name FROM audits WHERE organization_id = ? ORDER BY title').all(orgId);
+  else if (type === 'role') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'role' AND organization_id = ? ORDER BY name").all(orgId);
+  else if (type === 'process') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process' AND organization_id = ? ORDER BY name").all(orgId);
+  else if (type === 'system') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'system' AND organization_id = ? ORDER BY name").all(orgId);
+  else if (type === 'asset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'asset' AND organization_id = ? ORDER BY name").all(orgId);
+  else if (type === 'facility') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'facility' AND organization_id = ? ORDER BY name").all(orgId);
+  else if (type === 'document') items = await db.prepare('SELECT id, title as name FROM documents WHERE organization_id = ? ORDER BY title').all(orgId);
+  else if (type === 'ncr') items = await db.prepare("SELECT n.id, n.clause || ' - ' || substr(n.description, 1, 60) as name FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE a.organization_id = ? ORDER BY n.id DESC").all(orgId);
+  else if (type === 'treatment') items = await db.prepare("SELECT rt.id, substr(rt.description, 1, 80) as name FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id WHERE r.organization_id = ? ORDER BY rt.id DESC").all(orgId);
+  else if (type === 'action') items = await db.prepare('SELECT id, title as name FROM actions WHERE organization_id = ? ORDER BY id DESC').all(orgId);
   res.json(items);
 });
 
@@ -1740,47 +1804,117 @@ app.get('/api/link-references', async (req, res) => {
   res.json(refs);
 });
 
+// ===== MSP PORTAL ROUTES =====
+
+app.get('/api/msp/organizations', requireSuperAdmin, async (req, res) => {
+  const orgs = await db.all('SELECT * FROM organizations ORDER BY created_at DESC');
+  for (const org of orgs) {
+    org.user_count = (await db.get('SELECT COUNT(*) as c FROM users WHERE organization_id = ?', org.id)).c;
+    org.task_count = (await db.get('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ?', org.id)).c;
+    org.risk_count = (await db.get('SELECT COUNT(*) as c FROM risks WHERE organization_id = ?', org.id)).c;
+    org.audit_count = (await db.get('SELECT COUNT(*) as c FROM audits WHERE organization_id = ?', org.id)).c;
+  }
+  res.json(orgs);
+});
+
+app.post('/api/msp/organizations', requireSuperAdmin, async (req, res) => {
+  const { name, plan } = req.body;
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Date.now();
+  try {
+    const result = await db.run(
+      'INSERT INTO organizations (name, slug, is_active, plan) VALUES (?, ?, 1, ?)',
+      name, slug, plan || 'standard'
+    );
+    const org = await db.get('SELECT * FROM organizations WHERE id = ?', result.lastInsertRowid);
+    await db.run('INSERT INTO org_mission (content, organization_id) VALUES (?, ?)', '', org.id);
+    const { DEFAULT_THREAT_FEEDS } = require('./schema');
+    for (const f of DEFAULT_THREAT_FEEDS) {
+      await db.run('INSERT INTO threat_feeds (name, url, tier, organization_id) VALUES (?, ?, ?, ?)', f.name, f.url, f.tier, org.id);
+    }
+    res.status(201).json(org);
+  } catch (e) {
+    if (e.message && (e.message.includes('unique') || e.message.includes('UNIQUE') || e.message.includes('duplicate'))) {
+      return res.status(409).json({ error: 'Organization name conflict' });
+    }
+    throw e;
+  }
+});
+
+app.put('/api/msp/organizations/:id', requireSuperAdmin, async (req, res) => {
+  const { name, is_active, plan } = req.body;
+  const fields = []; const params = [];
+  if (name !== undefined) { fields.push('name = ?'); params.push(name); }
+  if (is_active !== undefined) { fields.push('is_active = ?'); params.push(is_active ? 1 : 0); }
+  if (plan !== undefined) { fields.push('plan = ?'); params.push(plan); }
+  if (fields.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+  fields.push("updated_at = NOW()");
+  params.push(req.params.id);
+  await db.run(`UPDATE organizations SET ${fields.join(', ')} WHERE id = ?`, ...params);
+  res.json(await db.get('SELECT * FROM organizations WHERE id = ?', req.params.id));
+});
+
+app.post('/api/msp/organizations/:id/enter', requireSuperAdmin, async (req, res) => {
+  const org = await db.get('SELECT * FROM organizations WHERE id = ?', req.params.id);
+  if (!org) return res.status(404).json({ error: 'Organization not found' });
+  req.session.viewingOrgId = org.id;
+  req.session.save((err) => {
+    if (err) return res.status(500).json({ error: 'Session error' });
+    res.json({ success: true, organization: org });
+  });
+});
+
+app.post('/api/msp/organizations/exit', requireSuperAdmin, async (req, res) => {
+  req.session.viewingOrgId = null;
+  req.session.save((err) => {
+    if (err) return res.status(500).json({ error: 'Session error' });
+    res.json({ success: true });
+  });
+});
+
 // ===== ADMIN API ENDPOINTS =====
 
 // Admin: System Overview Stats
 app.get('/api/admin/overview', requireAdmin, async (req, res) => {
+  const orgId = getOrgId(req);
   const stats = {
-    // Database stats (Supabase PostgreSQL – size via pg_database_size)
+    // Database stats
     databaseSize: await (async () => { try { const r = await db.get("SELECT pg_database_size(current_database()) as size"); return r?.size || 0; } catch { return 0; } })(),
 
-    // Module counts
-    tasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks').get()).c,
-    activeTasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1').get()).c,
-    completions: (await db.prepare('SELECT COUNT(*) as c FROM completions').get()).c,
-    actions: (await db.prepare('SELECT COUNT(*) as c FROM actions').get()).c,
-    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open', 'in_progress')").get()).c,
+    // Module counts (org-scoped)
+    tasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ?').get(orgId)).c,
+    activeTasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND organization_id = ?').get(orgId)).c,
+    completions: (await db.prepare('SELECT COUNT(*) as c FROM completions WHERE organization_id = ?').get(orgId)).c,
+    actions: (await db.prepare('SELECT COUNT(*) as c FROM actions WHERE organization_id = ?').get(orgId)).c,
+    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open', 'in_progress') AND organization_id = ?").get(orgId)).c,
 
-    risks: (await db.prepare('SELECT COUNT(*) as c FROM risks').get()).c,
-    highRisks: (await db.prepare('SELECT COUNT(*) as c FROM risks WHERE (likelihood * impact) >= 15').get()).c,
-    treatments: (await db.prepare('SELECT COUNT(*) as c FROM risk_treatments').get()).c,
+    risks: (await db.prepare('SELECT COUNT(*) as c FROM risks WHERE organization_id = ?').get(orgId)).c,
+    highRisks: (await db.prepare('SELECT COUNT(*) as c FROM risks WHERE (likelihood * impact) >= 15 AND organization_id = ?').get(orgId)).c,
+    treatments: (await db.prepare('SELECT COUNT(*) as c FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id WHERE r.organization_id = ?').get(orgId)).c,
 
-    audits: (await db.prepare('SELECT COUNT(*) as c FROM audits').get()).c,
-    plannedAudits: (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE status = 'planned'").get()).c,
-    ncrs: (await db.prepare('SELECT COUNT(*) as c FROM non_conformities').get()).c,
-    openNcrs: (await db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE status IN ('open', 'in_progress')").get()).c,
+    audits: (await db.prepare('SELECT COUNT(*) as c FROM audits WHERE organization_id = ?').get(orgId)).c,
+    plannedAudits: (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE status = 'planned' AND organization_id = ?").get(orgId)).c,
+    ncrs: (await db.prepare('SELECT COUNT(*) as c FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE a.organization_id = ?').get(orgId)).c,
+    openNcrs: (await db.prepare("SELECT COUNT(*) as c FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE n.status IN ('open', 'in_progress') AND a.organization_id = ?").get(orgId)).c,
 
-    requirements: (await db.prepare('SELECT COUNT(*) as c FROM standard_requirements').get()).c,
-    documents: (await db.prepare('SELECT COUNT(*) as c FROM documents').get()).c,
-    architecture: (await db.prepare('SELECT COUNT(*) as c FROM org_architecture').get()).c,
+    requirements: (await db.prepare('SELECT COUNT(*) as c FROM standard_requirements WHERE organization_id = ?').get(orgId)).c,
+    documents: (await db.prepare('SELECT COUNT(*) as c FROM documents WHERE organization_id = ?').get(orgId)).c,
+    architecture: (await db.prepare('SELECT COUNT(*) as c FROM org_architecture WHERE organization_id = ?').get(orgId)).c,
 
-    users: (await db.prepare('SELECT COUNT(*) as c FROM users').get()).c,
-    activeUsers: (await db.prepare("SELECT COUNT(*) as c FROM users WHERE status = 'active'").get()).c,
+    users: (await db.prepare('SELECT COUNT(*) as c FROM users WHERE organization_id = ?').get(orgId)).c,
+    activeUsers: (await db.prepare("SELECT COUNT(*) as c FROM users WHERE status = 'active' AND organization_id = ?").get(orgId)).c,
 
-    // Recent activity
+    // Recent activity (org-scoped)
     recentCompletions: await db.prepare(`
       SELECT c.*, t.title as task_title
       FROM completions c JOIN tasks t ON c.task_id = t.id
+      WHERE c.organization_id = ?
       ORDER BY c.completed_at DESC LIMIT 10
-    `).all(),
+    `).all(orgId),
 
     recentAuditLogs: await db.prepare(`
-      SELECT * FROM admin_audit_log ORDER BY created_at DESC LIMIT 20
-    `).all(),
+      SELECT * FROM admin_audit_log WHERE (organization_id = ? OR organization_id IS NULL) ORDER BY created_at DESC LIMIT 20
+    `).all(orgId),
 
     // System health
     lastBackup: await db.prepare("SELECT * FROM backups WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1").get(),
@@ -1792,15 +1926,32 @@ app.get('/api/admin/overview', requireAdmin, async (req, res) => {
 // Admin-only middleware
 function requireAdmin(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Authentication required' });
-  if (req.session.userRole !== 'admin') return res.status(403).json({ error: 'Administrator access required' });
+  if (!['admin', 'org_admin', 'superadmin'].includes(req.session.userRole)) return res.status(403).json({ error: 'Administrator access required' });
+  next();
+}
+
+function requireSuperAdmin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: 'Authentication required' });
+  if (req.session.userRole !== 'superadmin') return res.status(403).json({ error: 'Superadmin access required' });
+  next();
+}
+
+function getOrgId(req) {
+  return req.session.viewingOrgId || req.session.organizationId;
+}
+
+function requireOrgContext(req, res, next) {
+  const orgId = getOrgId(req);
+  if (!orgId) return res.status(403).json({ error: 'No organization context. Use the MSP portal to select an organization.' });
   next();
 }
 
 // Admin: Users CRUD
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
   const { status, role, search } = req.query;
-  let sql = 'SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE 1=1';
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = 'SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE organization_id = ?';
+  const params = [orgId];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (role) { sql += ' AND role = ?'; params.push(role); }
   if (search) {
@@ -1813,7 +1964,8 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
 });
 
 app.get('/api/admin/users/:id', requireAdmin, async (req, res) => {
-  const user = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ?').get(req.params.id);
+  const orgId = getOrgId(req);
+  const user = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, orgId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json(user);
 });
@@ -1828,10 +1980,11 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
+    const orgId = getOrgId(req);
     const result = await db.prepare(`
-      INSERT INTO users (name, email, password, role, department, permissions, status, expiry_date, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(name, email.toLowerCase().trim(), hashedPassword, role || 'user', department || '',
+      INSERT INTO users (name, email, password, role, organization_id, department, permissions, status, expiry_date, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, email.toLowerCase().trim(), hashedPassword, role || 'org_user', orgId, department || '',
            JSON.stringify(permissions || ['org','risk','ops','audit']),
            status || 'active', expiry_date || null, notes || '');
 
@@ -1921,7 +2074,8 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'You cannot delete your own account.' });
   }
 
-  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  const orgId = getOrgId(req);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, orgId);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   await db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
@@ -1933,8 +2087,9 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 // Admin: Audit Log
 app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
   const { action, entity_type, user_name, limit = 100, offset = 0 } = req.query;
-  let sql = 'SELECT * FROM admin_audit_log WHERE 1=1';
-  const params = [];
+  const orgId = getOrgId(req);
+  let sql = 'SELECT * FROM admin_audit_log WHERE (organization_id = ? OR organization_id IS NULL)';
+  const params = [orgId];
   if (action) { sql += ' AND action LIKE ?'; params.push(`%${action}%`); }
   if (entity_type) { sql += ' AND entity_type = ?'; params.push(entity_type); }
   if (user_name) { sql += ' AND user_name LIKE ?'; params.push(`%${user_name}%`); }
@@ -1942,21 +2097,22 @@ app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
   params.push(parseInt(limit), parseInt(offset));
 
   const logs = await db.prepare(sql).all(...params);
-  const total = (await db.prepare('SELECT COUNT(*) as c FROM admin_audit_log').get()).c;
+  const total = (await db.prepare('SELECT COUNT(*) as c FROM admin_audit_log WHERE (organization_id = ? OR organization_id IS NULL)').get(orgId)).c;
   res.json({ logs, total, limit: parseInt(limit), offset: parseInt(offset) });
 });
 
 // Helper function to log audit actions
-async function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '') {
+async function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '', orgId = null) {
   await db.run(`
-    INSERT INTO admin_audit_log (user_id, user_name, action, entity_type, entity_id, entity_name, details)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, userId, userName, action, entityType, entityId, entityName, details);
+    INSERT INTO admin_audit_log (user_id, user_name, action, entity_type, entity_id, entity_name, details, organization_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, userId, userName, action, entityType, entityId, entityName, details, orgId);
 }
 
 // Admin: System Settings
 app.get('/api/admin/settings', requireAdmin, async (req, res) => {
-  const settings = await db.prepare('SELECT * FROM system_settings').all();
+  const orgId = getOrgId(req);
+  const settings = await db.prepare('SELECT * FROM system_settings WHERE organization_id IS NOT DISTINCT FROM ?').all(orgId);
   const result = {};
   for (const s of settings) {
     try { result[s.key] = JSON.parse(s.value); }
@@ -1966,14 +2122,15 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
 });
 
 app.put('/api/admin/settings', requireAdmin, async (req, res) => {
+  const orgId = getOrgId(req);
   const settings = req.body;
   const upsert = db.prepare(`
-    INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+    INSERT INTO system_settings (key, value, organization_id, updated_at) VALUES (?, ?, ?, NOW())
+    ON CONFLICT(key, organization_id) DO UPDATE SET value = excluded.value, updated_at = NOW()
   `);
 
   for (const [key, value] of Object.entries(settings)) {
-    await upsert.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+    await upsert.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value), orgId);
   }
 
   await logAuditAction(null, 'System', 'settings_updated', 'settings', null, null, JSON.stringify(Object.keys(settings)));

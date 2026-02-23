@@ -16,8 +16,26 @@ async function loadCurrentUser() {
     const data = await res.json();
     if (data.authenticated && data.user) {
       currentUser = data.user;
+
+      // ── Superadmin routing ──────────────────────────────────────────────
+      if (currentUser.role === 'superadmin') {
+        if (!currentUser.viewingOrgId) {
+          // Superadmin with no org context → show MSP portal
+          showMspPortal();
+          return;
+        } else {
+          // Superadmin inside an org → show normal app + impersonation banner
+          showMspImpersonationBanner();
+        }
+      }
+
+      // ── Normal app ──────────────────────────────────────────────────────
       const nameEl = document.getElementById('current-user-name');
       if (nameEl) nameEl.textContent = data.user.name;
+      // Default view if not yet shown
+      switchView(currentView);
+    } else {
+      window.location.href = '/login';
     }
   } catch (err) {
     console.error('Failed to load user info:', err);
@@ -34,6 +52,159 @@ async function logout() {
     console.error('Logout failed:', err);
     window.location.href = '/login';
   }
+}
+
+// ==========================================================================
+// MSP PORTAL FUNCTIONS
+// ==========================================================================
+
+let mspOrgs = [];
+
+function showMspPortal() {
+  document.getElementById('msp-portal').style.display = 'flex';
+  document.getElementById('msp-portal').style.flexDirection = 'column';
+  document.getElementById('app').style.display = 'none';
+  const nameEl = document.getElementById('msp-user-name');
+  if (nameEl && currentUser) nameEl.textContent = currentUser.name;
+  loadMspOrgs();
+}
+
+function hideMspPortal() {
+  document.getElementById('msp-portal').style.display = 'none';
+  document.getElementById('app').style.display = '';
+}
+
+function showMspImpersonationBanner() {
+  const banner = document.getElementById('msp-impersonation-banner');
+  if (banner) banner.style.display = 'flex';
+  const orgNameEl = document.getElementById('msp-banner-org-name');
+  // We don't have org name in token — fetch it
+  if (orgNameEl && currentUser.viewingOrgId) {
+    fetch('/api/msp/organizations')
+      .then(r => r.json())
+      .then(orgs => {
+        const org = orgs.find(o => o.id === currentUser.viewingOrgId);
+        if (org && orgNameEl) orgNameEl.textContent = org.name;
+      })
+      .catch(() => {});
+  }
+  const nameEl = document.getElementById('current-user-name');
+  if (nameEl && currentUser) nameEl.textContent = currentUser.name;
+  switchView(currentView);
+}
+
+async function loadMspOrgs() {
+  try {
+    const res = await fetch('/api/msp/organizations');
+    mspOrgs = await res.json();
+    renderMspOrgs(mspOrgs);
+  } catch (err) {
+    document.getElementById('msp-orgs-grid').innerHTML =
+      '<p class="text-muted" style="color:#ef4444">Failed to load organisations.</p>';
+  }
+}
+
+function filterMspOrgs() {
+  const q = (document.getElementById('msp-org-search')?.value || '').toLowerCase();
+  renderMspOrgs(q ? mspOrgs.filter(o => o.name.toLowerCase().includes(q)) : mspOrgs);
+}
+
+function renderMspOrgs(orgs) {
+  const grid = document.getElementById('msp-orgs-grid');
+  if (!grid) return;
+  if (!orgs.length) {
+    grid.innerHTML = '<p class="text-muted">No organisations found.</p>';
+    return;
+  }
+  grid.innerHTML = orgs.map(org => `
+    <div class="msp-org-card" id="msp-org-card-${org.id}">
+      <div class="msp-org-card-header">
+        <span class="msp-org-name">${escHtml(org.name)}</span>
+        <span class="msp-org-badge ${org.is_active ? 'active' : 'inactive'}">${org.is_active ? 'Active' : 'Inactive'}</span>
+      </div>
+      <div class="msp-org-stats">
+        <div class="msp-org-stat"><strong>${org.user_count || 0}</strong><span>Users</span></div>
+        <div class="msp-org-stat"><strong>${org.task_count || 0}</strong><span>Tasks</span></div>
+        <div class="msp-org-stat"><strong>${org.risk_count || 0}</strong><span>Risks</span></div>
+        <div class="msp-org-stat"><strong>${org.audit_count || 0}</strong><span>Audits</span></div>
+      </div>
+      <div class="msp-org-card-footer">
+        <span class="msp-plan-tag">${escHtml(org.plan || 'standard')}</span>
+        <button class="btn-toggle-org" onclick="toggleOrgActive(${org.id}, ${org.is_active})">${org.is_active ? 'Deactivate' : 'Activate'}</button>
+        <button class="btn-enter-org" onclick="enterOrgContext(${org.id})" ${!org.is_active ? 'disabled title="Activate org first"' : ''}>Open &rarr;</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function enterOrgContext(orgId) {
+  try {
+    const res = await fetch(`/api/msp/organizations/${orgId}/enter`, { method: 'POST' });
+    if (!res.ok) { const d = await res.json(); alert(d.error || 'Failed'); return; }
+    // Refresh to pick up new session token
+    window.location.reload();
+  } catch (err) {
+    alert('Failed to enter org context');
+  }
+}
+
+async function exitOrgContext() {
+  try {
+    const res = await fetch('/api/msp/organizations/exit', { method: 'POST' });
+    if (!res.ok) { const d = await res.json(); alert(d.error || 'Failed'); return; }
+    window.location.reload();
+  } catch (err) {
+    alert('Failed to exit org context');
+  }
+}
+
+async function toggleOrgActive(orgId, currentlyActive) {
+  try {
+    const res = await fetch(`/api/msp/organizations/${orgId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: currentlyActive ? 0 : 1 }),
+    });
+    if (!res.ok) { const d = await res.json(); alert(d.error || 'Failed'); return; }
+    loadMspOrgs();
+  } catch (err) {
+    alert('Failed to update organisation');
+  }
+}
+
+function openCreateOrgModal() {
+  document.getElementById('create-org-modal').style.display = 'flex';
+  document.getElementById('new-org-name').value = '';
+  document.getElementById('new-org-plan').value = 'standard';
+  setTimeout(() => document.getElementById('new-org-name').focus(), 50);
+}
+
+function closeCreateOrgModal() {
+  document.getElementById('create-org-modal').style.display = 'none';
+}
+
+async function createOrg() {
+  const name = document.getElementById('new-org-name').value.trim();
+  const plan = document.getElementById('new-org-plan').value;
+  if (!name) { alert('Organisation name is required'); return; }
+  try {
+    const res = await fetch('/api/msp/organizations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, plan }),
+    });
+    if (!res.ok) { const d = await res.json(); alert(d.error || 'Failed'); return; }
+    closeCreateOrgModal();
+    loadMspOrgs();
+  } catch (err) {
+    alert('Failed to create organisation');
+  }
+}
+
+// Small HTML escape helper (used in MSP templates)
+function escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // Load user on page load

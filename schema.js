@@ -1,8 +1,26 @@
 /**
  * Database Schema Definitions – Supabase PostgreSQL
+ * Multi-tenant / MSP edition
  */
 
 const POSTGRES_SCHEMA_SQL = `
+  -- ==========================================================================
+  -- ORGANIZATIONS (tenant table – must exist before all tenant-scoped tables)
+  -- ==========================================================================
+  CREATE TABLE IF NOT EXISTS organizations (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    plan TEXT DEFAULT 'standard',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+  );
+
+  -- ==========================================================================
+  -- OPERATIONAL TABLES (all gain organization_id via ALTER TABLE below)
+  -- ==========================================================================
+
   CREATE TABLE IF NOT EXISTS tasks (
     id SERIAL PRIMARY KEY,
     title TEXT NOT NULL,
@@ -268,12 +286,16 @@ const POSTGRES_SCHEMA_SQL = `
     UNIQUE(feed_id, guid)
   );
 
+  -- ==========================================================================
+  -- USERS (supports superadmin + org_admin + org_user roles)
+  -- ==========================================================================
   CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password TEXT DEFAULT NULL,
-    role TEXT DEFAULT 'user' CHECK(role IN ('viewer','user','manager','admin')),
+    role TEXT DEFAULT 'org_user',
+    organization_id INTEGER DEFAULT NULL REFERENCES organizations(id) ON DELETE SET NULL,
     department TEXT DEFAULT '',
     permissions TEXT DEFAULT '["org","risk","ops","audit"]',
     status TEXT DEFAULT 'active' CHECK(status IN ('active','pending','suspended','inactive')),
@@ -285,10 +307,15 @@ const POSTGRES_SCHEMA_SQL = `
     updated_at TIMESTAMP DEFAULT NOW()
   );
 
+  -- ==========================================================================
+  -- SYSTEM / ADMIN TABLES
+  -- ==========================================================================
   CREATE TABLE IF NOT EXISTS system_settings (
-    key TEXT PRIMARY KEY,
+    key TEXT NOT NULL,
     value TEXT NOT NULL,
-    updated_at TIMESTAMP DEFAULT NOW()
+    organization_id INTEGER DEFAULT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(key, organization_id)
   );
 
   CREATE TABLE IF NOT EXISTS admin_audit_log (
@@ -301,6 +328,7 @@ const POSTGRES_SCHEMA_SQL = `
     entity_name TEXT DEFAULT NULL,
     details TEXT DEFAULT '',
     ip_address TEXT DEFAULT '',
+    organization_id INTEGER DEFAULT NULL,
     created_at TIMESTAMP DEFAULT NOW()
   );
 
@@ -347,7 +375,7 @@ const POSTGRES_SCHEMA_SQL = `
     name_id_format TEXT DEFAULT 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
     attribute_mapping TEXT DEFAULT '{"email":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress","name":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/displayname","groups":"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"}',
     auto_provision INTEGER DEFAULT 1,
-    default_role TEXT DEFAULT 'user',
+    default_role TEXT DEFAULT 'org_user',
     allowed_domains TEXT DEFAULT '',
     updated_at TIMESTAMP DEFAULT NOW()
   );
@@ -361,9 +389,41 @@ const POSTGRES_SCHEMA_SQL = `
     expires_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+
+  -- ==========================================================================
+  -- MIGRATION: add organization_id to existing tables (safe to re-run)
+  -- ==========================================================================
+  ALTER TABLE tasks         ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE completions   ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE actions       ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE audits        ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE audit_checklist ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE non_conformities ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE standard_requirements ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE risks         ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE risk_treatments ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE soa_entries   ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE org_mission   ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE org_kpis      ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE org_architecture ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE documents     ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE cross_links   ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+  ALTER TABLE threat_feeds  ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+
+  -- Performance indexes
+  CREATE INDEX IF NOT EXISTS idx_tasks_org           ON tasks(organization_id);
+  CREATE INDEX IF NOT EXISTS idx_completions_org     ON completions(organization_id);
+  CREATE INDEX IF NOT EXISTS idx_actions_org         ON actions(organization_id);
+  CREATE INDEX IF NOT EXISTS idx_audits_org          ON audits(organization_id);
+  CREATE INDEX IF NOT EXISTS idx_risks_org           ON risks(organization_id);
+  CREATE INDEX IF NOT EXISTS idx_requirements_org    ON standard_requirements(organization_id);
+  CREATE INDEX IF NOT EXISTS idx_documents_org       ON documents(organization_id);
+  CREATE INDEX IF NOT EXISTS idx_arch_org            ON org_architecture(organization_id);
+  CREATE INDEX IF NOT EXISTS idx_threat_feeds_org    ON threat_feeds(organization_id);
+  CREATE INDEX IF NOT EXISTS idx_users_org           ON users(organization_id)
 `;
 
-// Default threat feeds to seed
+// Default threat feeds to seed per org
 const DEFAULT_THREAT_FEEDS = [
   { name: 'CERT-EU Latest', url: 'https://cert.europa.eu/publications/security-advisories/rss', tier: 1 },
   { name: 'NCSC-UK Advisories', url: 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml', tier: 1 },

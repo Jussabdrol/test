@@ -16,7 +16,77 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
+
+  <!-- ================================================================
+       MSP PORTAL — shown when superadmin has not selected an org yet
+       ================================================================ -->
+  <div id="msp-portal" style="display:none">
+    <div class="msp-header">
+      <div class="msp-logo">
+        <span class="logo-wordmark">Bop</span>
+        <span class="msp-label">MSP Portal</span>
+      </div>
+      <div class="msp-header-actions">
+        <span id="msp-user-name" class="msp-user-name"></span>
+        <button class="btn btn-secondary btn-sm" onclick="logout()">Logout</button>
+      </div>
+    </div>
+    <div class="msp-body">
+      <div class="msp-hero">
+        <h1>Managed Service Portal</h1>
+        <p>Manage client organisations and enter their workspace.</p>
+        <button class="btn btn-primary" onclick="openCreateOrgModal()">+ New Organisation</button>
+      </div>
+      <div class="msp-orgs-section">
+        <div class="msp-orgs-header">
+          <h2>Organisations</h2>
+          <input type="text" id="msp-org-search" placeholder="Search..." oninput="filterMspOrgs()" class="input-field" style="width:220px">
+        </div>
+        <div id="msp-orgs-grid" class="msp-orgs-grid">
+          <p class="text-muted">Loading organisations…</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Org Modal -->
+  <div id="create-org-modal" class="modal" style="display:none">
+    <div class="modal-content" style="max-width:480px">
+      <div class="modal-header">
+        <h3>New Organisation</h3>
+        <button class="modal-close" onclick="closeCreateOrgModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Organisation Name *</label>
+          <input type="text" id="new-org-name" class="input-field" placeholder="Acme Corp">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Plan</label>
+          <select id="new-org-plan" class="input-field">
+            <option value="standard">Standard</option>
+            <option value="professional">Professional</option>
+            <option value="enterprise">Enterprise</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeCreateOrgModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="createOrg()">Create Organisation</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       MAIN APP — shown for regular users + superadmin inside an org
+       ================================================================ -->
   <div id="app">
+    <!-- Impersonation banner (superadmin viewing an org) -->
+    <div id="msp-impersonation-banner" class="msp-impersonation-banner" style="display:none">
+      <span class="msp-banner-icon">&#128274;</span>
+      Viewing as: <strong id="msp-banner-org-name"></strong>
+      <button class="msp-banner-exit" onclick="exitOrgContext()">&#8592; Back to MSP Portal</button>
+    </div>
     <nav class="sidebar">
       <div class="logo">
         <span class="logo-wordmark">Bop</span>

@@ -2802,3 +2802,289 @@ body {
 .leaflet-popup-tip {
   box-shadow: 0 3px 14px rgba(0,0,0,0.15);
 }
+
+/* ==========================================================================
+   MSP PORTAL — Styles
+   ========================================================================== */
+
+/* ── MSP Portal Page ────────────────────────────────────────────────────── */
+#msp-portal {
+  min-height: 100vh;
+  background: #f0f4f8;
+  display: flex;
+  flex-direction: column;
+}
+
+.msp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  height: 60px;
+  background: #1e293b;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  flex-shrink: 0;
+}
+
+.msp-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.msp-logo .logo-wordmark {
+  font-size: 22px;
+  font-family: 'Dancing Script', cursive;
+  color: #fff;
+}
+
+.msp-label {
+  background: #3b82f6;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.msp-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.msp-user-name {
+  font-size: 14px;
+  color: #94a3b8;
+}
+
+/* ── MSP Body ─────────────────────────────────────────────────────────────── */
+.msp-body {
+  flex: 1;
+  padding: 32px;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.msp-hero {
+  margin-bottom: 32px;
+}
+
+.msp-hero h1 {
+  font-size: 26px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 6px;
+}
+
+.msp-hero p {
+  color: #64748b;
+  margin: 0 0 20px;
+  font-size: 15px;
+}
+
+/* ── Orgs Section ─────────────────────────────────────────────────────────── */
+.msp-orgs-section {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  overflow: hidden;
+}
+
+.msp-orgs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.msp-orgs-header h2 {
+  font-size: 17px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0;
+}
+
+.msp-orgs-grid {
+  padding: 16px 24px 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+/* ── Org Card ─────────────────────────────────────────────────────────────── */
+.msp-org-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: box-shadow 0.15s, border-color 0.15s;
+  background: #fff;
+}
+
+.msp-org-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  border-color: #c7d2fe;
+}
+
+.msp-org-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.msp-org-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.msp-org-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.msp-org-badge.active {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.msp-org-badge.inactive {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.msp-org-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.msp-org-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.msp-org-stat strong {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.msp-org-stat span {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.msp-org-card-footer {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid #f1f5f9;
+  margin-top: 4px;
+}
+
+.msp-plan-tag {
+  font-size: 12px;
+  color: #6366f1;
+  font-weight: 500;
+  margin-right: auto;
+  align-self: center;
+  text-transform: capitalize;
+}
+
+/* ── Impersonation Banner ─────────────────────────────────────────────────── */
+.msp-impersonation-banner {
+  background: #1e40af;
+  color: #fff;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 6px rgba(30,64,175,0.25);
+  z-index: 200;
+  position: sticky;
+  top: 0;
+}
+
+.msp-banner-icon {
+  font-size: 14px;
+}
+
+.msp-impersonation-banner strong {
+  font-weight: 700;
+}
+
+.msp-banner-exit {
+  margin-left: auto;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.3);
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.msp-banner-exit:hover {
+  background: rgba(255,255,255,0.25);
+}
+
+/* ── MSP action buttons in org cards ─────────────────────────────────────── */
+.btn-enter-org {
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-enter-org:hover {
+  background: #4338ca;
+}
+
+.btn-toggle-org {
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-toggle-org:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.btn-sm {
+  padding: 5px 12px;
+  font-size: 13px;
+}
