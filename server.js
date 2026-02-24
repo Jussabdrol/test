@@ -635,9 +635,9 @@ app.post('/api/tasks/:id/complete', requireOrgContext, async (req, res) => {
   );
 
   const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
-  await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ?").run(nextDue, task.id);
+  await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
 
-  const updated = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  const updated = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(task.id, req.orgId);
   res.json({ ...updated, completion_id: completionResult.lastInsertRowid });
 });
 
@@ -791,8 +791,8 @@ app.put('/api/actions/:id', requireOrgContext, async (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
 
-  await db.prepare(`UPDATE actions SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  const action = await db.prepare('SELECT * FROM actions WHERE id = ?').get(req.params.id);
+  await db.prepare(`UPDATE actions SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  const action = await db.prepare('SELECT * FROM actions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   res.json(action);
 });
 
@@ -967,7 +967,7 @@ app.put('/api/audits/:id', requireOrgContext, async (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  await db.prepare(`UPDATE audits SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  await db.prepare(`UPDATE audits SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
 
   // Add checklist items from newly selected requirements (skip existing clauses)
   if (req.body.requirement_ids && Array.isArray(req.body.requirement_ids)) {
@@ -1019,12 +1019,12 @@ app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
-  await db.prepare(`UPDATE audit_checklist SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  await db.prepare(`UPDATE audit_checklist SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
 
   // Auto-create or remove NCR when rating changes
   if (req.body.rating) {
     const isNc = req.body.rating === 'minor_nc' || req.body.rating === 'major_nc';
-    const existingNcr = await db.prepare('SELECT * FROM non_conformities WHERE checklist_item_id = ?').get(req.params.id);
+    const existingNcr = await db.prepare('SELECT * FROM non_conformities WHERE checklist_item_id = ? AND organization_id = ?').get(req.params.id, req.orgId);
 
     if (isNc && !existingNcr) {
       // Auto-create NCR with populated fields from checklist item
@@ -1038,7 +1038,7 @@ app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
       // Update severity if it changed (e.g. minor_nc -> major_nc)
       const severity = req.body.rating === 'major_nc' ? 'major' : 'minor';
       if (existingNcr.severity !== severity) {
-        await db.prepare("UPDATE non_conformities SET severity = ?, updated_at = datetime('now') WHERE id = ?").run(severity, existingNcr.id);
+        await db.prepare("UPDATE non_conformities SET severity = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(severity, existingNcr.id, req.orgId);
       }
     } else if (!isNc && existingNcr && existingNcr.status === 'open') {
       // Remove auto-created NCR if rating changed away from NC and NCR is still open
@@ -1046,7 +1046,7 @@ app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
     }
   }
 
-  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
+  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 // Delete checklist item
@@ -1206,8 +1206,8 @@ app.put('/api/ncrs/:id', requireOrgContext, async (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  await db.prepare(`UPDATE non_conformities SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE non_conformities SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  res.json(await db.prepare('SELECT * FROM non_conformities WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 // Delete NC
@@ -1314,8 +1314,8 @@ app.put('/api/requirements/:id', requireOrgContext, async (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  await db.prepare(`UPDATE standard_requirements SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(await db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE standard_requirements SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  res.json(await db.prepare('SELECT * FROM standard_requirements WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 // Delete all requirements for a standard (retire)
@@ -1356,6 +1356,8 @@ app.post('/api/threat-feeds', requireOrgContext, async (req, res) => {
 
 // Update feed
 app.put('/api/threat-feeds/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM threat_feeds WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Feed not found' });
   const fields = ['name', 'url', 'tier', 'enabled'];
   const updates = []; const params = [];
   for (const f of fields) {
@@ -1363,8 +1365,8 @@ app.put('/api/threat-feeds/:id', requireOrgContext, async (req, res) => {
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
-  await db.prepare(`UPDATE threat_feeds SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(await db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE threat_feeds SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  res.json(await db.prepare('SELECT * FROM threat_feeds WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 // Delete feed
@@ -1425,7 +1427,7 @@ app.post('/api/threat-feeds/:id/fetch', requireOrgContext, async (req, res) => {
     });
 
     // Update last_fetched
-    await db.prepare("UPDATE threat_feeds SET last_fetched = datetime('now') WHERE id = ?").run(feed.id);
+    await db.prepare("UPDATE threat_feeds SET last_fetched = datetime('now') WHERE id = ? AND organization_id = ?").run(feed.id, req.orgId);
 
     res.json({ success: true, count: items.length });
   } catch (err) {
@@ -1449,14 +1451,16 @@ app.get('/api/threat-items', requireOrgContext, async (req, res) => {
 
 // Update threat item status
 app.put('/api/threat-items/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM threat_items WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Threat item not found' });
   const { status, created_risk_id } = req.body;
   const updates = []; const params = [];
   if (status) { updates.push('status = ?'); params.push(status); }
   if (created_risk_id !== undefined) { updates.push('created_risk_id = ?'); params.push(created_risk_id); }
   if (updates.length === 0) return res.status(400).json({ error: 'Nothing to update' });
   params.push(req.params.id);
-  await db.prepare(`UPDATE threat_items SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(await db.prepare('SELECT * FROM threat_items WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE threat_items SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  res.json(await db.prepare('SELECT * FROM threat_items WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 function stripTags(str) {
@@ -1514,8 +1518,8 @@ app.put('/api/risks/:id', requireOrgContext, async (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  await db.prepare(`UPDATE risks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(await db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE risks SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  res.json(await db.prepare('SELECT * FROM risks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 // Delete risk
@@ -1561,8 +1565,8 @@ app.put('/api/treatments/:id', requireOrgContext, async (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  await db.prepare(`UPDATE risk_treatments SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(await db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE risk_treatments SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  res.json(await db.prepare('SELECT * FROM risk_treatments WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 app.delete('/api/treatments/:id', requireOrgContext, async (req, res) => {
@@ -1618,9 +1622,9 @@ app.put('/api/soa/:requirementId', requireOrgContext, async (req, res) => {
     if (req.body.regulatory !== undefined) { fields.push('regulatory = ?'); params.push(req.body.regulatory ? 1 : 0); }
     fields.push("updated_at = datetime('now')");
     params.push(existing.id);
-    await db.prepare(`UPDATE soa_entries SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+    await db.prepare(`UPDATE soa_entries SET ${fields.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
   } else {
-    await db.prepare('INSERT INTO soa_entries (requirement_id, applicable, justification, implementation_status, notes, linked_processes, regulatory) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+    await db.prepare('INSERT INTO soa_entries (organization_id, requirement_id, applicable, justification, implementation_status, notes, linked_processes, regulatory) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(req.orgId,
       reqId, applicable !== undefined ? (applicable ? 1 : 0) : 1, justification || '', implementation_status || 'not_implemented', notes || '', JSON.stringify(req.body.linked_processes || []), req.body.regulatory ? 1 : 0
     );
   }
@@ -1706,8 +1710,8 @@ app.put('/api/kpis/:id', requireOrgContext, async (req, res) => {
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
-  await db.prepare(`UPDATE org_kpis SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(await db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE org_kpis SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  res.json(await db.prepare('SELECT * FROM org_kpis WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 app.delete('/api/kpis/:id', requireOrgContext, async (req, res) => {
@@ -1719,9 +1723,9 @@ app.post('/api/kpis/:id/values', requireOrgContext, async (req, res) => {
   const { value, period } = req.body;
   if (value === undefined || !period) return res.status(400).json({ error: 'value and period are required' });
   // Upsert
-  const existing = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? AND period = ?').get(req.params.id, period);
+  const existing = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? AND period = ? AND organization_id = ?').get(req.params.id, period, req.orgId);
   if (existing) {
-    await db.prepare("UPDATE org_kpi_values SET value = ?, recorded_at = datetime('now') WHERE id = ?").run(value, existing.id);
+    await db.prepare("UPDATE org_kpi_values SET value = ?, recorded_at = datetime('now') WHERE id = ? AND organization_id = ?").run(value, existing.id, req.orgId);
   } else {
     await db.prepare('INSERT INTO org_kpi_values (organization_id, kpi_id, value, period) VALUES (?, ?, ?, ?)').run(req.orgId, req.params.id, value, period);
   }
@@ -1757,8 +1761,8 @@ app.put('/api/architecture/:id', requireOrgContext, async (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  await db.prepare(`UPDATE org_architecture SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  res.json(await db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(req.params.id));
+  await db.prepare(`UPDATE org_architecture SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  res.json(await db.prepare('SELECT * FROM org_architecture WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 app.delete('/api/architecture/:id', requireOrgContext, async (req, res) => {
@@ -2625,22 +2629,22 @@ app.post('/api/admin/webhooks/:id/test', requireAdmin, async (req, res) => {
     });
 
     // Update last triggered
-    await db.prepare("UPDATE webhooks SET last_triggered = datetime('now') WHERE id = ?").run(webhook.id);
+    await db.prepare("UPDATE webhooks SET last_triggered = datetime('now') WHERE id = ? AND organization_id = ?").run(webhook.id, req.orgId);
 
     res.json({ success: true, statusCode: result.statusCode, response: result.body });
   } catch (err) {
     // Increment failure count
-    await db.prepare("UPDATE webhooks SET failure_count = failure_count + 1 WHERE id = ?").run(webhook.id);
+    await db.prepare("UPDATE webhooks SET failure_count = failure_count + 1 WHERE id = ? AND organization_id = ?").run(webhook.id, req.orgId);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // Admin: Reset Webhook Failures
 app.post('/api/admin/webhooks/:id/reset-failures', requireAdmin, async (req, res) => {
-  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
-  await db.prepare("UPDATE webhooks SET failure_count = 0 WHERE id = ?").run(req.params.id);
+  await db.prepare("UPDATE webhooks SET failure_count = 0 WHERE id = ? AND organization_id = ?").run(req.params.id, req.orgId);
   res.json({ success: true });
 });
 
