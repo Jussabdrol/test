@@ -1569,7 +1569,7 @@ app.delete('/api/treatments/:id', requireOrgContext, async (req, res) => {
   // Verify the treatment belongs to a risk in this org before deleting
   const existing = await db.prepare('SELECT rt.id FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id WHERE rt.id = ? AND r.organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Treatment not found' });
-  await db.prepare('DELETE FROM risk_treatments WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM risk_treatments WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   res.json({ success: true });
 });
 
@@ -1836,7 +1836,7 @@ app.delete('/api/documents/:id', requireOrgContext, async (req, res) => {
   const doc = await db.prepare('SELECT * FROM documents WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
   if (doc.file_path) await deleteFromSupabase(doc.file_path);
-  await db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM documents WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   res.json({ success: true });
 });
 
