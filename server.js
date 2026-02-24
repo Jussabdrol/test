@@ -299,6 +299,21 @@ app.post('/api/auth/login', async (req, res) => {
     // Update last active
     await db.prepare("UPDATE users SET last_active = datetime('now') WHERE id = ?").run(user.id);
 
+    // Sync Supabase Auth metadata (org_id, role) if admin client available
+    if (supabaseAdmin && (supabaseUser || user.supabase_uid)) {
+      const uid = supabaseUser?.id || user.supabase_uid;
+      try {
+        await supabaseAdmin.auth.admin.updateUserById(uid, {
+          app_metadata: { organization_id: user.organization_id, role: user.role },
+          user_metadata: { name: user.name, department: user.department || '' },
+        });
+        // Store supabase_uid if not already stored
+        if (!user.supabase_uid && supabaseUser?.id) {
+          await db.prepare('UPDATE users SET supabase_uid = ? WHERE id = ?').run(supabaseUser.id, user.id);
+        }
+      } catch (_) { /* Non-critical – continue login */ }
+    }
+
     req.session.userId = user.id;
     req.session.userRole = user.role;
     req.session.organizationId = user.organization_id || null;
@@ -1027,7 +1042,7 @@ app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
       }
     } else if (!isNc && existingNcr && existingNcr.status === 'open') {
       // Remove auto-created NCR if rating changed away from NC and NCR is still open
-      await db.prepare('DELETE FROM non_conformities WHERE id = ?').run(existingNcr.id);
+      await db.prepare('DELETE FROM non_conformities WHERE id = ? AND organization_id = ?').run(existingNcr.id, req.orgId);
     }
   }
 
@@ -1070,8 +1085,8 @@ app.post('/api/checklist/:id/evidence', requireOrgContext, upload.single('file')
   });
 
   // Update the checklist item
-  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
-  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
+  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
+  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 // Download evidence file from checklist item
@@ -1112,7 +1127,7 @@ app.delete('/api/checklist/:id/evidence/:fileId', requireOrgContext, async (req,
 
   // Remove from array
   evidenceFiles.splice(fileIndex, 1);
-  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
+  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
   res.json({ success: true });
 });
 
@@ -1138,8 +1153,8 @@ app.post('/api/checklist/:id/evidence-link', requireOrgContext, async (req, res)
   });
 
   // Update the checklist item
-  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
-  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
+  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
+  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 // --- Non-Conformity API ---
@@ -1170,7 +1185,7 @@ app.post('/api/ncrs', requireOrgContext, async (req, res) => {
   // If linked to checklist item, update its rating
   if (checklist_item_id) {
     const rating = (severity === 'major') ? 'major_nc' : 'minor_nc';
-    await db.prepare('UPDATE audit_checklist SET rating = ? WHERE id = ?').run(rating, checklist_item_id);
+    await db.prepare('UPDATE audit_checklist SET rating = ? WHERE id = ? AND organization_id = ?').run(rating, checklist_item_id, req.orgId);
   }
   res.status(201).json(await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -2034,12 +2049,31 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const userRole = role || 'org_user';
     if (userRole === 'superadmin') return res.status(400).json({ error: 'Cannot create superadmin users from org admin' });
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Create user in Supabase Auth if admin client is available
+    let supabaseUid = null;
+    if (supabaseAdmin) {
+      try {
+        const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+          email: normalizedEmail,
+          password,
+          email_confirm: true,
+          app_metadata: { organization_id: req.orgId, role: userRole },
+          user_metadata: { name, department: department || '' },
+        });
+        if (!authError && authData?.user) {
+          supabaseUid = authData.user.id;
+        }
+      } catch (_) { /* Supabase Auth unavailable – continue with local auth */ }
+    }
+
     const result = await db.prepare(`
-      INSERT INTO users (organization_id, name, email, password, role, department, permissions, status, expiry_date, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(req.orgId, name, email.toLowerCase().trim(), hashedPassword, userRole, department || '',
+      INSERT INTO users (organization_id, name, email, password, role, department, permissions, status, expiry_date, notes, supabase_uid)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.orgId, name, normalizedEmail, hashedPassword, userRole, department || '',
            JSON.stringify(permissions || ['org','risk','ops','audit']),
-           status || 'active', expiry_date || null, notes || '');
+           status || 'active', expiry_date || null, notes || '', supabaseUid);
 
     const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
     await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_created', 'user', result.lastInsertRowid, name);
@@ -2056,7 +2090,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
 });
 
 app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
-  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   // Prevent self-demotion from admin
@@ -2091,11 +2125,11 @@ app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
   params.push(req.params.id);
 
   try {
-    await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
     const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
     await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_updated', 'user', user.id, user.name,
       JSON.stringify(Object.keys(req.body).filter(k => k !== 'password')));
-    const updated = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ?').get(req.params.id);
+    const updated = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
     res.json(updated);
   } catch (e) {
     if (e.message.includes('unique') || e.message.includes('UNIQUE') || e.message.includes('duplicate')) {
@@ -2111,11 +2145,18 @@ app.put('/api/admin/users/:id/password', requireAdmin, async (req, res) => {
   const { password } = req.body;
   if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
 
-  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const hashedPassword = await bcrypt.hash(password, 10);
-  await db.prepare("UPDATE users SET password = ?, updated_at = datetime('now') WHERE id = ?").run(hashedPassword, req.params.id);
+  await db.prepare("UPDATE users SET password = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(hashedPassword, req.params.id, req.orgId);
+
+  // Sync password to Supabase Auth if available
+  if (supabaseAdmin && user.supabase_uid) {
+    try {
+      await supabaseAdmin.auth.admin.updateUserById(user.supabase_uid, { password });
+    } catch (_) { /* Non-critical */ }
+  }
 
   const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
   await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_password_reset', 'user', user.id, user.name);
@@ -2127,10 +2168,17 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'You cannot delete your own account.' });
   }
 
-  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  await db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  // Remove from Supabase Auth if available
+  if (supabaseAdmin && user.supabase_uid) {
+    try {
+      await supabaseAdmin.auth.admin.deleteUser(user.supabase_uid);
+    } catch (_) { /* Non-critical */ }
+  }
+
+  await db.prepare('DELETE FROM users WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
   await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_deleted', 'user', user.id, user.name);
   res.json({ success: true });
@@ -2219,10 +2267,10 @@ app.post('/api/admin/api-keys', requireAdmin, async (req, res) => {
 });
 
 app.delete('/api/admin/api-keys/:id', requireAdmin, async (req, res) => {
-  const key = await db.prepare('SELECT * FROM api_keys WHERE id = ?').get(req.params.id);
+  const key = await db.prepare('SELECT * FROM api_keys WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!key) return res.status(404).json({ error: 'API key not found' });
 
-  await db.prepare("UPDATE api_keys SET status = 'revoked' WHERE id = ?").run(req.params.id);
+  await db.prepare("UPDATE api_keys SET status = 'revoked' WHERE id = ? AND organization_id = ?").run(req.params.id, req.orgId);
   await logAuditAction(null, 'System', 'api_key_revoked', 'api_key', key.id, key.name);
   res.json({ success: true });
 });
@@ -2246,24 +2294,24 @@ app.post('/api/admin/webhooks', requireAdmin, async (req, res) => {
 });
 
 app.put('/api/admin/webhooks/:id', requireAdmin, async (req, res) => {
-  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
   const { name, url, events, secret, status } = req.body;
   await db.prepare(`
-    UPDATE webhooks SET name = ?, url = ?, events = ?, secret = ?, status = ? WHERE id = ?
+    UPDATE webhooks SET name = ?, url = ?, events = ?, secret = ?, status = ? WHERE id = ? AND organization_id = ?
   `).run(name || webhook.name, url || webhook.url, JSON.stringify(events || JSON.parse(webhook.events)),
-         secret !== undefined ? secret : webhook.secret, status || webhook.status, req.params.id);
+         secret !== undefined ? secret : webhook.secret, status || webhook.status, req.params.id, req.orgId);
 
   await logAuditAction(null, 'System', 'webhook_updated', 'webhook', webhook.id, webhook.name);
-  res.json(await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id));
+  res.json(await db.prepare('SELECT * FROM webhooks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
 app.delete('/api/admin/webhooks/:id', requireAdmin, async (req, res) => {
-  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
-  await db.prepare('DELETE FROM webhooks WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM webhooks WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   await logAuditAction(null, 'System', 'webhook_deleted', 'webhook', webhook.id, webhook.name);
   res.json({ success: true });
 });
@@ -2279,33 +2327,33 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
   };
 
   if (includes.includes('tasks')) {
-    data.tasks = await db.prepare('SELECT * FROM tasks').all();
-    data.completions = await db.prepare('SELECT * FROM completions').all();
-    data.actions = await db.prepare('SELECT * FROM actions').all();
+    data.tasks = await db.prepare('SELECT * FROM tasks WHERE organization_id = ?').all(req.orgId);
+    data.completions = await db.prepare('SELECT * FROM completions WHERE organization_id = ?').all(req.orgId);
+    data.actions = await db.prepare('SELECT * FROM actions WHERE organization_id = ?').all(req.orgId);
   }
   if (includes.includes('risks')) {
-    data.risks = await db.prepare('SELECT * FROM risks').all();
-    data.treatments = await db.prepare('SELECT * FROM risk_treatments').all();
+    data.risks = await db.prepare('SELECT * FROM risks WHERE organization_id = ?').all(req.orgId);
+    data.treatments = await db.prepare('SELECT * FROM risk_treatments WHERE organization_id = ?').all(req.orgId);
   }
   if (includes.includes('audits')) {
-    data.audits = await db.prepare('SELECT * FROM audits').all();
-    data.auditChecklist = await db.prepare('SELECT * FROM audit_checklist').all();
-    data.ncrs = await db.prepare('SELECT * FROM non_conformities').all();
+    data.audits = await db.prepare('SELECT * FROM audits WHERE organization_id = ?').all(req.orgId);
+    data.auditChecklist = await db.prepare('SELECT * FROM audit_checklist WHERE organization_id = ?').all(req.orgId);
+    data.ncrs = await db.prepare('SELECT * FROM non_conformities WHERE organization_id = ?').all(req.orgId);
   }
   if (includes.includes('architecture')) {
-    data.architecture = await db.prepare('SELECT * FROM org_architecture').all();
-    data.kpis = await db.prepare('SELECT * FROM org_kpis').all();
+    data.architecture = await db.prepare('SELECT * FROM org_architecture WHERE organization_id = ?').all(req.orgId);
+    data.kpis = await db.prepare('SELECT * FROM org_kpis WHERE organization_id = ?').all(req.orgId);
   }
   if (includes.includes('requirements')) {
-    data.requirements = await db.prepare('SELECT * FROM standard_requirements').all();
-    data.soaEntries = await db.prepare('SELECT * FROM soa_entries').all();
+    data.requirements = await db.prepare('SELECT * FROM standard_requirements WHERE organization_id = ?').all(req.orgId);
+    data.soaEntries = await db.prepare('SELECT * FROM soa_entries WHERE organization_id = ?').all(req.orgId);
   }
   if (includes.includes('documents')) {
-    data.documents = await db.prepare('SELECT id, title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at FROM documents').all();
+    data.documents = await db.prepare('SELECT id, title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at FROM documents WHERE organization_id = ?').all(req.orgId);
   }
 
   // Cross-links
-  data.crossLinks = await db.prepare('SELECT * FROM cross_links').all();
+  data.crossLinks = await db.prepare('SELECT * FROM cross_links WHERE organization_id = ?').all(req.orgId);
 
   await logAuditAction(null, 'System', 'data_exported', 'system', null, null, `Format: ${format}, Includes: ${includes.join(',')}`);
 
@@ -2323,24 +2371,24 @@ app.post('/api/admin/backups', requireAdmin, async (req, res) => {
   const data = {
     exportedAt: new Date().toISOString(),
     version: '1.0',
-    tasks: await db.prepare('SELECT * FROM tasks').all(),
-    completions: await db.prepare('SELECT * FROM completions').all(),
-    actions: await db.prepare('SELECT * FROM actions').all(),
-    risks: await db.prepare('SELECT * FROM risks').all(),
-    treatments: await db.prepare('SELECT * FROM risk_treatments').all(),
-    audits: await db.prepare('SELECT * FROM audits').all(),
-    auditChecklist: await db.prepare('SELECT * FROM audit_checklist').all(),
-    ncrs: await db.prepare('SELECT * FROM non_conformities').all(),
-    architecture: await db.prepare('SELECT * FROM org_architecture').all(),
-    requirements: await db.prepare('SELECT * FROM standard_requirements').all(),
-    soaEntries: await db.prepare('SELECT * FROM soa_entries').all(),
-    documents: await db.prepare('SELECT * FROM documents').all(),
-    kpis: await db.prepare('SELECT * FROM org_kpis').all(),
-    kpiValues: await db.prepare('SELECT * FROM org_kpi_values').all(),
-    crossLinks: await db.prepare('SELECT * FROM cross_links').all(),
-    threatFeeds: await db.prepare('SELECT * FROM threat_feeds').all(),
-    users: await db.prepare('SELECT * FROM users').all(),
-    settings: await db.prepare('SELECT * FROM system_settings').all(),
+    tasks: await db.prepare('SELECT * FROM tasks WHERE organization_id = ?').all(req.orgId),
+    completions: await db.prepare('SELECT * FROM completions WHERE organization_id = ?').all(req.orgId),
+    actions: await db.prepare('SELECT * FROM actions WHERE organization_id = ?').all(req.orgId),
+    risks: await db.prepare('SELECT * FROM risks WHERE organization_id = ?').all(req.orgId),
+    treatments: await db.prepare('SELECT * FROM risk_treatments WHERE organization_id = ?').all(req.orgId),
+    audits: await db.prepare('SELECT * FROM audits WHERE organization_id = ?').all(req.orgId),
+    auditChecklist: await db.prepare('SELECT * FROM audit_checklist WHERE organization_id = ?').all(req.orgId),
+    ncrs: await db.prepare('SELECT * FROM non_conformities WHERE organization_id = ?').all(req.orgId),
+    architecture: await db.prepare('SELECT * FROM org_architecture WHERE organization_id = ?').all(req.orgId),
+    requirements: await db.prepare('SELECT * FROM standard_requirements WHERE organization_id = ?').all(req.orgId),
+    soaEntries: await db.prepare('SELECT * FROM soa_entries WHERE organization_id = ?').all(req.orgId),
+    documents: await db.prepare('SELECT * FROM documents WHERE organization_id = ?').all(req.orgId),
+    kpis: await db.prepare('SELECT * FROM org_kpis WHERE organization_id = ?').all(req.orgId),
+    kpiValues: await db.prepare('SELECT * FROM org_kpi_values WHERE organization_id = ?').all(req.orgId),
+    crossLinks: await db.prepare('SELECT * FROM cross_links WHERE organization_id = ?').all(req.orgId),
+    threatFeeds: await db.prepare('SELECT * FROM threat_feeds WHERE organization_id = ?').all(req.orgId),
+    users: await db.prepare('SELECT id, name, email, role, department, permissions, status FROM users WHERE organization_id = ?').all(req.orgId),
+    settings: await db.prepare('SELECT * FROM system_settings WHERE organization_id = ?').all(req.orgId),
   };
 
   const content = JSON.stringify(data, null, 2);
@@ -2366,7 +2414,7 @@ app.get('/api/admin/backups', requireAdmin, async (req, res) => {
 });
 
 app.get('/api/admin/backups/:id/download', requireAdmin, async (req, res) => {
-  const backup = await db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+  const backup = await db.prepare('SELECT * FROM backups WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
   try {
@@ -2378,11 +2426,11 @@ app.get('/api/admin/backups/:id/download', requireAdmin, async (req, res) => {
 });
 
 app.delete('/api/admin/backups/:id', requireAdmin, async (req, res) => {
-  const backup = await db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+  const backup = await db.prepare('SELECT * FROM backups WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
   await deleteFromSupabase(`backups/${backup.filename}`);
-  await db.prepare('DELETE FROM backups WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM backups WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   await logAuditAction(null, 'System', 'backup_deleted', 'backup', backup.id, backup.filename);
   res.json({ success: true });
 });
@@ -2393,16 +2441,16 @@ app.post('/api/admin/cleanup', requireAdmin, async (req, res) => {
   let result = { affected: 0 };
 
   if (type === 'history') {
-    // Delete completions older than 1 year
+    // Delete completions older than 1 year (scoped to current org)
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-    const r = await db.prepare("DELETE FROM completions WHERE completed_at < ?").run(oneYearAgo.toISOString());
+    const r = await db.prepare("DELETE FROM completions WHERE completed_at < ? AND organization_id = ?").run(oneYearAgo.toISOString(), req.orgId);
     result.affected = r.changes;
   } else if (type === 'logs') {
-    // Delete audit logs older than 90 days
+    // Delete audit logs older than 90 days (scoped to current org)
     const ninetyDaysAgo = new Date();
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const r = await db.prepare("DELETE FROM admin_audit_log WHERE created_at < ?").run(ninetyDaysAgo.toISOString());
+    const r = await db.prepare("DELETE FROM admin_audit_log WHERE created_at < ? AND organization_id = ?").run(ninetyDaysAgo.toISOString(), req.orgId);
     result.affected = r.changes;
   }
 
@@ -2420,12 +2468,12 @@ app.post('/api/admin/import', requireAdmin, async (req, res) => {
     if (data.tasks && Array.isArray(data.tasks)) {
       let count = 0;
       const insertTask = db.prepare(`
-        INSERT OR IGNORE INTO tasks (title, description, assignee, category, priority, recurrence, next_due, is_active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        INSERT OR IGNORE INTO tasks (organization_id, title, description, assignee, category, priority, recurrence, next_due, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const task of data.tasks) {
         try {
-          await insertTask.run(task.title, task.description || '', task.assignee || '', task.category || '',
+          await insertTask.run(req.orgId, task.title, task.description || '', task.assignee || '', task.category || '',
             task.priority || 'medium', task.recurrence || 'monthly', task.next_due || null, task.is_active !== false ? 1 : 0);
           count++;
         } catch (e) { /* Skip duplicates */ }
@@ -2437,12 +2485,12 @@ app.post('/api/admin/import', requireAdmin, async (req, res) => {
     if (data.risks && Array.isArray(data.risks)) {
       let count = 0;
       const insertRisk = db.prepare(`
-        INSERT OR IGNORE INTO risks (title, description, category, status, risk_owner, threat, vulnerability, asset, likelihood, impact, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        INSERT OR IGNORE INTO risks (organization_id, title, description, category, status, risk_owner, threat, vulnerability, asset, likelihood, impact, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const risk of data.risks) {
         try {
-          await insertRisk.run(risk.title, risk.description || '', risk.category || '', risk.status || 'identified',
+          await insertRisk.run(req.orgId, risk.title, risk.description || '', risk.category || '', risk.status || 'identified',
             risk.risk_owner || risk.owner || '', risk.threat || '', risk.vulnerability || '', risk.asset || risk.asset_system || '',
             risk.likelihood || 3, risk.impact || 3);
           count++;
@@ -2455,12 +2503,12 @@ app.post('/api/admin/import', requireAdmin, async (req, res) => {
     if (data.architecture && Array.isArray(data.architecture)) {
       let count = 0;
       const insertArch = db.prepare(`
-        INSERT OR IGNORE INTO org_architecture (arch_type, name, description, owner, parent_id, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        INSERT OR IGNORE INTO org_architecture (organization_id, arch_type, name, description, owner, parent_id, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const item of data.architecture) {
         try {
-          await insertArch.run(item.arch_type || 'role', item.name, item.description || '', item.owner || '',
+          await insertArch.run(req.orgId, item.arch_type || 'role', item.name, item.description || '', item.owner || '',
             item.parent_id || null, item.status || 'active');
           count++;
         } catch (e) { /* Skip duplicates */ }
@@ -2472,12 +2520,12 @@ app.post('/api/admin/import', requireAdmin, async (req, res) => {
     if (data.requirements && Array.isArray(data.requirements)) {
       let count = 0;
       const insertReq = db.prepare(`
-        INSERT OR IGNORE INTO standard_requirements (standard, clause, title, description, category, created_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        INSERT OR IGNORE INTO standard_requirements (organization_id, standard, clause, title, description, category, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const item of data.requirements) {
         try {
-          await insertReq.run(item.standard || '', item.clause || '', item.title, item.description || '',
+          await insertReq.run(req.orgId, item.standard || '', item.clause || '', item.title, item.description || '',
             item.category || '');
           count++;
         } catch (e) { /* Skip duplicates */ }
@@ -2489,12 +2537,12 @@ app.post('/api/admin/import', requireAdmin, async (req, res) => {
     if (data.documents && Array.isArray(data.documents)) {
       let count = 0;
       const insertDoc = db.prepare(`
-        INSERT OR IGNORE INTO documents (title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        INSERT OR IGNORE INTO documents (organization_id, title, description, doc_type, version, owner, status, classification, linked_module, review_date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const doc of data.documents) {
         try {
-          await insertDoc.run(doc.title, doc.description || '', doc.doc_type || 'policy', doc.version || '1.0',
+          await insertDoc.run(req.orgId, doc.title, doc.description || '', doc.doc_type || 'policy', doc.version || '1.0',
             doc.owner || '', doc.status || 'draft', doc.classification || 'internal',
             doc.linked_module || '', doc.review_date || null);
           count++;
@@ -2507,12 +2555,12 @@ app.post('/api/admin/import', requireAdmin, async (req, res) => {
     if (data.audits && Array.isArray(data.audits)) {
       let count = 0;
       const insertAudit = db.prepare(`
-        INSERT OR IGNORE INTO audits (title, standard, lead_auditor, scope, status, planned_date, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        INSERT OR IGNORE INTO audits (organization_id, title, standard, lead_auditor, scope, status, planned_date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `);
       for (const audit of data.audits) {
         try {
-          await insertAudit.run(audit.title, audit.standard || '', audit.lead_auditor || '',
+          await insertAudit.run(req.orgId, audit.title, audit.standard || '', audit.lead_auditor || '',
             audit.scope || '', audit.status || 'planned', audit.planned_date || audit.scheduled_date || null);
           count++;
         } catch (e) { /* Skip duplicates */ }
@@ -2529,7 +2577,7 @@ app.post('/api/admin/import', requireAdmin, async (req, res) => {
 
 // Admin: Test Webhook
 app.post('/api/admin/webhooks/:id/test', requireAdmin, async (req, res) => {
-  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
+  const webhook = await db.prepare('SELECT * FROM webhooks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
   const testPayload = {
