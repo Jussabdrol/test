@@ -791,10 +791,10 @@ app.delete('/api/actions/:id', requireOrgContext, async (req, res) => {
 // --- Audit API ---
 
 // List audits (returns parent audits with ALL events attached including first instance)
-app.get('/api/audits', async (req, res) => {
+app.get('/api/audits', requireOrgContext, async (req, res) => {
   const { status, include_children } = req.query;
-  let sql = 'SELECT * FROM audits WHERE parent_audit_id IS NULL';
-  const params = [];
+  let sql = 'SELECT * FROM audits WHERE organization_id = ? AND parent_audit_id IS NULL';
+  const params = [req.orgId];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   sql += ' ORDER BY planned_date DESC, created_at DESC';
   const parentAudits = await db.prepare(sql).all(...params);
@@ -842,8 +842,8 @@ app.get('/api/audits', async (req, res) => {
 });
 
 // Get single audit with checklist and NCs
-app.get('/api/audits/:id', async (req, res) => {
-  const audit = await db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
+app.get('/api/audits/:id', requireOrgContext, async (req, res) => {
+  const audit = await db.prepare('SELECT * FROM audits WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!audit) return res.status(404).json({ error: 'Audit not found' });
   audit.checklist = await db.prepare('SELECT * FROM audit_checklist WHERE audit_id = ? ORDER BY sort_order, id').all(audit.id);
   audit.non_conformities = await db.prepare('SELECT * FROM non_conformities WHERE audit_id = ? ORDER BY created_at DESC').all(audit.id);
@@ -864,7 +864,7 @@ function getNextRecurrenceDate(dateStr, recurrenceType) {
 }
 
 // Create audit
-app.post('/api/audits', async (req, res) => {
+app.post('/api/audits', requireOrgContext, async (req, res) => {
   const { title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, requirement_ids, recurrence, recurrence_end_date } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
 
@@ -876,8 +876,8 @@ app.post('/api/audits', async (req, res) => {
     const audit = await db.transaction(async () => {
       // Create the parent audit (instance 1)
       const result = await db.run(
-        `INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1
+        `INSERT INTO audits (organization_id, title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        req.orgId, title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', planned_date || null, recurrence || 'none', recurrence_end_date || null, null, 1
       );
       const parentAuditId = result.lastInsertRowid;
 
@@ -887,8 +887,8 @@ app.post('/api/audits', async (req, res) => {
         for (const reqId of requirement_ids) {
           const reqRow = await db.get('SELECT * FROM standard_requirements WHERE id = ?', reqId);
           if (reqRow) {
-            await db.run('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)',
-              parentAuditId, reqRow.clause, reqRow.title, reqRow.standard, order++);
+            await db.run('INSERT INTO audit_checklist (organization_id, audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+              req.orgId, parentAuditId, reqRow.clause, reqRow.title, reqRow.standard, order++);
           }
         }
       }
@@ -901,8 +901,8 @@ app.post('/api/audits', async (req, res) => {
 
         while (nextDate && new Date(nextDate) <= endDate) {
           const recurResult = await db.run(
-            `INSERT INTO audits (title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date, parentAuditId, instanceNum
+            `INSERT INTO audits (organization_id, title, standard, standards, scope, lead_auditor, audit_team, auditee, planned_date, recurrence, recurrence_end_date, parent_audit_id, instance_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            req.orgId, title, primaryStandard, JSON.stringify(standardsArray), scope || '', lead_auditor || '', audit_team || '', auditee || '', nextDate, recurrence, recurrence_end_date, parentAuditId, instanceNum
           );
 
           // Copy checklist items to recurring audit
@@ -911,8 +911,8 @@ app.post('/api/audits', async (req, res) => {
             for (const reqId of requirement_ids) {
               const reqRow = await db.get('SELECT * FROM standard_requirements WHERE id = ?', reqId);
               if (reqRow) {
-                await db.run('INSERT INTO audit_checklist (audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?)',
-                  recurResult.lastInsertRowid, reqRow.clause, reqRow.title, reqRow.standard, order++);
+                await db.run('INSERT INTO audit_checklist (organization_id, audit_id, clause, requirement, standard, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+                  req.orgId, recurResult.lastInsertRowid, reqRow.clause, reqRow.title, reqRow.standard, order++);
               }
             }
           }
@@ -933,8 +933,8 @@ app.post('/api/audits', async (req, res) => {
 });
 
 // Update audit
-app.put('/api/audits/:id', async (req, res) => {
-  const existing = await db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
+app.put('/api/audits/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM audits WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Audit not found' });
   const fields = ['title', 'standard', 'scope', 'lead_auditor', 'audit_team', 'auditee', 'status', 'planned_date', 'completed_date', 'summary', 'recurrence', 'recurrence_end_date'];
 
@@ -973,8 +973,8 @@ app.put('/api/audits/:id', async (req, res) => {
 });
 
 // Delete audit
-app.delete('/api/audits/:id', async (req, res) => {
-  const result = await db.prepare('DELETE FROM audits WHERE id = ?').run(req.params.id);
+app.delete('/api/audits/:id', requireOrgContext, async (req, res) => {
+  const result = await db.prepare('DELETE FROM audits WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'Audit not found' });
   res.json({ success: true });
 });
@@ -982,19 +982,19 @@ app.delete('/api/audits/:id', async (req, res) => {
 // --- Audit Checklist API ---
 
 // Add checklist item
-app.post('/api/audits/:id/checklist', async (req, res) => {
+app.post('/api/audits/:id/checklist', requireOrgContext, async (req, res) => {
   const { clause, requirement, sort_order } = req.body;
   if (!clause) return res.status(400).json({ error: 'Clause is required' });
-  const maxOrder = (await db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ?').get(req.params.id)).m;
-  const result = await db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)').run(
-    req.params.id, clause, requirement || '', sort_order ?? maxOrder + 1
+  const maxOrder = (await db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ? AND organization_id = ?').get(req.params.id, req.orgId)).m;
+  const result = await db.prepare('INSERT INTO audit_checklist (organization_id, audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?, ?)').run(
+    req.orgId, req.params.id, clause, requirement || '', sort_order ?? maxOrder + 1
   );
   res.status(201).json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(result.lastInsertRowid));
 });
 
 // Update checklist item (during execution)
-app.put('/api/checklist/:id', async (req, res) => {
-  const existing = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Checklist item not found' });
   const fields = ['clause', 'requirement', 'evidence', 'finding', 'rating', 'notes', 'sort_order', 'evidence_files'];
   const updates = [];
@@ -1016,8 +1016,8 @@ app.put('/api/checklist/:id', async (req, res) => {
       const cl = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
       const severity = req.body.rating === 'major_nc' ? 'major' : 'minor';
       const description = cl.finding || `Non-conformity found for clause ${cl.clause}`;
-      await db.prepare(`INSERT INTO non_conformities (audit_id, checklist_item_id, clause, description, severity) VALUES (?, ?, ?, ?, ?)`).run(
-        existing.audit_id, req.params.id, cl.clause, description, severity
+      await db.prepare(`INSERT INTO non_conformities (organization_id, audit_id, checklist_item_id, clause, description, severity) VALUES (?, ?, ?, ?, ?, ?)`).run(
+        req.orgId, existing.audit_id, req.params.id, cl.clause, description, severity
       );
     } else if (isNc && existingNcr) {
       // Update severity if it changed (e.g. minor_nc -> major_nc)
@@ -1035,15 +1035,15 @@ app.put('/api/checklist/:id', async (req, res) => {
 });
 
 // Delete checklist item
-app.delete('/api/checklist/:id', async (req, res) => {
-  const result = await db.prepare('DELETE FROM audit_checklist WHERE id = ?').run(req.params.id);
+app.delete('/api/checklist/:id', requireOrgContext, async (req, res) => {
+  const result = await db.prepare('DELETE FROM audit_checklist WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'Item not found' });
   res.json({ success: true });
 });
 
 // Upload evidence file to checklist item
-app.post('/api/checklist/:id/evidence', upload.single('file'), async (req, res) => {
-  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.post('/api/checklist/:id/evidence', requireOrgContext, upload.single('file'), async (req, res) => {
+  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
@@ -1075,8 +1075,8 @@ app.post('/api/checklist/:id/evidence', upload.single('file'), async (req, res) 
 });
 
 // Download evidence file from checklist item
-app.get('/api/checklist/:id/evidence/:fileId/download', async (req, res) => {
-  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.get('/api/checklist/:id/evidence/:fileId/download', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
 
   let evidenceFiles = [];
@@ -1094,8 +1094,8 @@ app.get('/api/checklist/:id/evidence/:fileId/download', async (req, res) => {
 });
 
 // Delete evidence file from checklist item
-app.delete('/api/checklist/:id/evidence/:fileId', async (req, res) => {
-  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.delete('/api/checklist/:id/evidence/:fileId', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
 
   let evidenceFiles = [];
@@ -1117,8 +1117,8 @@ app.delete('/api/checklist/:id/evidence/:fileId', async (req, res) => {
 });
 
 // Add link evidence to checklist item
-app.post('/api/checklist/:id/evidence-link', async (req, res) => {
-  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id);
+app.post('/api/checklist/:id/evidence-link', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
   const { link_type, link_id, link_name } = req.body;
   if (!link_type || !link_id) return res.status(400).json({ error: 'Link type and id required' });
@@ -1145,15 +1145,15 @@ app.post('/api/checklist/:id/evidence-link', async (req, res) => {
 // --- Non-Conformity API ---
 
 // List NCs (optionally filter by audit)
-app.get('/api/ncrs', async (req, res) => {
+app.get('/api/ncrs', requireOrgContext, async (req, res) => {
   const { audit_id, status } = req.query;
   let sql = `SELECT n.*, a.title as audit_title, a.standard as audit_standard,
     COALESCE(cl.standard, a.standard) as ncr_standard
     FROM non_conformities n
     JOIN audits a ON n.audit_id = a.id
     LEFT JOIN audit_checklist cl ON n.checklist_item_id = cl.id
-    WHERE 1=1`;
-  const params = [];
+    WHERE n.organization_id = ?`;
+  const params = [req.orgId];
   if (audit_id) { sql += ' AND n.audit_id = ?'; params.push(audit_id); }
   if (status) { sql += ' AND n.status = ?'; params.push(status); }
   sql += ' ORDER BY n.created_at DESC';
@@ -1161,11 +1161,11 @@ app.get('/api/ncrs', async (req, res) => {
 });
 
 // Create NC
-app.post('/api/ncrs', async (req, res) => {
+app.post('/api/ncrs', requireOrgContext, async (req, res) => {
   const { audit_id, checklist_item_id, clause, description, severity, root_cause, correction, corrective_action, responsible, due_date } = req.body;
   if (!audit_id || !description) return res.status(400).json({ error: 'audit_id and description are required' });
-  const result = await db.prepare(`INSERT INTO non_conformities (audit_id, checklist_item_id, clause, description, severity, root_cause, correction, corrective_action, responsible, due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    audit_id, checklist_item_id || null, clause || '', description, severity || 'minor', root_cause || '', correction || '', corrective_action || '', responsible || '', due_date || null
+  const result = await db.prepare(`INSERT INTO non_conformities (organization_id, audit_id, checklist_item_id, clause, description, severity, root_cause, correction, corrective_action, responsible, due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    req.orgId, audit_id, checklist_item_id || null, clause || '', description, severity || 'minor', root_cause || '', correction || '', corrective_action || '', responsible || '', due_date || null
   );
   // If linked to checklist item, update its rating
   if (checklist_item_id) {
@@ -1176,8 +1176,8 @@ app.post('/api/ncrs', async (req, res) => {
 });
 
 // Update NC
-app.put('/api/ncrs/:id', async (req, res) => {
-  const existing = await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(req.params.id);
+app.put('/api/ncrs/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM non_conformities WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'NCR not found' });
   const fields = ['clause', 'description', 'severity', 'root_cause', 'correction', 'corrective_action', 'responsible', 'due_date', 'status', 'verification_notes'];
   const updates = [];
@@ -1196,8 +1196,8 @@ app.put('/api/ncrs/:id', async (req, res) => {
 });
 
 // Delete NC
-app.delete('/api/ncrs/:id', async (req, res) => {
-  const result = await db.prepare('DELETE FROM non_conformities WHERE id = ?').run(req.params.id);
+app.delete('/api/ncrs/:id', requireOrgContext, async (req, res) => {
+  const result = await db.prepare('DELETE FROM non_conformities WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'NCR not found' });
   res.json({ success: true });
 });
