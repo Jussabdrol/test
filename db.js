@@ -1,8 +1,7 @@
 /**
- * Database Layer – Supabase PostgreSQL
+ * Database Layer – Supabase PostgreSQL (Multi-tenant)
  *
  * Connects directly to the Supabase PostgreSQL database using the 'pg' library.
- * All SQLite / better-sqlite3 code has been removed.
  *
  * Required env vars:
  *   SUPABASE_DB_URL   – full postgres connection string (pooler or direct)
@@ -87,39 +86,67 @@ async function initSchema() {
 async function seedData() {
   const bcrypt = require('bcryptjs');
 
-  // Admin user
-  const userResult = await pool.query('SELECT COUNT(*) as c FROM users WHERE password IS NOT NULL');
+  // --- 1. Ensure a default organization exists ---
+  const orgResult = await pool.query('SELECT COUNT(*) as c FROM organizations');
+  let defaultOrgId;
+  if (parseInt(orgResult.rows[0].c) === 0) {
+    const orgInsert = await pool.query(
+      "INSERT INTO organizations (name, slug, is_active) VALUES ($1, $2, 1) RETURNING id",
+      ['Default Organization', 'default']
+    );
+    defaultOrgId = orgInsert.rows[0].id;
+    console.log('Default organization created (id: ' + defaultOrgId + ')');
+  } else {
+    const orgRow = await pool.query('SELECT id FROM organizations ORDER BY id LIMIT 1');
+    defaultOrgId = orgRow.rows[0].id;
+  }
+
+  // --- 2. Superadmin user (no organization – platform-level) ---
+  const superadminResult = await pool.query("SELECT COUNT(*) as c FROM users WHERE role = 'superadmin'");
+  if (parseInt(superadminResult.rows[0].c) === 0) {
+    const hashedPassword = bcrypt.hashSync('SuperAdmin123!', 10);
+    try {
+      await pool.query(
+        "INSERT INTO users (name, email, password, role, status, organization_id) VALUES ($1, $2, $3, 'superadmin', 'active', NULL)",
+        ['MSP Administrator', 'superadmin@lettheframework.local', hashedPassword]
+      );
+      console.log('Superadmin user created: superadmin@lettheframework.local / SuperAdmin123!');
+    } catch (e) { /* already exists */ }
+  }
+
+  // --- 3. Default org admin user ---
+  const userResult = await pool.query("SELECT COUNT(*) as c FROM users WHERE role != 'superadmin' AND password IS NOT NULL");
   if (parseInt(userResult.rows[0].c) === 0) {
     const hashedPassword = bcrypt.hashSync('Hey!', 10);
     try {
       await pool.query(
-        "INSERT INTO users (name, email, password, role, status) VALUES ($1, $2, $3, 'admin', 'active')",
-        ['Henk', 'admin@lettheframework.local', hashedPassword]
+        "INSERT INTO users (name, email, password, role, status, organization_id) VALUES ($1, $2, $3, 'org_admin', 'active', $4)",
+        ['Henk', 'admin@lettheframework.local', hashedPassword, defaultOrgId]
       );
-      console.log('Default admin user created: admin@lettheframework.local');
+      console.log('Default org admin user created: admin@lettheframework.local');
     } catch (e) { /* already exists */ }
   }
 
-  // Threat feeds
-  const feedResult = await pool.query('SELECT COUNT(*) as c FROM threat_feeds');
+  // --- 4. Default threat feeds for the default org ---
+  const feedResult = await pool.query('SELECT COUNT(*) as c FROM threat_feeds WHERE organization_id = $1', [defaultOrgId]);
   if (parseInt(feedResult.rows[0].c) === 0) {
     for (const f of DEFAULT_THREAT_FEEDS) {
-      await pool.query('INSERT INTO threat_feeds (name, url, tier) VALUES ($1, $2, $3)', [f.name, f.url, f.tier]);
+      await pool.query('INSERT INTO threat_feeds (organization_id, name, url, tier) VALUES ($1, $2, $3, $4)', [defaultOrgId, f.name, f.url, f.tier]);
     }
     console.log('Default threat feeds seeded');
   }
 
-  // Mission row
-  const missionResult = await pool.query('SELECT COUNT(*) as c FROM org_mission');
+  // --- 5. Mission row for default org ---
+  const missionResult = await pool.query('SELECT COUNT(*) as c FROM org_mission WHERE organization_id = $1', [defaultOrgId]);
   if (parseInt(missionResult.rows[0].c) === 0) {
-    await pool.query("INSERT INTO org_mission (content) VALUES ('')");
+    await pool.query("INSERT INTO org_mission (organization_id, content) VALUES ($1, '')", [defaultOrgId]);
   }
 
-  // SAML config singleton
+  // --- 6. SAML config singleton ---
   const samlResult = await pool.query('SELECT COUNT(*) as c FROM saml_config');
   if (parseInt(samlResult.rows[0].c) === 0) {
     try {
-      await pool.query('INSERT INTO saml_config (id, enabled) VALUES (1, 0)');
+      await pool.query('INSERT INTO saml_config (id, enabled, organization_id) VALUES (1, 0, $1)', [defaultOrgId]);
     } catch (e) { /* already exists */ }
   }
 }
@@ -161,10 +188,6 @@ function convertSQL(sql) {
       converted = converted.replace(/(\)\s*)$/i, ') ON CONFLICT DO NOTHING');
     }
   }
-
-  // ON CONFLICT … DO UPDATE (SQLite upsert) – keep as-is, valid PG syntax
-  // substr() → substring() (PG alias also accepts substr, but be safe)
-  // Actually PG supports substr natively so no change needed.
 
   return converted;
 }
@@ -226,8 +249,6 @@ async function transaction(fn) {
 
 // ---------------------------------------------------------------------------
 // Compatibility shim – db.prepare(sql).get / .all / .run
-// Returns an object whose methods are async (returns Promises).
-// Every call-site in server.js already uses `await`, so this works.
 // ---------------------------------------------------------------------------
 
 function prepare(sql) {
@@ -243,7 +264,7 @@ function prepare(sql) {
 // ---------------------------------------------------------------------------
 
 function isPostgreSQL() {
-  return true; // Always PostgreSQL now
+  return true;
 }
 
 function getConnection() {

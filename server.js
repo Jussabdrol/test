@@ -9,11 +9,17 @@ const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Supabase Storage client
+// Supabase client – used for Storage AND Auth
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
+
+// Supabase service-role client – for admin auth operations (user creation, metadata updates)
+const supabaseAdmin = process.env.SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null;
+
 const UPLOADS_BUCKET = 'uploads';
 
 // File upload setup - use memory storage; files are sent to Supabase Storage
@@ -58,6 +64,10 @@ app.set('trust proxy', 1);
 // ---------------------------------------------------------------------------
 // Stateless JWT-like token helpers (HMAC-SHA256, no external dependency)
 // Tokens are stored in an httpOnly cookie so the frontend doesn't change.
+// Token now carries: userId, userRole, organizationId, activeOrgId
+//   - organizationId = the user's home org (null for superadmins)
+//   - activeOrgId    = the org context they're currently viewing
+//                      (set when superadmin clicks "Open" on an org)
 // ---------------------------------------------------------------------------
 const TOKEN_SECRET = process.env.SESSION_SECRET || 'lettheframework-secret-key-change-in-production';
 const TOKEN_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours in ms
@@ -88,13 +98,18 @@ app.use(cookieParser());
 app.use((req, res, next) => {
   const token = req.cookies?.session_token;
   const payload = verifyToken(token);
-  // Attach a session-like object for backward compatibility with existing route code
   req.session = {
     userId: payload?.userId || null,
     userRole: payload?.userRole || null,
-    // save() issues a new cookie (called explicitly after login)
+    organizationId: payload?.organizationId || null,  // user's home org
+    activeOrgId: payload?.activeOrgId || null,         // superadmin's current org context
     save(cb) {
-      const newToken = createToken({ userId: req.session.userId, userRole: req.session.userRole });
+      const newToken = createToken({
+        userId: req.session.userId,
+        userRole: req.session.userRole,
+        organizationId: req.session.organizationId,
+        activeOrgId: req.session.activeOrgId,
+      });
       res.cookie('session_token', newToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production' || req.protocol === 'https',
@@ -104,16 +119,49 @@ app.use((req, res, next) => {
       });
       if (cb) cb(null);
     },
-    // destroy() clears the cookie (called on logout)
     destroy(cb) {
       res.clearCookie('session_token', { path: '/' });
       req.session.userId = null;
       req.session.userRole = null;
+      req.session.organizationId = null;
+      req.session.activeOrgId = null;
       if (cb) cb(null);
     },
   };
   next();
 });
+
+// ---------------------------------------------------------------------------
+// Multi-tenant helpers
+// ---------------------------------------------------------------------------
+
+// Returns the effective organization_id for the current request.
+// - Superadmins: uses activeOrgId (set when they enter an org)
+// - Org users/admins: uses their own organizationId
+// Returns null if no org context is set (superadmin at MSP dashboard level).
+function getOrgId(req) {
+  if (req.session.userRole === 'superadmin') {
+    return req.session.activeOrgId || null;
+  }
+  return req.session.organizationId || null;
+}
+
+// Middleware: require that an org context is active (rejects if no org selected)
+function requireOrgContext(req, res, next) {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    return res.status(400).json({ error: 'No organization context. Select an organization first.' });
+  }
+  req.orgId = orgId;
+  next();
+}
+
+// Middleware: require superadmin role
+function requireSuperadmin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: 'Authentication required' });
+  if (req.session.userRole !== 'superadmin') return res.status(403).json({ error: 'Superadmin access required' });
+  next();
+}
 
 // Health check endpoint for Cloud Run (must be before auth middleware)
 app.get('/health', async (req, res) => {
@@ -188,15 +236,25 @@ function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth)
 // Check if user is authenticated
 app.get('/api/auth/check', async (req, res) => {
   if (req.session.userId) {
-    const user = await db.prepare('SELECT id, name, email, role, permissions FROM users WHERE id = ?').get(req.session.userId);
+    const user = await db.prepare('SELECT id, name, email, role, permissions, organization_id FROM users WHERE id = ?').get(req.session.userId);
     if (user) {
-      return res.json({ authenticated: true, user });
+      const orgId = getOrgId(req);
+      let activeOrg = null;
+      if (orgId) {
+        activeOrg = await db.prepare('SELECT id, name, slug FROM organizations WHERE id = ?').get(orgId);
+      }
+      return res.json({
+        authenticated: true,
+        user,
+        activeOrg,
+        isSuperadmin: user.role === 'superadmin',
+      });
     }
   }
   res.json({ authenticated: false });
 });
 
-// Login
+// Login – authenticates via Supabase Auth first (if available), falls back to local bcrypt
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -204,18 +262,38 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const user = await db.prepare('SELECT * FROM users WHERE email = ? AND status = ?').get(email, 'active');
+    // --- Try Supabase Auth first ---
+    let supabaseUser = null;
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (!error && data?.user) {
+        supabaseUser = data.user;
+      }
+    } catch (_) { /* Supabase Auth unavailable – fall through to local auth */ }
+
+    // --- Look up the user in our database ---
+    const user = await db.prepare('SELECT * FROM users WHERE email = ? AND status = ?').get(email.toLowerCase().trim(), 'active');
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    if (!user.password) {
-      return res.status(401).json({ error: 'Account not set up. Please contact administrator.' });
+    // --- If Supabase Auth didn't authenticate, try local bcrypt ---
+    if (!supabaseUser) {
+      if (!user.password) {
+        return res.status(401).json({ error: 'Account not set up. Please contact administrator.' });
+      }
+      const validPassword = await bcrypt.compare(password, user.password);
+      if (!validPassword) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
     }
 
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+    // --- Check org is active (for non-superadmins) ---
+    if (user.role !== 'superadmin' && user.organization_id) {
+      const org = await db.prepare('SELECT is_active FROM organizations WHERE id = ?').get(user.organization_id);
+      if (!org || !org.is_active) {
+        return res.status(403).json({ error: 'Your organization has been deactivated. Contact your MSP administrator.' });
+      }
     }
 
     // Update last active
@@ -223,8 +301,10 @@ app.post('/api/auth/login', async (req, res) => {
 
     req.session.userId = user.id;
     req.session.userRole = user.role;
+    req.session.organizationId = user.organization_id || null;
+    // For non-superadmin users, activeOrgId is always their own org
+    req.session.activeOrgId = user.role === 'superadmin' ? null : (user.organization_id || null);
 
-    // Explicitly save session to ensure it's persisted before responding
     req.session.save((saveErr) => {
       if (saveErr) {
         console.error('Session save error:', saveErr);
@@ -232,7 +312,11 @@ app.post('/api/auth/login', async (req, res) => {
       }
       res.json({
         success: true,
-        user: { id: user.id, name: user.name, email: user.email, role: user.role, permissions: user.permissions }
+        user: {
+          id: user.id, name: user.name, email: user.email, role: user.role,
+          permissions: user.permissions, organization_id: user.organization_id,
+        },
+        isSuperadmin: user.role === 'superadmin',
       });
     });
   } catch (err) {
@@ -251,13 +335,110 @@ app.post('/api/auth/logout', async (req, res) => {
   });
 });
 
+// ===========================================================================
+// MSP PORTAL API (superadmin-only)
+// ===========================================================================
+
+// List all organizations with user counts
+app.get('/api/msp/organizations', requireSuperadmin, async (req, res) => {
+  const orgs = await db.prepare(`
+    SELECT o.*, COUNT(u.id) as user_count
+    FROM organizations o
+    LEFT JOIN users u ON u.organization_id = o.id AND u.role != 'superadmin'
+    GROUP BY o.id
+    ORDER BY o.created_at DESC
+  `).all();
+  res.json(orgs);
+});
+
+// Get single organization
+app.get('/api/msp/organizations/:id', requireSuperadmin, async (req, res) => {
+  const org = await db.prepare('SELECT * FROM organizations WHERE id = ?').get(req.params.id);
+  if (!org) return res.status(404).json({ error: 'Organization not found' });
+  const users = await db.prepare("SELECT id, name, email, role, status FROM users WHERE organization_id = ? AND role != 'superadmin'").all(org.id);
+  org.users = users;
+  res.json(org);
+});
+
+// Create organization
+app.post('/api/msp/organizations', requireSuperadmin, async (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: 'Organization name is required' });
+
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const existing = await db.prepare('SELECT id FROM organizations WHERE slug = ?').get(slug);
+  if (existing) return res.status(409).json({ error: 'An organization with this name already exists' });
+
+  const result = await db.prepare('INSERT INTO organizations (name, slug, is_active) VALUES (?, ?, 1)').run(name, slug);
+  const orgId = result.lastInsertRowid;
+
+  // Seed essential data for the new organization
+  await db.prepare("INSERT INTO org_mission (organization_id, content) VALUES (?, '')").run(orgId);
+  for (const f of require('./schema').DEFAULT_THREAT_FEEDS) {
+    await db.prepare('INSERT INTO threat_feeds (organization_id, name, url, tier) VALUES (?, ?, ?, ?)').run(orgId, f.name, f.url, f.tier);
+  }
+
+  res.status(201).json(await db.prepare('SELECT * FROM organizations WHERE id = ?').get(orgId));
+});
+
+// Activate / deactivate organization
+app.put('/api/msp/organizations/:id', requireSuperadmin, async (req, res) => {
+  const org = await db.prepare('SELECT * FROM organizations WHERE id = ?').get(req.params.id);
+  if (!org) return res.status(404).json({ error: 'Organization not found' });
+
+  const { name, is_active } = req.body;
+  const updates = [];
+  const params = [];
+  if (name !== undefined) { updates.push('name = ?'); params.push(name); }
+  if (is_active !== undefined) { updates.push('is_active = ?'); params.push(is_active ? 1 : 0); }
+  if (updates.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+  params.push(req.params.id);
+  await db.prepare(`UPDATE organizations SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM organizations WHERE id = ?').get(req.params.id));
+});
+
+// Superadmin: enter an organization's environment
+app.post('/api/msp/switch-org', requireSuperadmin, async (req, res) => {
+  const { organization_id } = req.body;
+  if (!organization_id) {
+    // Clear org context – return to MSP dashboard
+    req.session.activeOrgId = null;
+    req.session.save((err) => {
+      if (err) return res.status(500).json({ error: 'Failed to update session' });
+      res.json({ success: true, activeOrg: null });
+    });
+    return;
+  }
+  const org = await db.prepare('SELECT * FROM organizations WHERE id = ?').get(organization_id);
+  if (!org) return res.status(404).json({ error: 'Organization not found' });
+
+  req.session.activeOrgId = org.id;
+  req.session.save((err) => {
+    if (err) return res.status(500).json({ error: 'Failed to update session' });
+    res.json({ success: true, activeOrg: { id: org.id, name: org.name, slug: org.slug } });
+  });
+});
+
+// MSP Dashboard stats
+app.get('/api/msp/dashboard', requireSuperadmin, async (req, res) => {
+  const totalOrgs = (await db.prepare('SELECT COUNT(*) as c FROM organizations').get()).c;
+  const activeOrgs = (await db.prepare('SELECT COUNT(*) as c FROM organizations WHERE is_active = 1').get()).c;
+  const totalUsers = (await db.prepare("SELECT COUNT(*) as c FROM users WHERE role != 'superadmin'").get()).c;
+  res.json({ totalOrgs, activeOrgs, totalUsers });
+});
+
+// ===========================================================================
+// ORG-SCOPED API ROUTES
+// All routes below require an active org context via requireOrgContext
+// ===========================================================================
+
 // --- API Routes ---
 
 // Get all tasks with optional filters
-app.get('/api/tasks', async (req, res) => {
+app.get('/api/tasks', requireOrgContext, async (req, res) => {
   const { active, assignee, category, priority, overdue } = req.query;
-  let sql = 'SELECT * FROM tasks WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM tasks WHERE organization_id = ?';
+  const params = [req.orgId];
 
   if (active !== undefined) {
     sql += ' AND is_active = ?';
@@ -285,21 +466,22 @@ app.get('/api/tasks', async (req, res) => {
 });
 
 // Get dashboard stats
-app.get('/api/dashboard', async (req, res) => {
+app.get('/api/dashboard', requireOrgContext, async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
+  const oid = req.orgId;
   const stats = {
-    totalActive: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1').get()).c,
-    dueToday: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due = ?').get(today)).c,
-    overdue: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1 AND next_due < ?').get(today)).c,
-    completedThisWeek: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-7 days')`).get()).c,
-    completedThisMonth: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE completed_at >= date('now', '-30 days')`).get()).c,
-    byCategory: await db.prepare('SELECT category, COUNT(*) as count FROM tasks WHERE is_active = 1 GROUP BY category').all(),
-    byPriority: await db.prepare('SELECT priority, COUNT(*) as count FROM tasks WHERE is_active = 1 GROUP BY priority').all(),
-    byAssignee: await db.prepare("SELECT assignee, COUNT(*) as count FROM tasks WHERE is_active = 1 AND assignee != '' GROUP BY assignee").all(),
-    upcomingTasks: await db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due >= ? ORDER BY next_due ASC LIMIT 10').all(today),
-    overdueTasks: await db.prepare('SELECT * FROM tasks WHERE is_active = 1 AND next_due < ? ORDER BY next_due ASC').all(today),
-    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress')").get()).c,
-    overdueActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open','in_progress') AND due_date < ? AND due_date IS NOT NULL").get(today)).c,
+    totalActive: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ? AND is_active = 1').get(oid)).c,
+    dueToday: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ? AND is_active = 1 AND next_due = ?').get(oid, today)).c,
+    overdue: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ? AND is_active = 1 AND next_due < ?').get(oid, today)).c,
+    completedThisWeek: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE organization_id = ? AND completed_at >= date('now', '-7 days')`).get(oid)).c,
+    completedThisMonth: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE organization_id = ? AND completed_at >= date('now', '-30 days')`).get(oid)).c,
+    byCategory: await db.prepare('SELECT category, COUNT(*) as count FROM tasks WHERE organization_id = ? AND is_active = 1 GROUP BY category').all(oid),
+    byPriority: await db.prepare('SELECT priority, COUNT(*) as count FROM tasks WHERE organization_id = ? AND is_active = 1 GROUP BY priority').all(oid),
+    byAssignee: await db.prepare("SELECT assignee, COUNT(*) as count FROM tasks WHERE organization_id = ? AND is_active = 1 AND assignee != '' GROUP BY assignee").all(oid),
+    upcomingTasks: await db.prepare('SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1 AND next_due >= ? ORDER BY next_due ASC LIMIT 10').all(oid, today),
+    overdueTasks: await db.prepare('SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1 AND next_due < ? ORDER BY next_due ASC').all(oid, today),
+    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE organization_id = ? AND status IN ('open','in_progress')").get(oid)).c,
+    overdueActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE organization_id = ? AND status IN ('open','in_progress') AND due_date < ? AND due_date IS NOT NULL").get(oid, today)).c,
   };
 
   // KPI: Actions per check
