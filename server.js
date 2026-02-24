@@ -1205,10 +1205,10 @@ app.delete('/api/ncrs/:id', requireOrgContext, async (req, res) => {
 // --- Standard Requirements API ---
 
 // List requirements (optionally filter by standard), enriched with audit history
-app.get('/api/requirements', async (req, res) => {
+app.get('/api/requirements', requireOrgContext, async (req, res) => {
   const { standard } = req.query;
-  let sql = 'SELECT * FROM standard_requirements WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM standard_requirements WHERE organization_id = ?';
+  const params = [req.orgId];
   if (standard) { sql += ' AND standard = ?'; params.push(standard); }
   sql += ' ORDER BY standard, sort_order, clause';
   const reqs = await db.prepare(sql).all(...params);
@@ -1223,8 +1223,9 @@ app.get('/api/requirements', async (req, res) => {
       FROM audit_checklist cl
       JOIN audits a ON cl.audit_id = a.id
       WHERE cl.clause = ? AND (cl.standard = ? OR (cl.standard = '' AND a.standard = ?))
+        AND a.organization_id = ?
       ORDER BY COALESCE(a.completed_date, a.planned_date) DESC
-    `).all(r.clause, r.standard, r.standard);
+    `).all(r.clause, r.standard, r.standard, req.orgId);
 
     // Last audited info
     const completedAudits = auditHistory.filter(h => h.audit_status === 'completed');
@@ -1240,7 +1241,8 @@ app.get('/api/requirements', async (req, res) => {
       JOIN audits a ON n.audit_id = a.id
       LEFT JOIN audit_checklist cl ON n.checklist_item_id = cl.id
       WHERE n.clause = ? AND (COALESCE(cl.standard, a.standard) = ? OR a.standard = ?)
-    `).all(r.clause, r.standard, r.standard);
+        AND a.organization_id = ?
+    `).all(r.clause, r.standard, r.standard, req.orgId);
 
     r.nc_total = ncs.length;
     r.nc_open = ncs.filter(n => n.status === 'open' || n.status === 'in_progress').length;
@@ -1251,33 +1253,33 @@ app.get('/api/requirements', async (req, res) => {
 });
 
 // Get unique standards list
-app.get('/api/requirements/standards', async (req, res) => {
-  const standards = (await db.prepare('SELECT DISTINCT standard FROM standard_requirements ORDER BY standard').all()).map(r => r.standard);
+app.get('/api/requirements/standards', requireOrgContext, async (req, res) => {
+  const standards = (await db.prepare('SELECT DISTINCT standard FROM standard_requirements WHERE organization_id = ? ORDER BY standard').all(req.orgId)).map(r => r.standard);
   res.json(standards);
 });
 
 // Create requirement
-app.post('/api/requirements', async (req, res) => {
+app.post('/api/requirements', requireOrgContext, async (req, res) => {
   const { standard, clause, title, description, category, sort_order, owner } = req.body;
   if (!clause) return res.status(400).json({ error: 'Clause is required' });
-  const result = await db.prepare(`INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order, owner) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-    standard || 'ISO 9001', clause, title || '', description || '', category || '', sort_order ?? 0, owner || ''
+  const result = await db.prepare(`INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order, owner, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    standard || 'ISO 9001', clause, title || '', description || '', category || '', sort_order ?? 0, owner || '', req.orgId
   );
   res.status(201).json(await db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(result.lastInsertRowid));
 });
 
 // Bulk import requirements
-app.post('/api/requirements/bulk', async (req, res) => {
+app.post('/api/requirements/bulk', requireOrgContext, async (req, res) => {
   const { standard, items } = req.body;
   if (!items || !Array.isArray(items)) return res.status(400).json({ error: 'items array is required' });
   const std = standard || 'ISO 9001';
-  const existing = (await db.all('SELECT clause FROM standard_requirements WHERE standard = ?', std)).map(r => r.clause);
+  const existing = (await db.all('SELECT clause FROM standard_requirements WHERE standard = ? AND organization_id = ?', std, req.orgId)).map(r => r.clause);
   let inserted = 0;
   await db.transaction(async () => {
     for (const item of items) {
       if (existing.includes(item.clause)) continue;
-      await db.run('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
-        std, item.clause, item.title || '', item.description || '', item.category || '', item.sort_order ?? 0);
+      await db.run('INSERT INTO standard_requirements (standard, clause, title, description, category, sort_order, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        std, item.clause, item.title || '', item.description || '', item.category || '', item.sort_order ?? 0, req.orgId);
       inserted++;
     }
   });
@@ -1285,8 +1287,8 @@ app.post('/api/requirements/bulk', async (req, res) => {
 });
 
 // Update requirement
-app.put('/api/requirements/:id', async (req, res) => {
-  const existing = await db.prepare('SELECT * FROM standard_requirements WHERE id = ?').get(req.params.id);
+app.put('/api/requirements/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM standard_requirements WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Requirement not found' });
   const fields = ['standard', 'clause', 'title', 'description', 'category', 'sort_order', 'owner'];
   const updates = [];
@@ -1302,17 +1304,17 @@ app.put('/api/requirements/:id', async (req, res) => {
 });
 
 // Delete all requirements for a standard (retire)
-app.delete('/api/requirements/standard/:standard', async (req, res) => {
+app.delete('/api/requirements/standard/:standard', requireOrgContext, async (req, res) => {
   const standard = decodeURIComponent(req.params.standard);
   // Clean up SoA entries for requirements of this standard (cascade should handle, but explicit for safety)
-  await db.prepare(`DELETE FROM soa_entries WHERE requirement_id IN (SELECT id FROM standard_requirements WHERE standard = ?)`).run(standard);
-  const result = await db.prepare('DELETE FROM standard_requirements WHERE standard = ?').run(standard);
+  await db.prepare(`DELETE FROM soa_entries WHERE requirement_id IN (SELECT id FROM standard_requirements WHERE standard = ? AND organization_id = ?)`).run(standard, req.orgId);
+  const result = await db.prepare('DELETE FROM standard_requirements WHERE standard = ? AND organization_id = ?').run(standard, req.orgId);
   res.json({ success: true, deleted: result.changes });
 });
 
 // Delete requirement
-app.delete('/api/requirements/:id', async (req, res) => {
-  const result = await db.prepare('DELETE FROM standard_requirements WHERE id = ?').run(req.params.id);
+app.delete('/api/requirements/:id', requireOrgContext, async (req, res) => {
+  const result = await db.prepare('DELETE FROM standard_requirements WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'Requirement not found' });
   res.json({ success: true });
 });
@@ -1450,10 +1452,10 @@ function stripTags(str) {
 // --- Risk Management API ---
 
 // List risks
-app.get('/api/risks', async (req, res) => {
+app.get('/api/risks', requireOrgContext, async (req, res) => {
   const { status, category } = req.query;
-  let sql = 'SELECT * FROM risks WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM risks WHERE organization_id = ?';
+  const params = [req.orgId];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (category) { sql += ' AND category = ?'; params.push(category); }
   sql += ' ORDER BY inherent_score DESC, created_at DESC';
@@ -1467,26 +1469,26 @@ app.get('/api/risks', async (req, res) => {
 });
 
 // Get single risk with treatments
-app.get('/api/risks/:id', async (req, res) => {
-  const risk = await db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id);
+app.get('/api/risks/:id', requireOrgContext, async (req, res) => {
+  const risk = await db.prepare('SELECT * FROM risks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!risk) return res.status(404).json({ error: 'Risk not found' });
   risk.treatments = await db.prepare(`SELECT rt.*, sr.clause, sr.title as requirement_title FROM risk_treatments rt LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE rt.risk_id = ? ORDER BY rt.created_at`).all(risk.id);
   res.json(risk);
 });
 
 // Create risk
-app.post('/api/risks', async (req, res) => {
+app.post('/api/risks', requireOrgContext, async (req, res) => {
   const { title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
-  const result = await db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', likelihood || 3, impact || 3, risk_owner || '', status || 'identified'
+  const result = await db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', likelihood || 3, impact || 3, risk_owner || '', status || 'identified', req.orgId
   );
   res.status(201).json(await db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid));
 });
 
 // Update risk
-app.put('/api/risks/:id', async (req, res) => {
-  const existing = await db.prepare('SELECT * FROM risks WHERE id = ?').get(req.params.id);
+app.put('/api/risks/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM risks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Risk not found' });
   const fields = ['title', 'description', 'category', 'source', 'asset', 'threat', 'vulnerability', 'likelihood', 'impact', 'risk_owner', 'status'];
   const updates = [];
@@ -1502,35 +1504,38 @@ app.put('/api/risks/:id', async (req, res) => {
 });
 
 // Delete risk
-app.delete('/api/risks/:id', async (req, res) => {
-  const result = await db.prepare('DELETE FROM risks WHERE id = ?').run(req.params.id);
+app.delete('/api/risks/:id', requireOrgContext, async (req, res) => {
+  const result = await db.prepare('DELETE FROM risks WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'Risk not found' });
   res.json({ success: true });
 });
 
 // --- Risk Treatments API ---
 
-app.get('/api/treatments', async (req, res) => {
+app.get('/api/treatments', requireOrgContext, async (req, res) => {
   const { risk_id, status } = req.query;
-  let sql = `SELECT rt.*, r.title as risk_title, sr.clause, sr.title as requirement_title FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE 1=1`;
-  const params = [];
+  let sql = `SELECT rt.*, r.title as risk_title, sr.clause, sr.title as requirement_title FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id LEFT JOIN standard_requirements sr ON rt.requirement_id = sr.id WHERE r.organization_id = ?`;
+  const params = [req.orgId];
   if (risk_id) { sql += ' AND rt.risk_id = ?'; params.push(risk_id); }
   if (status) { sql += ' AND rt.status = ?'; params.push(status); }
   sql += ' ORDER BY rt.created_at DESC';
   res.json(await db.prepare(sql).all(...params));
 });
 
-app.post('/api/treatments', async (req, res) => {
+app.post('/api/treatments', requireOrgContext, async (req, res) => {
   const { risk_id, treatment_type, description, control_reference, requirement_id, responsible, due_date, residual_likelihood, residual_impact, notes } = req.body;
   if (!risk_id) return res.status(400).json({ error: 'risk_id is required' });
+  // Verify the risk belongs to this org
+  const risk = await db.prepare('SELECT id FROM risks WHERE id = ? AND organization_id = ?').get(risk_id, req.orgId);
+  if (!risk) return res.status(404).json({ error: 'Risk not found' });
   const result = await db.prepare(`INSERT INTO risk_treatments (risk_id, treatment_type, description, control_reference, requirement_id, responsible, due_date, residual_likelihood, residual_impact, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     risk_id, treatment_type || 'mitigate', description || '', control_reference || '', requirement_id || null, responsible || '', due_date || null, residual_likelihood || null, residual_impact || null, notes || ''
   );
   res.status(201).json(await db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/treatments/:id', async (req, res) => {
-  const existing = await db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id);
+app.put('/api/treatments/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare('SELECT rt.* FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id WHERE rt.id = ? AND r.organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Treatment not found' });
   const fields = ['treatment_type', 'description', 'control_reference', 'requirement_id', 'responsible', 'due_date', 'status', 'residual_likelihood', 'residual_impact', 'notes'];
   const updates = [];
@@ -1545,27 +1550,29 @@ app.put('/api/treatments/:id', async (req, res) => {
   res.json(await db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/treatments/:id', async (req, res) => {
-  const result = await db.prepare('DELETE FROM risk_treatments WHERE id = ?').run(req.params.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Treatment not found' });
+app.delete('/api/treatments/:id', requireOrgContext, async (req, res) => {
+  // Verify the treatment belongs to a risk in this org before deleting
+  const existing = await db.prepare('SELECT rt.id FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id WHERE rt.id = ? AND r.organization_id = ?').get(req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Treatment not found' });
+  await db.prepare('DELETE FROM risk_treatments WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
 // --- Statement of Applicability API ---
 
-app.get('/api/soa', async (req, res) => {
+app.get('/api/soa', requireOrgContext, async (req, res) => {
   // Get all Annex A requirements with their SoA status
   const reqs = await db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes, soa.linked_processes, soa.regulatory
     FROM standard_requirements sr LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
-    WHERE sr.standard = 'ISO 27001 Annex A'
-    ORDER BY sr.sort_order, sr.clause`).all();
+    WHERE sr.standard = 'ISO 27001 Annex A' AND sr.organization_id = ?
+    ORDER BY sr.sort_order, sr.clause`).all(req.orgId);
   // Attach linked risk treatments (via requirement_id OR control_reference)
-  const allProcesses = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process'").all();
+  const allProcesses = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process' AND organization_id = ?").all(req.orgId);
   for (const r of reqs) {
     // Get treatments linked by requirement_id
-    const linkedById = await db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ?`).all(r.id);
+    const linkedById = await db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ? AND ri.organization_id = ?`).all(r.id, req.orgId);
     // Get treatments linked by control_reference (matching clause)
-    const linkedByRef = await db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.control_reference = ? AND rt.control_reference != ''`).all(r.clause);
+    const linkedByRef = await db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.control_reference = ? AND rt.control_reference != '' AND ri.organization_id = ?`).all(r.clause, req.orgId);
     // Combine and dedupe
     const allLinked = [...linkedById];
     for (const t of linkedByRef) {
@@ -1578,8 +1585,11 @@ app.get('/api/soa', async (req, res) => {
   res.json(reqs);
 });
 
-app.put('/api/soa/:requirementId', async (req, res) => {
+app.put('/api/soa/:requirementId', requireOrgContext, async (req, res) => {
   const reqId = req.params.requirementId;
+  // Verify the requirement belongs to this org
+  const reqRow = await db.prepare('SELECT id FROM standard_requirements WHERE id = ? AND organization_id = ?').get(reqId, req.orgId);
+  if (!reqRow) return res.status(404).json({ error: 'Requirement not found' });
   const { applicable, justification, implementation_status, notes } = req.body;
   const existing = await db.prepare('SELECT * FROM soa_entries WHERE requirement_id = ?').get(reqId);
   if (existing) {
@@ -1605,19 +1615,19 @@ app.put('/api/soa/:requirementId', async (req, res) => {
 // --- Organizational Planning API ---
 
 // Mission
-app.get('/api/mission', async (req, res) => {
-  res.json(await db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
+app.get('/api/mission', requireOrgContext, async (req, res) => {
+  res.json(await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(req.orgId));
 });
 
-app.put('/api/mission', async (req, res) => {
+app.put('/api/mission', requireOrgContext, async (req, res) => {
   const { content, vision, values_text } = req.body;
-  await db.prepare("UPDATE org_mission SET content = ?, vision = ?, values_text = ?, updated_at = datetime('now') WHERE id = 1").run(content || '', vision || '', values_text || '');
-  res.json(await db.prepare('SELECT * FROM org_mission WHERE id = 1').get());
+  await db.prepare("UPDATE org_mission SET content = ?, vision = ?, values_text = ?, updated_at = datetime('now') WHERE organization_id = ?").run(content || '', vision || '', values_text || '', req.orgId);
+  res.json(await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(req.orgId));
 });
 
 // KPIs
-app.get('/api/kpis', async (req, res) => {
-  const kpis = await db.prepare('SELECT * FROM org_kpis ORDER BY module, name').all();
+app.get('/api/kpis', requireOrgContext, async (req, res) => {
+  const kpis = await db.prepare('SELECT * FROM org_kpis WHERE organization_id = ? ORDER BY module, name').all(req.orgId);
   for (const k of kpis) {
     k.values = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? ORDER BY period DESC LIMIT 12').all(k.id);
   }
@@ -1625,53 +1635,54 @@ app.get('/api/kpis', async (req, res) => {
 });
 
 // Auto-KPI data
-app.get('/api/kpis/auto', async (req, res) => {
+app.get('/api/kpis/auto', requireOrgContext, async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
+  const oid = req.orgId;
   const auto = {
     // Task Management
-    tasks_active: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1').get()).v,
-    tasks_overdue: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE is_active = 1 AND next_due < ?').get(today)).v,
-    completions_this_month: (await db.prepare("SELECT COUNT(*) as v FROM completions WHERE completed_at >= date('now','start of month')").get()).v,
+    tasks_active: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE organization_id = ? AND is_active = 1').get(oid)).v,
+    tasks_overdue: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE organization_id = ? AND is_active = 1 AND next_due < ?').get(oid, today)).v,
+    completions_this_month: (await db.prepare("SELECT COUNT(*) as v FROM completions WHERE organization_id = ? AND completed_at >= date('now','start of month')").get(oid)).v,
     // Audits & Compliance
-    audits_planned: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'planned'").get()).v,
-    audits_completed: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE status = 'completed'").get()).v,
-    open_ncrs: (await db.prepare("SELECT COUNT(*) as v FROM non_conformities WHERE status IN ('open','in_progress')").get()).v,
-    open_actions: (await db.prepare("SELECT COUNT(*) as v FROM actions WHERE status IN ('open','in_progress')").get()).v,
-    standards_count: (await db.prepare('SELECT COUNT(DISTINCT standard) as v FROM standard_requirements').get()).v,
+    audits_planned: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE organization_id = ? AND status = 'planned'").get(oid)).v,
+    audits_completed: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE organization_id = ? AND status = 'completed'").get(oid)).v,
+    open_ncrs: (await db.prepare("SELECT COUNT(*) as v FROM non_conformities WHERE organization_id = ? AND status IN ('open','in_progress')").get(oid)).v,
+    open_actions: (await db.prepare("SELECT COUNT(*) as v FROM actions WHERE organization_id = ? AND status IN ('open','in_progress')").get(oid)).v,
+    standards_count: (await db.prepare('SELECT COUNT(DISTINCT standard) as v FROM standard_requirements WHERE organization_id = ?').get(oid)).v,
     // Risk Management
-    total_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks').get()).v,
-    high_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks WHERE inherent_score >= 15').get()).v,
-    open_treatments: (await db.prepare("SELECT COUNT(*) as v FROM risk_treatments WHERE status IN ('planned','in_progress')").get()).v,
+    total_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks WHERE organization_id = ?').get(oid)).v,
+    high_risks: (await db.prepare('SELECT COUNT(*) as v FROM risks WHERE organization_id = ? AND inherent_score >= 15').get(oid)).v,
+    open_treatments: (await db.prepare("SELECT COUNT(*) as v FROM risk_treatments WHERE organization_id = ? AND status IN ('planned','in_progress')").get(oid)).v,
     // SoA counts from Annex A requirements (applicable by default unless explicitly set to 0)
     soa_applicable: (await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
       LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
-      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1)`).get()).v,
+      WHERE sr.organization_id = ? AND sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1)`).get(oid)).v,
     soa_implemented: (await db.prepare(`SELECT COUNT(*) as v FROM standard_requirements sr
       LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
-      WHERE sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1) AND soa.implementation_status = 'implemented'`).get()).v,
-    threat_items_new: (await db.prepare("SELECT COUNT(*) as v FROM threat_items WHERE status = 'new'").get()).v,
+      WHERE sr.organization_id = ? AND sr.standard = 'ISO 27001 Annex A' AND (soa.applicable IS NULL OR soa.applicable = 1) AND soa.implementation_status = 'implemented'`).get(oid)).v,
+    threat_items_new: (await db.prepare("SELECT COUNT(*) as v FROM threat_items WHERE organization_id = ? AND status = 'new'").get(oid)).v,
     // Document Control
-    total_documents: (await db.prepare('SELECT COUNT(*) as v FROM documents').get()).v,
-    docs_due_review: (await db.prepare('SELECT COUNT(*) as v FROM documents WHERE review_date IS NOT NULL AND review_date <= ?').get(today)).v,
+    total_documents: (await db.prepare('SELECT COUNT(*) as v FROM documents WHERE organization_id = ?').get(oid)).v,
+    docs_due_review: (await db.prepare('SELECT COUNT(*) as v FROM documents WHERE organization_id = ? AND review_date IS NOT NULL AND review_date <= ?').get(oid, today)).v,
     // Architecture
-    arch_processes: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'process'").get()).v,
-    arch_roles: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'role'").get()).v,
-    arch_systems: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'system'").get()).v,
-    arch_facilities: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE arch_type = 'facility'").get()).v,
+    arch_processes: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'process'").get(oid)).v,
+    arch_roles: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'role'").get(oid)).v,
+    arch_systems: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'system'").get(oid)).v,
+    arch_facilities: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'facility'").get(oid)).v,
   };
   res.json(auto);
 });
 
-app.post('/api/kpis', async (req, res) => {
+app.post('/api/kpis', requireOrgContext, async (req, res) => {
   const { name, description, module, target_value, unit, frequency } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
-  const result = await db.prepare('INSERT INTO org_kpis (name, description, module, target_value, unit, frequency) VALUES (?, ?, ?, ?, ?, ?)').run(
-    name, description || '', module || 'custom', target_value || null, unit || '', frequency || 'monthly'
+  const result = await db.prepare('INSERT INTO org_kpis (organization_id, name, description, module, target_value, unit, frequency) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+    req.orgId, name, description || '', module || 'custom', target_value || null, unit || '', frequency || 'monthly'
   );
   res.status(201).json(await db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/kpis/:id', async (req, res) => {
+app.put('/api/kpis/:id', requireOrgContext, async (req, res) => {
   const fields = ['name', 'description', 'module', 'target_value', 'unit', 'frequency'];
   const updates = [];
   const params = [];
@@ -1684,12 +1695,12 @@ app.put('/api/kpis/:id', async (req, res) => {
   res.json(await db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/kpis/:id', async (req, res) => {
-  await db.prepare('DELETE FROM org_kpis WHERE id = ?').run(req.params.id);
+app.delete('/api/kpis/:id', requireOrgContext, async (req, res) => {
+  await db.prepare('DELETE FROM org_kpis WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   res.json({ success: true });
 });
 
-app.post('/api/kpis/:id/values', async (req, res) => {
+app.post('/api/kpis/:id/values', requireOrgContext, async (req, res) => {
   const { value, period } = req.body;
   if (value === undefined || !period) return res.status(400).json({ error: 'value and period are required' });
   // Upsert
@@ -1697,31 +1708,31 @@ app.post('/api/kpis/:id/values', async (req, res) => {
   if (existing) {
     await db.prepare("UPDATE org_kpi_values SET value = ?, recorded_at = datetime('now') WHERE id = ?").run(value, existing.id);
   } else {
-    await db.prepare('INSERT INTO org_kpi_values (kpi_id, value, period) VALUES (?, ?, ?)').run(req.params.id, value, period);
+    await db.prepare('INSERT INTO org_kpi_values (organization_id, kpi_id, value, period) VALUES (?, ?, ?, ?)').run(req.orgId, req.params.id, value, period);
   }
   res.json({ success: true });
 });
 
 // Architecture
-app.get('/api/architecture', async (req, res) => {
+app.get('/api/architecture', requireOrgContext, async (req, res) => {
   const { arch_type } = req.query;
-  let sql = 'SELECT * FROM org_architecture WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM org_architecture WHERE organization_id = ?';
+  const params = [req.orgId];
   if (arch_type) { sql += ' AND arch_type = ?'; params.push(arch_type); }
   sql += ' ORDER BY arch_type, sort_order, name';
   res.json(await db.prepare(sql).all(...params));
 });
 
-app.post('/api/architecture', async (req, res) => {
+app.post('/api/architecture', requireOrgContext, async (req, res) => {
   const { arch_type, name, description, parent_id, owner, status, metadata } = req.body;
   if (!arch_type || !name) return res.status(400).json({ error: 'arch_type and name are required' });
-  const result = await db.prepare('INSERT INTO org_architecture (arch_type, name, description, parent_id, owner, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-    arch_type, name, description || '', parent_id || null, owner || '', status || 'active', metadata || '{}'
+  const result = await db.prepare('INSERT INTO org_architecture (organization_id, arch_type, name, description, parent_id, owner, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+    req.orgId, arch_type, name, description || '', parent_id || null, owner || '', status || 'active', metadata || '{}'
   );
   res.status(201).json(await db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/architecture/:id', async (req, res) => {
+app.put('/api/architecture/:id', requireOrgContext, async (req, res) => {
   const fields = ['name', 'description', 'parent_id', 'owner', 'status', 'metadata', 'sort_order'];
   const updates = [];
   const params = [];
@@ -1735,17 +1746,17 @@ app.put('/api/architecture/:id', async (req, res) => {
   res.json(await db.prepare('SELECT * FROM org_architecture WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/architecture/:id', async (req, res) => {
-  await db.prepare('DELETE FROM org_architecture WHERE id = ?').run(req.params.id);
+app.delete('/api/architecture/:id', requireOrgContext, async (req, res) => {
+  await db.prepare('DELETE FROM org_architecture WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   res.json({ success: true });
 });
 
 // --- Document Control API ---
 
-app.get('/api/documents', async (req, res) => {
+app.get('/api/documents', requireOrgContext, async (req, res) => {
   const { doc_type, status, linked_module, classification } = req.query;
-  let sql = 'SELECT * FROM documents WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM documents WHERE organization_id = ?';
+  const params = [req.orgId];
   if (doc_type) { sql += ' AND doc_type = ?'; params.push(doc_type); }
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (linked_module) { sql += ' AND linked_module = ?'; params.push(linked_module); }
@@ -1754,7 +1765,7 @@ app.get('/api/documents', async (req, res) => {
   res.json(await db.prepare(sql).all(...params));
 });
 
-app.post('/api/documents', upload.single('file'), async (req, res) => {
+app.post('/api/documents', requireOrgContext, upload.single('file'), async (req, res) => {
   const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date, classification } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
   const file = req.file;
@@ -1766,7 +1777,8 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
       return res.status(500).json({ error: err.message });
     }
   }
-  const result = await db.prepare(`INSERT INTO documents (title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  const result = await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    req.orgId,
     title, description || '', doc_type || 'policy', version || '1.0', owner || '', status || 'draft',
     file ? file.originalname : '', storagePath, file ? file.size : 0, file ? file.mimetype : '',
     linked_module || '', linked_ref_type || '', linked_ref_id || null, review_date || null, classification || ''
@@ -1774,8 +1786,8 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
   res.status(201).json(await db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/documents/:id', upload.single('file'), async (req, res) => {
-  const existing = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+app.put('/api/documents/:id', requireOrgContext, upload.single('file'), async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM documents WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Document not found' });
   const { title, description, doc_type, version, owner, status, linked_module, linked_ref_type, linked_ref_id, review_date, classification } = req.body;
   const file = req.file;
@@ -1805,16 +1817,16 @@ app.put('/api/documents/:id', upload.single('file'), async (req, res) => {
   res.json(await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/documents/:id', async (req, res) => {
-  const doc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+app.delete('/api/documents/:id', requireOrgContext, async (req, res) => {
+  const doc = await db.prepare('SELECT * FROM documents WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
   if (doc.file_path) await deleteFromSupabase(doc.file_path);
   await db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
-app.get('/api/documents/:id/download', async (req, res) => {
-  const doc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+app.get('/api/documents/:id/download', requireOrgContext, async (req, res) => {
+  const doc = await db.prepare('SELECT * FROM documents WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!doc || !doc.file_path) return res.status(404).json({ error: 'File not found' });
   try {
     const signedUrl = await getSignedUrl(doc.file_path);
