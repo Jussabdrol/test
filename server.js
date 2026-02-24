@@ -1941,63 +1941,70 @@ app.get('/api/link-references', requireOrgContext, async (req, res) => {
 
 // Admin: System Overview Stats
 app.get('/api/admin/overview', requireAdmin, async (req, res) => {
+  const oid = req.orgId;
   const stats = {
     // Database stats (Supabase PostgreSQL – size via pg_database_size)
     databaseSize: await (async () => { try { const r = await db.get("SELECT pg_database_size(current_database()) as size"); return r?.size || 0; } catch { return 0; } })(),
 
     // Module counts
-    tasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks').get()).c,
-    activeTasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE is_active = 1').get()).c,
-    completions: (await db.prepare('SELECT COUNT(*) as c FROM completions').get()).c,
-    actions: (await db.prepare('SELECT COUNT(*) as c FROM actions').get()).c,
-    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE status IN ('open', 'in_progress')").get()).c,
+    tasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ?').get(oid)).c,
+    activeTasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ? AND is_active = 1').get(oid)).c,
+    completions: (await db.prepare('SELECT COUNT(*) as c FROM completions WHERE organization_id = ?').get(oid)).c,
+    actions: (await db.prepare('SELECT COUNT(*) as c FROM actions WHERE organization_id = ?').get(oid)).c,
+    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE organization_id = ? AND status IN ('open', 'in_progress')").get(oid)).c,
 
-    risks: (await db.prepare('SELECT COUNT(*) as c FROM risks').get()).c,
-    highRisks: (await db.prepare('SELECT COUNT(*) as c FROM risks WHERE (likelihood * impact) >= 15').get()).c,
-    treatments: (await db.prepare('SELECT COUNT(*) as c FROM risk_treatments').get()).c,
+    risks: (await db.prepare('SELECT COUNT(*) as c FROM risks WHERE organization_id = ?').get(oid)).c,
+    highRisks: (await db.prepare('SELECT COUNT(*) as c FROM risks WHERE organization_id = ? AND (likelihood * impact) >= 15').get(oid)).c,
+    treatments: (await db.prepare('SELECT COUNT(*) as c FROM risk_treatments WHERE organization_id = ?').get(oid)).c,
 
-    audits: (await db.prepare('SELECT COUNT(*) as c FROM audits').get()).c,
-    plannedAudits: (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE status = 'planned'").get()).c,
-    ncrs: (await db.prepare('SELECT COUNT(*) as c FROM non_conformities').get()).c,
-    openNcrs: (await db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE status IN ('open', 'in_progress')").get()).c,
+    audits: (await db.prepare('SELECT COUNT(*) as c FROM audits WHERE organization_id = ?').get(oid)).c,
+    plannedAudits: (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE organization_id = ? AND status = 'planned'").get(oid)).c,
+    ncrs: (await db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE organization_id = ?').get(oid)).c,
+    openNcrs: (await db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE organization_id = ? AND status IN ('open', 'in_progress')").get(oid)).c,
 
-    requirements: (await db.prepare('SELECT COUNT(*) as c FROM standard_requirements').get()).c,
-    documents: (await db.prepare('SELECT COUNT(*) as c FROM documents').get()).c,
-    architecture: (await db.prepare('SELECT COUNT(*) as c FROM org_architecture').get()).c,
+    requirements: (await db.prepare('SELECT COUNT(*) as c FROM standard_requirements WHERE organization_id = ?').get(oid)).c,
+    documents: (await db.prepare('SELECT COUNT(*) as c FROM documents WHERE organization_id = ?').get(oid)).c,
+    architecture: (await db.prepare('SELECT COUNT(*) as c FROM org_architecture WHERE organization_id = ?').get(oid)).c,
 
-    users: (await db.prepare('SELECT COUNT(*) as c FROM users').get()).c,
-    activeUsers: (await db.prepare("SELECT COUNT(*) as c FROM users WHERE status = 'active'").get()).c,
+    users: (await db.prepare("SELECT COUNT(*) as c FROM users WHERE organization_id = ? AND role != 'superadmin'").get(oid)).c,
+    activeUsers: (await db.prepare("SELECT COUNT(*) as c FROM users WHERE organization_id = ? AND status = 'active' AND role != 'superadmin'").get(oid)).c,
 
     // Recent activity
     recentCompletions: await db.prepare(`
       SELECT c.*, t.title as task_title
       FROM completions c JOIN tasks t ON c.task_id = t.id
+      WHERE c.organization_id = ?
       ORDER BY c.completed_at DESC LIMIT 10
-    `).all(),
+    `).all(oid),
 
     recentAuditLogs: await db.prepare(`
-      SELECT * FROM admin_audit_log ORDER BY created_at DESC LIMIT 20
-    `).all(),
+      SELECT * FROM admin_audit_log WHERE organization_id = ? ORDER BY created_at DESC LIMIT 20
+    `).all(oid),
 
     // System health
-    lastBackup: await db.prepare("SELECT * FROM backups WHERE status = 'completed' ORDER BY created_at DESC LIMIT 1").get(),
+    lastBackup: await db.prepare("SELECT * FROM backups WHERE organization_id = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1").get(oid),
   };
 
   res.json(stats);
 });
 
-// Admin-only middleware
+// Admin-only middleware (org_admin or superadmin with active org context)
 function requireAdmin(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Authentication required' });
-  if (req.session.userRole !== 'admin') return res.status(403).json({ error: 'Administrator access required' });
+  if (!['superadmin', 'org_admin'].includes(req.session.userRole)) {
+    return res.status(403).json({ error: 'Administrator access required' });
+  }
+  const orgId = getOrgId(req);
+  if (!orgId) return res.status(400).json({ error: 'No organization context. Select an organization first.' });
+  req.orgId = orgId;
   next();
 }
 
 // Admin: Users CRUD
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
   const { status, role, search } = req.query;
-  let sql = 'SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE 1=1';
-  const params = [];
+  let sql = "SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE organization_id = ? AND role != 'superadmin'";
+  const params = [req.orgId];
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (role) { sql += ' AND role = ?'; params.push(role); }
   if (search) {
@@ -2010,7 +2017,7 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
 });
 
 app.get('/api/admin/users/:id', requireAdmin, async (req, res) => {
-  const user = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ?').get(req.params.id);
+  const user = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json(user);
 });
@@ -2025,10 +2032,12 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
+    const userRole = role || 'org_user';
+    if (userRole === 'superadmin') return res.status(400).json({ error: 'Cannot create superadmin users from org admin' });
     const result = await db.prepare(`
-      INSERT INTO users (name, email, password, role, department, permissions, status, expiry_date, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(name, email.toLowerCase().trim(), hashedPassword, role || 'user', department || '',
+      INSERT INTO users (organization_id, name, email, password, role, department, permissions, status, expiry_date, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.orgId, name, email.toLowerCase().trim(), hashedPassword, userRole, department || '',
            JSON.stringify(permissions || ['org','risk','ops','audit']),
            status || 'active', expiry_date || null, notes || '');
 
@@ -2130,8 +2139,8 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 // Admin: Audit Log
 app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
   const { action, entity_type, user_name, limit = 100, offset = 0 } = req.query;
-  let sql = 'SELECT * FROM admin_audit_log WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM admin_audit_log WHERE organization_id = ?';
+  const params = [req.orgId];
   if (action) { sql += ' AND action LIKE ?'; params.push(`%${action}%`); }
   if (entity_type) { sql += ' AND entity_type = ?'; params.push(entity_type); }
   if (user_name) { sql += ' AND user_name LIKE ?'; params.push(`%${user_name}%`); }
@@ -2139,21 +2148,21 @@ app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
   params.push(parseInt(limit), parseInt(offset));
 
   const logs = await db.prepare(sql).all(...params);
-  const total = (await db.prepare('SELECT COUNT(*) as c FROM admin_audit_log').get()).c;
+  const total = (await db.prepare('SELECT COUNT(*) as c FROM admin_audit_log WHERE organization_id = ?').get(req.orgId)).c;
   res.json({ logs, total, limit: parseInt(limit), offset: parseInt(offset) });
 });
 
 // Helper function to log audit actions
-async function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '') {
+async function logAuditAction(userId, userName, action, entityType, entityId, entityName, details = '', orgId = null) {
   await db.run(`
-    INSERT INTO admin_audit_log (user_id, user_name, action, entity_type, entity_id, entity_name, details)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, userId, userName, action, entityType, entityId, entityName, details);
+    INSERT INTO admin_audit_log (organization_id, user_id, user_name, action, entity_type, entity_id, entity_name, details)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, orgId, userId, userName, action, entityType, entityId, entityName, details);
 }
 
 // Admin: System Settings
 app.get('/api/admin/settings', requireAdmin, async (req, res) => {
-  const settings = await db.prepare('SELECT * FROM system_settings').all();
+  const settings = await db.prepare('SELECT * FROM system_settings WHERE organization_id = ?').all(req.orgId);
   const result = {};
   for (const s of settings) {
     try { result[s.key] = JSON.parse(s.value); }
@@ -2165,12 +2174,12 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
 app.put('/api/admin/settings', requireAdmin, async (req, res) => {
   const settings = req.body;
   const upsert = db.prepare(`
-    INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+    INSERT INTO system_settings (key, value, organization_id, updated_at) VALUES (?, ?, ?, datetime('now'))
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
   `);
 
   for (const [key, value] of Object.entries(settings)) {
-    await upsert.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+    await upsert.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value), req.orgId);
   }
 
   await logAuditAction(null, 'System', 'settings_updated', 'settings', null, null, JSON.stringify(Object.keys(settings)));
@@ -2179,7 +2188,7 @@ app.put('/api/admin/settings', requireAdmin, async (req, res) => {
 
 // Admin: API Keys
 app.get('/api/admin/api-keys', requireAdmin, async (req, res) => {
-  res.json(await db.prepare("SELECT id, name, key_prefix, permissions, last_used, expires_at, status, created_at FROM api_keys ORDER BY created_at DESC").all());
+  res.json(await db.prepare("SELECT id, name, key_prefix, permissions, last_used, expires_at, status, created_at FROM api_keys WHERE organization_id = ? ORDER BY created_at DESC").all(req.orgId));
 });
 
 app.post('/api/admin/api-keys', requireAdmin, async (req, res) => {
@@ -2192,9 +2201,9 @@ app.post('/api/admin/api-keys', requireAdmin, async (req, res) => {
   const keyPrefix = key.substring(0, 12) + '...';
 
   const result = await db.prepare(`
-    INSERT INTO api_keys (name, key_hash, key_prefix, permissions, expires_at)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(name, keyHash, keyPrefix, JSON.stringify(permissions || ['read']), expires_at || null);
+    INSERT INTO api_keys (organization_id, name, key_hash, key_prefix, permissions, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(req.orgId, name, keyHash, keyPrefix, JSON.stringify(permissions || ['read']), expires_at || null);
 
   await logAuditAction(null, 'System', 'api_key_created', 'api_key', result.lastInsertRowid, name);
 
@@ -2220,7 +2229,7 @@ app.delete('/api/admin/api-keys/:id', requireAdmin, async (req, res) => {
 
 // Admin: Webhooks
 app.get('/api/admin/webhooks', requireAdmin, async (req, res) => {
-  res.json(await db.prepare('SELECT * FROM webhooks ORDER BY created_at DESC').all());
+  res.json(await db.prepare('SELECT * FROM webhooks WHERE organization_id = ? ORDER BY created_at DESC').all(req.orgId));
 });
 
 app.post('/api/admin/webhooks', requireAdmin, async (req, res) => {
@@ -2228,9 +2237,9 @@ app.post('/api/admin/webhooks', requireAdmin, async (req, res) => {
   if (!name || !url) return res.status(400).json({ error: 'Name and URL required' });
 
   const result = await db.prepare(`
-    INSERT INTO webhooks (name, url, events, secret, status)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(name, url, JSON.stringify(events || []), secret || '', status || 'active');
+    INSERT INTO webhooks (organization_id, name, url, events, secret, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(req.orgId, name, url, JSON.stringify(events || []), secret || '', status || 'active');
 
   await logAuditAction(null, 'System', 'webhook_created', 'webhook', result.lastInsertRowid, name);
   res.status(201).json(await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(result.lastInsertRowid));
@@ -2345,15 +2354,15 @@ app.post('/api/admin/backups', requireAdmin, async (req, res) => {
 
   // Save backup record
   const result = await db.prepare(`
-    INSERT INTO backups (filename, size, type, status) VALUES (?, ?, ?, 'completed')
-  `).run(filename, size, req.body.type || 'manual');
+    INSERT INTO backups (organization_id, filename, size, type, status) VALUES (?, ?, ?, ?, 'completed')
+  `).run(req.orgId, filename, size, req.body.type || 'manual');
 
   await logAuditAction(null, 'System', 'backup_created', 'backup', result.lastInsertRowid, filename);
   res.status(201).json(await db.prepare('SELECT * FROM backups WHERE id = ?').get(result.lastInsertRowid));
 });
 
 app.get('/api/admin/backups', requireAdmin, async (req, res) => {
-  res.json(await db.prepare("SELECT * FROM backups ORDER BY created_at DESC").all());
+  res.json(await db.prepare("SELECT * FROM backups WHERE organization_id = ? ORDER BY created_at DESC").all(req.orgId));
 });
 
 app.get('/api/admin/backups/:id/download', requireAdmin, async (req, res) => {
