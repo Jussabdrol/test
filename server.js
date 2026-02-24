@@ -1322,8 +1322,8 @@ app.delete('/api/requirements/:id', requireOrgContext, async (req, res) => {
 // --- Threat Intelligence API ---
 
 // List feeds
-app.get('/api/threat-feeds', async (req, res) => {
-  const feeds = await db.prepare('SELECT * FROM threat_feeds ORDER BY tier, name').all();
+app.get('/api/threat-feeds', requireOrgContext, async (req, res) => {
+  const feeds = await db.prepare('SELECT * FROM threat_feeds WHERE organization_id = ? ORDER BY tier, name').all(req.orgId);
   for (const f of feeds) {
     f.item_count = (await db.prepare('SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ?').get(f.id)).c;
     f.new_count = (await db.prepare("SELECT COUNT(*) as c FROM threat_items WHERE feed_id = ? AND status = 'new'").get(f.id)).c;
@@ -1332,15 +1332,15 @@ app.get('/api/threat-feeds', async (req, res) => {
 });
 
 // Add feed
-app.post('/api/threat-feeds', async (req, res) => {
+app.post('/api/threat-feeds', requireOrgContext, async (req, res) => {
   const { name, url, tier } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'name and url required' });
-  const result = await db.prepare('INSERT INTO threat_feeds (name, url, tier) VALUES (?, ?, ?)').run(name, url, tier || 1);
+  const result = await db.prepare('INSERT INTO threat_feeds (organization_id, name, url, tier) VALUES (?, ?, ?, ?)').run(req.orgId, name, url, tier || 1);
   res.status(201).json(await db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(result.lastInsertRowid));
 });
 
 // Update feed
-app.put('/api/threat-feeds/:id', async (req, res) => {
+app.put('/api/threat-feeds/:id', requireOrgContext, async (req, res) => {
   const fields = ['name', 'url', 'tier', 'enabled'];
   const updates = []; const params = [];
   for (const f of fields) {
@@ -1353,14 +1353,14 @@ app.put('/api/threat-feeds/:id', async (req, res) => {
 });
 
 // Delete feed
-app.delete('/api/threat-feeds/:id', async (req, res) => {
-  await db.prepare('DELETE FROM threat_feeds WHERE id = ?').run(req.params.id);
+app.delete('/api/threat-feeds/:id', requireOrgContext, async (req, res) => {
+  await db.prepare('DELETE FROM threat_feeds WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   res.json({ success: true });
 });
 
 // Fetch/refresh a single feed (server-side RSS proxy)
-app.post('/api/threat-feeds/:id/fetch', async (req, res) => {
-  const feed = await db.prepare('SELECT * FROM threat_feeds WHERE id = ?').get(req.params.id);
+app.post('/api/threat-feeds/:id/fetch', requireOrgContext, async (req, res) => {
+  const feed = await db.prepare('SELECT * FROM threat_feeds WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!feed) return res.status(404).json({ error: 'Feed not found' });
 
   try {
@@ -1404,8 +1404,8 @@ app.post('/api/threat-feeds/:id/fetch', async (req, res) => {
     // Upsert items
     await db.transaction(async () => {
       for (const i of items) {
-        await db.run(`INSERT INTO threat_items (feed_id, guid, title, description, link, pub_date) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(feed_id, guid) DO UPDATE SET title=excluded.title, description=excluded.description, link=excluded.link, pub_date=excluded.pub_date`,
-          feed.id, i.guid || i.title, i.title, i.description, i.link, i.pub_date);
+        await db.run(`INSERT INTO threat_items (organization_id, feed_id, guid, title, description, link, pub_date) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(feed_id, guid) DO UPDATE SET title=excluded.title, description=excluded.description, link=excluded.link, pub_date=excluded.pub_date`,
+          req.orgId, feed.id, i.guid || i.title, i.title, i.description, i.link, i.pub_date);
       }
     });
 
@@ -1419,10 +1419,10 @@ app.post('/api/threat-feeds/:id/fetch', async (req, res) => {
 });
 
 // Get threat items (with filters)
-app.get('/api/threat-items', async (req, res) => {
+app.get('/api/threat-items', requireOrgContext, async (req, res) => {
   const { feed_id, tier, status, limit: lim } = req.query;
-  let sql = `SELECT ti.*, tf.name as feed_name, tf.tier FROM threat_items ti JOIN threat_feeds tf ON ti.feed_id = tf.id WHERE tf.enabled = 1`;
-  const params = [];
+  let sql = `SELECT ti.*, tf.name as feed_name, tf.tier FROM threat_items ti JOIN threat_feeds tf ON ti.feed_id = tf.id WHERE ti.organization_id = ? AND tf.enabled = 1`;
+  const params = [req.orgId];
   if (feed_id) { sql += ' AND ti.feed_id = ?'; params.push(feed_id); }
   if (tier) { sql += ' AND tf.tier = ?'; params.push(tier); }
   if (status) { sql += ' AND ti.status = ?'; params.push(status); }
@@ -1433,7 +1433,7 @@ app.get('/api/threat-items', async (req, res) => {
 });
 
 // Update threat item status
-app.put('/api/threat-items/:id', async (req, res) => {
+app.put('/api/threat-items/:id', requireOrgContext, async (req, res) => {
   const { status, created_risk_id } = req.body;
   const updates = []; const params = [];
   if (status) { updates.push('status = ?'); params.push(status); }
@@ -1856,11 +1856,11 @@ const entityResolvers = {
 };
 
 // Get all cross-links for an entity
-app.get('/api/cross-links/:type/:id', async (req, res) => {
+app.get('/api/cross-links/:type/:id', requireOrgContext, async (req, res) => {
   const { type, id } = req.params;
   const links = await db.prepare(`
-    SELECT * FROM cross_links WHERE (source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?)
-  `).all(type, id, type, id);
+    SELECT * FROM cross_links WHERE organization_id = ? AND ((source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?))
+  `).all(req.orgId, type, id, type, id);
 
   const resolved = [];
   for (const l of links) {
@@ -1877,7 +1877,7 @@ app.get('/api/cross-links/:type/:id', async (req, res) => {
 });
 
 // Add a cross-link
-app.post('/api/cross-links', async (req, res) => {
+app.post('/api/cross-links', requireOrgContext, async (req, res) => {
   const { source_type, source_id, target_type, target_id } = req.body;
   if (!source_type || !source_id || !target_type || !target_id) return res.status(400).json({ error: 'All fields required' });
   // Normalize order to avoid duplicates (alphabetical source_type)
@@ -1885,7 +1885,7 @@ app.post('/api/cross-links', async (req, res) => {
     ? [source_type, source_id, target_type, target_id]
     : [target_type, target_id, source_type, source_id];
   try {
-    await db.prepare('INSERT INTO cross_links (source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?)').run(s_type, s_id, t_type, t_id);
+    await db.prepare('INSERT INTO cross_links (organization_id, source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?, ?)').run(req.orgId, s_type, s_id, t_type, t_id);
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Link already exists' });
     throw e;
@@ -1894,43 +1894,44 @@ app.post('/api/cross-links', async (req, res) => {
 });
 
 // Delete a cross-link
-app.delete('/api/cross-links/:id', async (req, res) => {
-  await db.prepare('DELETE FROM cross_links WHERE id = ?').run(req.params.id);
+app.delete('/api/cross-links/:id', requireOrgContext, async (req, res) => {
+  await db.prepare('DELETE FROM cross_links WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   res.json({ success: true });
 });
 
 // List linkable entities by type
-app.get('/api/linkable/:type', async (req, res) => {
+app.get('/api/linkable/:type', requireOrgContext, async (req, res) => {
   const { type } = req.params;
+  const oid = req.orgId;
   let items = [];
-  if (type === 'risk') items = await db.prepare('SELECT id, title as name FROM risks ORDER BY title').all();
-  else if (type === 'task') items = await db.prepare('SELECT id, title as name FROM tasks ORDER BY title').all();
-  else if (type === 'requirement') items = await db.prepare("SELECT id, clause || ' - ' || title || ' (' || standard || ')' as name FROM standard_requirements ORDER BY standard, sort_order").all();
-  else if (type === 'audit') items = await db.prepare('SELECT id, title as name FROM audits ORDER BY title').all();
-  else if (type === 'role') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'role' ORDER BY name").all();
-  else if (type === 'process') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process' ORDER BY name").all();
-  else if (type === 'system') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'system' ORDER BY name").all();
-  else if (type === 'asset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'asset' ORDER BY name").all();
-  else if (type === 'facility') items = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'facility' ORDER BY name").all();
-  else if (type === 'document') items = await db.prepare('SELECT id, title as name FROM documents ORDER BY title').all();
-  else if (type === 'ncr') items = await db.prepare("SELECT id, clause || ' - ' || substr(description, 1, 60) as name FROM non_conformities ORDER BY id DESC").all();
-  else if (type === 'treatment') items = await db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments ORDER BY id DESC").all();
-  else if (type === 'action') items = await db.prepare('SELECT id, title as name FROM actions ORDER BY id DESC').all();
+  if (type === 'risk') items = await db.prepare('SELECT id, title as name FROM risks WHERE organization_id = ? ORDER BY title').all(oid);
+  else if (type === 'task') items = await db.prepare('SELECT id, title as name FROM tasks WHERE organization_id = ? ORDER BY title').all(oid);
+  else if (type === 'requirement') items = await db.prepare("SELECT id, clause || ' - ' || title || ' (' || standard || ')' as name FROM standard_requirements WHERE organization_id = ? ORDER BY standard, sort_order").all(oid);
+  else if (type === 'audit') items = await db.prepare('SELECT id, title as name FROM audits WHERE organization_id = ? ORDER BY title').all(oid);
+  else if (type === 'role') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'role' ORDER BY name").all(oid);
+  else if (type === 'process') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'process' ORDER BY name").all(oid);
+  else if (type === 'system') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'system' ORDER BY name").all(oid);
+  else if (type === 'asset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'asset' ORDER BY name").all(oid);
+  else if (type === 'facility') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'facility' ORDER BY name").all(oid);
+  else if (type === 'document') items = await db.prepare('SELECT id, title as name FROM documents WHERE organization_id = ? ORDER BY title').all(oid);
+  else if (type === 'ncr') items = await db.prepare("SELECT id, clause || ' - ' || substr(description, 1, 60) as name FROM non_conformities WHERE organization_id = ? ORDER BY id DESC").all(oid);
+  else if (type === 'treatment') items = await db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments WHERE organization_id = ? ORDER BY id DESC").all(oid);
+  else if (type === 'action') items = await db.prepare('SELECT id, title as name FROM actions WHERE organization_id = ? ORDER BY id DESC').all(oid);
   res.json(items);
 });
 
 // Cross-linking references endpoint (legacy for document control)
-app.get('/api/link-references', async (req, res) => {
+app.get('/api/link-references', requireOrgContext, async (req, res) => {
   const { module } = req.query;
   const refs = [];
   if (module === 'audits') {
-    const reqs = await db.prepare('SELECT id, clause, title, standard FROM standard_requirements ORDER BY standard, sort_order').all();
+    const reqs = await db.prepare('SELECT id, clause, title, standard FROM standard_requirements WHERE organization_id = ? ORDER BY standard, sort_order').all(req.orgId);
     reqs.forEach(r => refs.push({ id: r.id, type: 'requirement', label: `${r.clause} - ${r.title} (${r.standard})` }));
   } else if (module === 'risk-management') {
-    const risks = await db.prepare('SELECT id, title FROM risks ORDER BY title').all();
+    const risks = await db.prepare('SELECT id, title FROM risks WHERE organization_id = ? ORDER BY title').all(req.orgId);
     risks.forEach(r => refs.push({ id: r.id, type: 'risk', label: r.title }));
   } else if (module === 'operational-planning') {
-    const tasks = await db.prepare('SELECT id, title FROM tasks ORDER BY title').all();
+    const tasks = await db.prepare('SELECT id, title FROM tasks WHERE organization_id = ? ORDER BY title').all(req.orgId);
     tasks.forEach(t => refs.push({ id: t.id, type: 'task', label: t.title }));
   }
   res.json(refs);
