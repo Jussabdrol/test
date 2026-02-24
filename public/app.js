@@ -8,6 +8,8 @@ let yearlyYear = new Date().getFullYear();
 let lastCompletionContext = null; // { completion_id, task_id }
 let yearlyData = null; // cached yearly API data
 let currentUser = null;
+let isSuperadmin = false;
+let activeOrg = null; // { id, name, slug } when superadmin is inside an org
 
 // --- Authentication ---
 async function loadCurrentUser() {
@@ -16,8 +18,19 @@ async function loadCurrentUser() {
     const data = await res.json();
     if (data.authenticated && data.user) {
       currentUser = data.user;
+      isSuperadmin = data.isSuperadmin || false;
+      activeOrg = data.activeOrg || null;
       const nameEl = document.getElementById('current-user-name');
       if (nameEl) nameEl.textContent = data.user.name;
+
+      // Show MSP portal for superadmins without active org context
+      if (isSuperadmin && !activeOrg) {
+        showMSPDashboard();
+        return;
+      }
+
+      // Show org banner for superadmins inside an org
+      renderOrgBanner();
     }
   } catch (err) {
     console.error('Failed to load user info:', err);
@@ -34,6 +47,239 @@ async function logout() {
     console.error('Logout failed:', err);
     window.location.href = '/login';
   }
+}
+
+// ===========================================================================
+// MSP PORTAL DASHBOARD (superadmin only)
+// ===========================================================================
+
+async function showMSPDashboard() {
+  // Hide sidebar and main content, show MSP dashboard
+  const sidebar = document.querySelector('.sidebar');
+  const mainContent = document.querySelector('.main-content');
+  if (sidebar) sidebar.style.display = 'none';
+  if (mainContent) mainContent.innerHTML = renderMSPPortalHTML();
+
+  // Load organizations
+  await loadMSPOrganizations();
+}
+
+function renderMSPPortalHTML() {
+  return `
+    <div id="msp-portal" style="padding: 32px; max-width: 1200px; margin: 0 auto;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px;">
+        <div>
+          <h1 style="font-size: 28px; font-weight: 700; color: #111827; margin-bottom: 4px;">MSP Portal</h1>
+          <p style="color: #6b7280; font-size: 14px;">Manage all organizations from a single dashboard</p>
+        </div>
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <span style="color: #6b7280; font-size: 13px;">Logged in as <strong>${currentUser?.name || 'Superadmin'}</strong></span>
+          <button onclick="logout()" style="padding: 8px 16px; background: #dc2626; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px;">Logout</button>
+        </div>
+      </div>
+
+      <div id="msp-stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px;"></div>
+
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+        <h2 style="font-size: 18px; font-weight: 600; color: #111827;">Organizations</h2>
+        <button onclick="showCreateOrgModal()" style="padding: 8px 20px; background: #111827; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;">+ New Organization</button>
+      </div>
+
+      <div id="msp-org-list" style="background: #fff; border-radius: 8px; border: 1px solid #e5e7eb; overflow: hidden;">
+        <div style="padding: 40px; text-align: center; color: #9ca3af;">Loading organizations...</div>
+      </div>
+    </div>
+
+    <div id="create-org-modal" style="display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.5); align-items: center; justify-content: center;">
+      <div style="background: #fff; border-radius: 12px; padding: 24px; width: 100%; max-width: 420px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);">
+        <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 16px;">Create Organization</h3>
+        <input type="text" id="new-org-name" placeholder="Organization name" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; margin-bottom: 16px;">
+        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+          <button onclick="hideCreateOrgModal()" style="padding: 8px 16px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer;">Cancel</button>
+          <button onclick="createOrganization()" style="padding: 8px 20px; background: #111827; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 500;">Create</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function loadMSPOrganizations() {
+  try {
+    const [orgsRes, statsRes] = await Promise.all([
+      fetch('/api/msp/organizations'),
+      fetch('/api/msp/dashboard')
+    ]);
+    const orgs = await orgsRes.json();
+    const stats = await statsRes.json();
+
+    // Render stats
+    const statsEl = document.getElementById('msp-stats');
+    if (statsEl) {
+      statsEl.innerHTML = `
+        <div style="background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb;">
+          <div style="font-size: 28px; font-weight: 700; color: #111827;">${stats.totalOrgs}</div>
+          <div style="font-size: 13px; color: #6b7280; margin-top: 4px;">Total Organizations</div>
+        </div>
+        <div style="background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb;">
+          <div style="font-size: 28px; font-weight: 700; color: #059669;">${stats.activeOrgs}</div>
+          <div style="font-size: 13px; color: #6b7280; margin-top: 4px;">Active Organizations</div>
+        </div>
+        <div style="background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb;">
+          <div style="font-size: 28px; font-weight: 700; color: #2563eb;">${stats.totalUsers}</div>
+          <div style="font-size: 13px; color: #6b7280; margin-top: 4px;">Total Users</div>
+        </div>
+      `;
+    }
+
+    // Render org list
+    const listEl = document.getElementById('msp-org-list');
+    if (listEl) {
+      if (orgs.length === 0) {
+        listEl.innerHTML = '<div style="padding: 40px; text-align: center; color: #9ca3af;">No organizations yet. Create your first one!</div>';
+        return;
+      }
+      listEl.innerHTML = `
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+              <th style="text-align: left; padding: 12px 16px; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Organization</th>
+              <th style="text-align: center; padding: 12px 16px; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Status</th>
+              <th style="text-align: center; padding: 12px 16px; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Users</th>
+              <th style="text-align: center; padding: 12px 16px; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Created</th>
+              <th style="text-align: right; padding: 12px 16px; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${orgs.map(org => `
+              <tr style="border-bottom: 1px solid #f3f4f6;">
+                <td style="padding: 14px 16px;">
+                  <div style="font-weight: 600; color: #111827;">${escapeHtml(org.name)}</div>
+                  <div style="font-size: 12px; color: #9ca3af;">${escapeHtml(org.slug)}</div>
+                </td>
+                <td style="text-align: center; padding: 14px 16px;">
+                  <span style="display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; ${org.is_active ? 'background: #d1fae5; color: #065f46;' : 'background: #fee2e2; color: #991b1b;'}">${org.is_active ? 'Active' : 'Inactive'}</span>
+                </td>
+                <td style="text-align: center; padding: 14px 16px; color: #374151; font-weight: 500;">${org.user_count || 0}</td>
+                <td style="text-align: center; padding: 14px 16px; color: #6b7280; font-size: 13px;">${new Date(org.created_at).toLocaleDateString()}</td>
+                <td style="text-align: right; padding: 14px 16px;">
+                  <button onclick="enterOrg(${org.id})" style="padding: 6px 14px; background: #111827; color: #fff; border: none; border-radius: 5px; cursor: pointer; font-size: 12px; margin-right: 6px;">Open</button>
+                  <button onclick="toggleOrgActive(${org.id}, ${org.is_active ? 0 : 1})" style="padding: 6px 14px; background: ${org.is_active ? '#fef3c7' : '#d1fae5'}; color: ${org.is_active ? '#92400e' : '#065f46'}; border: 1px solid ${org.is_active ? '#fcd34d' : '#6ee7b7'}; border-radius: 5px; cursor: pointer; font-size: 12px;">${org.is_active ? 'Deactivate' : 'Activate'}</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+  } catch (err) {
+    console.error('Failed to load organizations:', err);
+  }
+}
+
+function showCreateOrgModal() {
+  const modal = document.getElementById('create-org-modal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function hideCreateOrgModal() {
+  const modal = document.getElementById('create-org-modal');
+  if (modal) modal.style.display = 'none';
+  const input = document.getElementById('new-org-name');
+  if (input) input.value = '';
+}
+
+async function createOrganization() {
+  const name = document.getElementById('new-org-name')?.value?.trim();
+  if (!name) return alert('Please enter an organization name');
+  try {
+    const res = await fetch('/api/msp/organizations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return alert(err.error || 'Failed to create organization');
+    }
+    hideCreateOrgModal();
+    await loadMSPOrganizations();
+  } catch (err) {
+    alert('Failed to create organization');
+  }
+}
+
+async function toggleOrgActive(orgId, newState) {
+  const action = newState ? 'activate' : 'deactivate';
+  if (!confirm(`Are you sure you want to ${action} this organization?`)) return;
+  try {
+    await fetch(`/api/msp/organizations/${orgId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: newState })
+    });
+    await loadMSPOrganizations();
+  } catch (err) {
+    alert('Failed to update organization');
+  }
+}
+
+async function enterOrg(orgId) {
+  try {
+    const res = await fetch('/api/msp/switch-org', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organization_id: orgId })
+    });
+    if (res.ok) {
+      window.location.reload();
+    }
+  } catch (err) {
+    alert('Failed to enter organization');
+  }
+}
+
+async function backToMSP() {
+  try {
+    const res = await fetch('/api/msp/switch-org', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organization_id: null })
+    });
+    if (res.ok) {
+      window.location.reload();
+    }
+  } catch (err) {
+    alert('Failed to return to MSP portal');
+  }
+}
+
+// ===========================================================================
+// ORG BANNER (shown when superadmin is inside an org)
+// ===========================================================================
+
+function renderOrgBanner() {
+  // Remove any existing banner
+  const existing = document.getElementById('org-context-banner');
+  if (existing) existing.remove();
+
+  if (!isSuperadmin || !activeOrg) return;
+
+  const banner = document.createElement('div');
+  banner.id = 'org-context-banner';
+  banner.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; z-index: 9999; background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; padding: 10px 24px; display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 500; box-shadow: 0 2px 8px rgba(0,0,0,0.15);';
+  banner.innerHTML = `
+    <span>Viewing as: <strong>${escapeHtml(activeOrg.name)}</strong></span>
+    <a href="#" onclick="backToMSP(); return false;" style="color: #fff; text-decoration: underline; font-weight: 600; cursor: pointer;">Back to MSP Portal</a>
+  `;
+  document.body.prepend(banner);
+
+  // Push content down to make room for the banner
+  document.body.style.paddingTop = '44px';
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // Load user on page load

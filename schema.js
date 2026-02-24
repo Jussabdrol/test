@@ -1,10 +1,20 @@
 /**
  * Database Schema Definitions – Supabase PostgreSQL
+ * Multi-tenant MSP Portal Schema
  */
 
 const POSTGRES_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS organizations (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    is_active INTEGER DEFAULT 1
+  );
+
   CREATE TABLE IF NOT EXISTS tasks (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
     assignee TEXT DEFAULT '',
@@ -23,6 +33,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS completions (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     task_id INTEGER NOT NULL,
     completed_by TEXT DEFAULT '',
     completed_at TIMESTAMP DEFAULT NOW(),
@@ -32,6 +43,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS actions (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     completion_id INTEGER NOT NULL,
     task_id INTEGER NOT NULL,
     title TEXT NOT NULL,
@@ -49,6 +61,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS audits (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     standard TEXT DEFAULT 'ISO 9001',
     scope TEXT DEFAULT '',
@@ -70,6 +83,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS audit_checklist (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     audit_id INTEGER NOT NULL,
     clause TEXT NOT NULL,
     requirement TEXT DEFAULT '',
@@ -85,6 +99,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS non_conformities (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     audit_id INTEGER NOT NULL,
     checklist_item_id INTEGER DEFAULT NULL,
     clause TEXT DEFAULT '',
@@ -106,6 +121,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS standard_requirements (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     standard TEXT NOT NULL DEFAULT 'ISO 9001',
     clause TEXT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
@@ -119,6 +135,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS risks (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
     category TEXT DEFAULT 'Information Security',
@@ -137,6 +154,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS risk_treatments (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     risk_id INTEGER NOT NULL,
     treatment_type TEXT DEFAULT 'mitigate' CHECK(treatment_type IN ('mitigate','accept','transfer','avoid')),
     description TEXT DEFAULT '',
@@ -156,6 +174,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS soa_entries (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     requirement_id INTEGER NOT NULL,
     applicable INTEGER DEFAULT 1,
     justification TEXT DEFAULT '',
@@ -170,6 +189,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS org_mission (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     content TEXT DEFAULT '',
     vision TEXT DEFAULT '',
     values_text TEXT DEFAULT '',
@@ -178,6 +198,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS org_kpis (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     module TEXT DEFAULT 'custom',
@@ -191,6 +212,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS org_kpi_values (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     kpi_id INTEGER NOT NULL,
     value REAL NOT NULL,
     period TEXT NOT NULL,
@@ -200,6 +222,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS org_architecture (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     arch_type TEXT NOT NULL CHECK(arch_type IN ('role','process','system','asset','facility')),
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
@@ -214,6 +237,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS documents (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
     doc_type TEXT DEFAULT 'policy' CHECK(doc_type IN ('policy','procedure','work_instruction','record','form','report','other')),
@@ -235,16 +259,18 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS cross_links (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     source_type TEXT NOT NULL,
     source_id INTEGER NOT NULL,
     target_type TEXT NOT NULL,
     target_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(source_type, source_id, target_type, target_id)
+    UNIQUE(organization_id, source_type, source_id, target_type, target_id)
   );
 
   CREATE TABLE IF NOT EXISTS threat_feeds (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     url TEXT NOT NULL,
     tier INTEGER DEFAULT 1 CHECK(tier BETWEEN 1 AND 4),
@@ -255,6 +281,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS threat_items (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     feed_id INTEGER NOT NULL,
     guid TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -270,10 +297,11 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password TEXT DEFAULT NULL,
-    role TEXT DEFAULT 'user' CHECK(role IN ('viewer','user','manager','admin')),
+    role TEXT DEFAULT 'org_user' CHECK(role IN ('superadmin','org_admin','org_user')),
     department TEXT DEFAULT '',
     permissions TEXT DEFAULT '["org","risk","ops","audit"]',
     status TEXT DEFAULT 'active' CHECK(status IN ('active','pending','suspended','inactive')),
@@ -281,18 +309,21 @@ const POSTGRES_SCHEMA_SQL = `
     expiry_date TEXT DEFAULT NULL,
     notes TEXT DEFAULT '',
     sso_provider TEXT DEFAULT NULL,
+    supabase_uid TEXT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS system_settings (
     key TEXT PRIMARY KEY,
+    organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
     value TEXT NOT NULL,
     updated_at TIMESTAMP DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS admin_audit_log (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
     user_id INTEGER DEFAULT NULL,
     user_name TEXT DEFAULT 'System',
     action TEXT NOT NULL,
@@ -306,6 +337,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS api_keys (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     key_hash TEXT NOT NULL,
     key_prefix TEXT NOT NULL,
@@ -318,6 +350,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS webhooks (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     url TEXT NOT NULL,
     events TEXT DEFAULT '[]',
@@ -330,6 +363,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS backups (
     id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     filename TEXT NOT NULL,
     size INTEGER DEFAULT 0,
     type TEXT DEFAULT 'manual' CHECK(type IN ('manual','scheduled')),
@@ -339,6 +373,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS saml_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
+    organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
     enabled INTEGER DEFAULT 0,
     entity_id TEXT DEFAULT '',
     sso_url TEXT DEFAULT '',
@@ -347,7 +382,7 @@ const POSTGRES_SCHEMA_SQL = `
     name_id_format TEXT DEFAULT 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
     attribute_mapping TEXT DEFAULT '{"email":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress","name":"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/displayname","groups":"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"}',
     auto_provision INTEGER DEFAULT 1,
-    default_role TEXT DEFAULT 'user',
+    default_role TEXT DEFAULT 'org_user',
     allowed_domains TEXT DEFAULT '',
     updated_at TIMESTAMP DEFAULT NOW()
   );
@@ -363,7 +398,7 @@ const POSTGRES_SCHEMA_SQL = `
   );
 `;
 
-// Default threat feeds to seed
+// Default threat feeds to seed per organization
 const DEFAULT_THREAT_FEEDS = [
   { name: 'CERT-EU Latest', url: 'https://cert.europa.eu/publications/security-advisories/rss', tier: 1 },
   { name: 'NCSC-UK Advisories', url: 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml', tier: 1 },
