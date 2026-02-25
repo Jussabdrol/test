@@ -26,7 +26,7 @@ async function loadCurrentUser() {
       // Show MSP portal for superadmins without active org context
       if (isSuperadmin && !activeOrg) {
         showMSPDashboard();
-        return;
+        return true; // signals: MSP portal shown, skip normal dashboard load
       }
 
       // Show org banner for superadmins inside an org
@@ -35,6 +35,7 @@ async function loadCurrentUser() {
   } catch (err) {
     console.error('Failed to load user info:', err);
   }
+  return false;
 }
 
 async function logout() {
@@ -282,8 +283,8 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Load user on page load
-loadCurrentUser();
+// Load user on page load — stored as promise so init can await it
+const userReady = loadCurrentUser();
 
 // --- Sidebar Toggle ---
 function toggleSidebar() {
@@ -4687,6 +4688,7 @@ async function loadMissionControl() {
 
   // Auto KPIs
   const d = await api('/api/kpis/auto');
+  if (d.error) { console.warn('KPI auto load failed:', d.error); return; }
   const soaPct = d.soa_applicable > 0 ? Math.round((d.soa_implemented / d.soa_applicable) * 100) : 0;
   document.getElementById('auto-kpi-grid').innerHTML = `
     <div class="kpi-module-group">
@@ -6973,4 +6975,8 @@ async function saveServiceConfig(service, e) {
 }
 
 // --- Init ---
-loadMissionControl();
+// Wait for auth check before loading dashboard – superadmins without an active
+// org context see the MSP portal instead and should not hit org-scoped API routes.
+userReady.then(showingMSP => {
+  if (!showingMSP) loadMissionControl();
+});
