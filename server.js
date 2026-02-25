@@ -10,13 +10,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Supabase client – used for Storage AND Auth
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+const supabase = process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  : null;
 
 // Supabase service-role client – for admin auth operations (user creation, metadata updates)
-const supabaseAdmin = process.env.SUPABASE_SERVICE_ROLE_KEY
+const supabaseAdmin = process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
   ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
   : null;
 
@@ -34,6 +33,7 @@ function storageKey(folder, originalname) {
 
 // Helper: upload a buffer to Supabase Storage; returns the storage path
 async function uploadToSupabase(folder, file) {
+  if (!supabase) throw new Error('Supabase is not configured (missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY)');
   const key = storageKey(folder, file.originalname);
   const { error } = await supabase.storage
     .from(UPLOADS_BUCKET)
@@ -44,6 +44,7 @@ async function uploadToSupabase(folder, file) {
 
 // Helper: get a short-lived signed download URL from Supabase Storage
 async function getSignedUrl(storagePath, expiresIn = 300) {
+  if (!supabase) throw new Error('Supabase is not configured (missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY)');
   const { data, error } = await supabase.storage
     .from(UPLOADS_BUCKET)
     .createSignedUrl(storagePath, expiresIn);
@@ -53,6 +54,7 @@ async function getSignedUrl(storagePath, expiresIn = 300) {
 
 // Helper: delete a file from Supabase Storage (ignores "not found" errors)
 async function deleteFromSupabase(storagePath) {
+  if (!supabase) return;
   await supabase.storage.from(UPLOADS_BUCKET).remove([storagePath]);
 }
 
@@ -264,12 +266,14 @@ app.post('/api/auth/login', async (req, res) => {
 
     // --- Try Supabase Auth first ---
     let supabaseUser = null;
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (!error && data?.user) {
-        supabaseUser = data.user;
-      }
-    } catch (_) { /* Supabase Auth unavailable – fall through to local auth */ }
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (!error && data?.user) {
+          supabaseUser = data.user;
+        }
+      } catch (_) { /* Supabase Auth unavailable – fall through to local auth */ }
+    }
 
     // --- Look up the user in our database ---
     const user = await db.prepare('SELECT * FROM users WHERE email = ? AND status = ?').get(email.toLowerCase().trim(), 'active');
@@ -2399,6 +2403,7 @@ app.post('/api/admin/backups', requireAdmin, async (req, res) => {
   const size = Buffer.byteLength(content, 'utf8');
 
   // Upload backup to Supabase Storage
+  if (!supabase) return res.status(500).json({ error: 'Supabase is not configured (missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY)' });
   const { error: uploadError } = await supabase.storage
     .from(UPLOADS_BUCKET)
     .upload(`backups/${filename}`, Buffer.from(content, 'utf8'), { contentType: 'application/json', upsert: false });
