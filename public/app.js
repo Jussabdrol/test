@@ -55,9 +55,9 @@ async function logout() {
 // ===========================================================================
 
 async function showMSPDashboard() {
-  // Hide sidebar and main content, show MSP dashboard
+  // Hide sidebar, replace main content area with MSP dashboard
   const sidebar = document.querySelector('.sidebar');
-  const mainContent = document.querySelector('.main-content');
+  const mainContent = document.querySelector('.content');
   if (sidebar) sidebar.style.display = 'none';
   if (mainContent) mainContent.innerHTML = renderMSPPortalHTML();
 
