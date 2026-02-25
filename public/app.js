@@ -31,11 +31,57 @@ async function loadCurrentUser() {
 
       // Show org banner for superadmins inside an org
       renderOrgBanner();
+
+      // Apply module permissions to sidebar (superadmins see everything)
+      if (!isSuperadmin) {
+        applyModulePermissions();
+      }
     }
   } catch (err) {
     console.error('Failed to load user info:', err);
   }
   return false;
+}
+
+// Maps permission keys to sidebar data-module attribute values
+const PERM_TO_MODULE = {
+  org: 'org-planning',
+  risk: 'risk-management',
+  ops: 'operational-planning',
+  audit: 'audits',
+  admin: 'admin',
+};
+
+function applyModulePermissions() {
+  let perms = [];
+  try { perms = JSON.parse(currentUser.permissions || '[]'); } catch (e) {}
+
+  // Admin role always gets admin module access
+  if (currentUser.role === 'admin' && !perms.includes('admin')) {
+    perms.push('admin');
+  }
+
+  const allowedModules = new Set(perms.map(p => PERM_TO_MODULE[p]).filter(Boolean));
+
+  document.querySelectorAll('.nav-module').forEach(moduleEl => {
+    const toggle = moduleEl.querySelector('.module-toggle');
+    if (!toggle) return;
+    const moduleId = toggle.dataset.module;
+    if (!allowedModules.has(moduleId)) {
+      moduleEl.style.display = 'none';
+    }
+  });
+
+  // If the current default view (mission-control) is not accessible,
+  // navigate to the first available view
+  const currentDefault = 'mission-control';
+  const defaultModuleAllowed = allowedModules.has('org-planning');
+  if (!defaultModuleAllowed) {
+    const firstVisibleLink = document.querySelector('.nav-module:not([style*="display: none"]) .nav-link');
+    if (firstVisibleLink) {
+      switchView(firstVisibleLink.dataset.view);
+    }
+  }
 }
 
 async function logout() {
@@ -328,7 +374,37 @@ document.querySelectorAll('.nav-link').forEach(link => {
   });
 });
 
+// Maps each view to its parent module data-module attribute
+const VIEW_TO_MODULE = {};
+document.querySelectorAll('.nav-module').forEach(moduleEl => {
+  const toggle = moduleEl.querySelector('.module-toggle');
+  if (!toggle) return;
+  const moduleId = toggle.dataset.module;
+  moduleEl.querySelectorAll('.nav-link').forEach(link => {
+    VIEW_TO_MODULE[link.dataset.view] = moduleId;
+  });
+});
+
+// Reverse lookup: module → permission key
+const MODULE_TO_PERM = Object.fromEntries(
+  Object.entries(PERM_TO_MODULE).map(([perm, mod]) => [mod, perm])
+);
+
+function hasPermissionForView(view) {
+  if (isSuperadmin) return true;
+  if (!currentUser) return true; // not loaded yet, allow
+  const moduleId = VIEW_TO_MODULE[view];
+  if (!moduleId) return true; // unknown view, allow
+  const requiredPerm = MODULE_TO_PERM[moduleId];
+  if (!requiredPerm) return true;
+  let perms = [];
+  try { perms = JSON.parse(currentUser.permissions || '[]'); } catch (e) {}
+  if (currentUser.role === 'admin' && !perms.includes('admin')) perms.push('admin');
+  return perms.includes(requiredPerm);
+}
+
 function switchView(view) {
+  if (!hasPermissionForView(view)) return;
   currentView = view;
   closeDayDetail();
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -361,7 +437,6 @@ function switchView(view) {
   else if (view === 'audit-plan') loadAuditPlan();
   else if (view === 'audit-execute') loadAuditExecuteView();
   else if (view === 'audit-ncrs') loadNcrs();
-  else if (view === 'audit-statistics') loadAuditStatistics();
   else if (view === 'audit-requirements') loadRequirements();
   else if (view === 'threat-intelligence') loadThreatIntelligence();
   else if (view === 'risk-identification') loadRiskIdentification();
@@ -2727,107 +2802,6 @@ async function saveChecklistEdit() {
 
   closeChecklistEditModal();
   loadAuditExecution(auditId);
-}
-
-// --- Audit Statistics View ---
-async function loadAuditStatistics() {
-  const content = document.getElementById('audit-stats-content');
-  content.innerHTML = '<div class="empty-state">Loading...</div>';
-  const [audits, ncrs] = await Promise.all([
-    api('/api/audits'),
-    api('/api/ncrs'),
-  ]);
-
-  // Flatten all audit events
-  const allEvents = [];
-  for (const a of audits) {
-    if (a.all_events && a.all_events.length > 0) {
-      for (const ev of a.all_events) allEvents.push({ ...ev, parent_title: a.title, standard: a.standard });
-    } else {
-      allEvents.push({ ...a, parent_title: a.title });
-    }
-  }
-
-  const totalEvents = allEvents.length;
-  const completedEvents = allEvents.filter(e => e.status === 'completed').length;
-  const inProgressEvents = allEvents.filter(e => e.status === 'in_progress').length;
-  const plannedEvents = allEvents.filter(e => e.status === 'planned').length;
-  const completionRate = totalEvents > 0 ? Math.round((completedEvents / totalEvents) * 100) : 0;
-
-  const openNcrs = ncrs.filter(n => n.status === 'open' || n.status === 'in_progress').length;
-  const closedNcrs = ncrs.filter(n => n.status === 'closed' || n.status === 'verified').length;
-  const majorNcrs = ncrs.filter(n => n.severity === 'major').length;
-  const minorNcrs = ncrs.filter(n => n.severity === 'minor').length;
-
-  // Group NCRs by audit standard
-  const ncrByStandard = {};
-  for (const n of ncrs) {
-    const std = n.ncr_standard || n.audit_standard || 'Unknown';
-    if (!ncrByStandard[std]) ncrByStandard[std] = { total: 0, open: 0, closed: 0 };
-    ncrByStandard[std].total++;
-    if (n.status === 'open' || n.status === 'in_progress') ncrByStandard[std].open++;
-    else ncrByStandard[std].closed++;
-  }
-
-  // Group audits by status for history — use planned_date as fallback since parentAsEvent doesn't always carry completed_date
-  const recentCompleted = allEvents
-    .filter(e => e.status === 'completed')
-    .sort((a, b) => (b.completed_date || b.planned_date || '').localeCompare(a.completed_date || a.planned_date || ''))
-    .slice(0, 10);
-
-  let html = `
-    <div class="stats-grid" style="margin-bottom:24px">
-      <div class="stat-card"><div class="stat-value">${totalEvents}</div><div class="stat-label">Total Audit Events</div></div>
-      <div class="stat-card done"><div class="stat-value">${completedEvents}</div><div class="stat-label">Completed</div></div>
-      <div class="stat-card today"><div class="stat-value">${inProgressEvents}</div><div class="stat-label">In Progress</div></div>
-      <div class="stat-card"><div class="stat-value">${plannedEvents}</div><div class="stat-label">Planned</div></div>
-      <div class="stat-card ${completionRate >= 80 ? 'done' : completionRate >= 50 ? 'today' : 'overdue'}"><div class="stat-value">${completionRate}%</div><div class="stat-label">Completion Rate</div></div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">
-      <div class="card">
-        <h3 class="section-title" style="margin:0 0 16px">Non-Conformity Summary</h3>
-        <div class="stats-grid">
-          <div class="stat-card"><div class="stat-value">${ncrs.length}</div><div class="stat-label">Total NCRs</div></div>
-          <div class="stat-card ${openNcrs > 0 ? 'overdue' : 'done'}"><div class="stat-value">${openNcrs}</div><div class="stat-label">Open</div></div>
-          <div class="stat-card done"><div class="stat-value">${closedNcrs}</div><div class="stat-label">Closed</div></div>
-          <div class="stat-card ${majorNcrs > 0 ? 'overdue' : ''}"><div class="stat-value">${majorNcrs}</div><div class="stat-label">Major</div></div>
-          <div class="stat-card ${minorNcrs > 0 ? 'today' : ''}"><div class="stat-value">${minorNcrs}</div><div class="stat-label">Minor</div></div>
-        </div>
-      </div>
-      <div class="card">
-        <h3 class="section-title" style="margin:0 0 16px">NCRs by Standard</h3>
-        ${Object.keys(ncrByStandard).length === 0
-          ? '<div class="empty-state" style="padding:20px">No NCRs recorded yet</div>'
-          : `<table class="data-table"><thead><tr><th>Standard</th><th>Total</th><th>Open</th><th>Closed</th></tr></thead><tbody>
-              ${Object.entries(ncrByStandard).map(([std, d]) => `<tr>
-                <td><span class="badge badge-inactive" style="font-size:11px">${esc(std)}</span></td>
-                <td>${d.total}</td>
-                <td>${d.open > 0 ? `<span class="badge badge-high">${d.open}</span>` : '<span style="color:var(--text-muted)">0</span>'}</td>
-                <td>${d.closed > 0 ? `<span class="badge badge-low">${d.closed}</span>` : '<span style="color:var(--text-muted)">0</span>'}</td>
-              </tr>`).join('')}
-            </tbody></table>`}
-      </div>
-    </div>
-
-    <h3 class="section-title">Recent Completed Audits</h3>
-    ${recentCompleted.length === 0
-      ? '<div class="empty-state">No completed audits yet</div>'
-      : `<table class="data-table"><thead><tr><th>Audit</th><th>Standard</th><th>Completed</th><th>Checklist</th><th>NCs Found</th></tr></thead><tbody>
-          ${recentCompleted.map(e => {
-            const audit = audits.find(a => a.id === e.id || (a.all_events && a.all_events.some(ev => ev.id === e.id)));
-            const eventNcrs = ncrs.filter(n => n.audit_id === e.id);
-            return `<tr>
-              <td style="cursor:pointer;color:var(--primary);font-weight:500" onclick="switchToExecute(${e.id})">${esc(e.parent_title || e.title || '')}</td>
-              <td>${esc(e.standard || '-')}</td>
-              <td>${e.completed_date || e.planned_date || '-'}</td>
-              <td>${e.assessed_count || 0}/${e.checklist_count || 0}</td>
-              <td>${eventNcrs.length > 0 ? `<span class="badge badge-high">${eventNcrs.length}</span>` : '<span style="color:var(--text-muted)">0</span>'}</td>
-            </tr>`;
-          }).join('')}
-        </tbody></table>`}`;
-
-  content.innerHTML = html;
 }
 
 // --- Non-Conformities View ---
@@ -6975,8 +6949,14 @@ async function saveServiceConfig(service, e) {
 }
 
 // --- Init ---
-// Wait for auth check before loading dashboard – superadmins without an active
-// org context see the MSP portal instead and should not hit org-scoped API routes.
+// Wait for auth check before loading the default view. Superadmins without an
+// active org context see the MSP portal instead. Non-superadmin users land on
+// the first view they have permission for (mission-control if 'org' is allowed).
 userReady.then(showingMSP => {
-  if (!showingMSP) loadMissionControl();
+  if (showingMSP) return;
+  if (hasPermissionForView('mission-control')) {
+    loadMissionControl();
+  }
+  // If mission-control is not permitted, applyModulePermissions() in
+  // loadCurrentUser already navigated to the first accessible view.
 });

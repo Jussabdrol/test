@@ -2014,7 +2014,7 @@ app.get('/api/admin/overview', requireAdmin, async (req, res) => {
 // Admin-only middleware (org_admin or superadmin with active org context)
 function requireAdmin(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Authentication required' });
-  if (!['superadmin', 'org_admin'].includes(req.session.userRole)) {
+  if (!['superadmin', 'org_admin', 'admin'].includes(req.session.userRole)) {
     return res.status(403).json({ error: 'Administrator access required' });
   }
   const orgId = getOrgId(req);
