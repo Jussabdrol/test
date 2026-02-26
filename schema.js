@@ -396,6 +396,9 @@ const POSTGRES_SCHEMA_SQL = `
     expires_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+
+  -- Migrations: add legal_entities to org_mission
+  ALTER TABLE org_mission ADD COLUMN IF NOT EXISTS legal_entities TEXT DEFAULT '[]';
 `;
 
 // Default threat feeds to seed per organization

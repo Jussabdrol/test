@@ -1903,7 +1903,9 @@
         <div class="form-row">
           <div class="form-group">
             <label for="doc-owner">Owner</label>
-            <input type="text" id="doc-owner" placeholder="Document owner">
+            <select id="doc-owner">
+              <option value="">-- Select Owner --</option>
+            </select>
           </div>
           <div class="form-group">
             <label for="doc-status">Status</label>
@@ -1939,21 +1941,23 @@
           <label for="doc-file">File (PDF, DOCX, XLS, etc.)</label>
           <input type="file" id="doc-file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.png,.jpg,.jpeg">
         </div>
-        <div class="form-group">
-          <label for="doc-linked-module">Linked Module</label>
-          <select id="doc-linked-module">
-            <option value="">-- None --</option>
-            <option value="org-planning">Organizational Planning</option>
-            <option value="risk-management">Risk Management</option>
-            <option value="operational-planning">Operational Planning</option>
-            <option value="audits">Audits</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="doc-linked-ref">Linked Reference (Requirement/Risk/Task ID)</label>
-          <select id="doc-linked-ref">
-            <option value="">-- None --</option>
-          </select>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="doc-linked-module">Link to Module</label>
+            <select id="doc-linked-module">
+              <option value="">-- None --</option>
+              <option value="org-planning">Organizational Planning</option>
+              <option value="risk-management">Risk Management</option>
+              <option value="operational-planning">Operational Planning</option>
+              <option value="audits">Audits</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="doc-linked-ref">Linked Item</label>
+            <select id="doc-linked-ref">
+              <option value="">-- Select module first --</option>
+            </select>
+          </div>
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeDocModal()">Cancel</button>
