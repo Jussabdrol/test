@@ -1639,13 +1639,18 @@ app.put('/api/soa/:requirementId', requireOrgContext, async (req, res) => {
 
 // Mission
 app.get('/api/mission', requireOrgContext, async (req, res) => {
-  res.json(await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(req.orgId));
+  const mission = await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(req.orgId);
+  const org = await db.prepare('SELECT name FROM organizations WHERE id = ?').get(req.orgId);
+  res.json({ ...mission, org_name: org?.name || '' });
 });
 
 app.put('/api/mission', requireOrgContext, async (req, res) => {
-  const { content, vision, values_text } = req.body;
-  await db.prepare("UPDATE org_mission SET content = ?, vision = ?, values_text = ?, updated_at = datetime('now') WHERE organization_id = ?").run(content || '', vision || '', values_text || '', req.orgId);
-  res.json(await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(req.orgId));
+  const { content, vision, values_text, legal_entities } = req.body;
+  await db.prepare("UPDATE org_mission SET content = ?, vision = ?, values_text = ?, legal_entities = ?, updated_at = datetime('now') WHERE organization_id = ?")
+    .run(content || '', vision || '', values_text || '', JSON.stringify(legal_entities || []), req.orgId);
+  const mission = await db.prepare('SELECT * FROM org_mission WHERE organization_id = ?').get(req.orgId);
+  const org = await db.prepare('SELECT name FROM organizations WHERE id = ?').get(req.orgId);
+  res.json({ ...mission, org_name: org?.name || '' });
 });
 
 // KPIs
@@ -1797,7 +1802,8 @@ app.post('/api/documents', requireOrgContext, upload.single('file'), async (req,
     try {
       storagePath = await uploadToSupabase('documents', file);
     } catch (err) {
-      return res.status(500).json({ error: err.message });
+      // Storage unavailable — continue without file storage; record the metadata
+      console.warn('File upload skipped (storage unavailable):', err.message);
     }
   }
   const result = await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -1818,11 +1824,13 @@ app.put('/api/documents/:id', requireOrgContext, upload.single('file'), async (r
   if (file) {
     try {
       storagePath = await uploadToSupabase('documents', file);
+      // Delete the old file from Supabase Storage
+      if (existing.file_path) await deleteFromSupabase(existing.file_path);
     } catch (err) {
-      return res.status(500).json({ error: err.message });
+      // Storage unavailable — keep existing path, update metadata only
+      storagePath = existing.file_path;
+      console.warn('File upload skipped (storage unavailable):', err.message);
     }
-    // Delete the old file from Supabase Storage
-    if (existing.file_path) await deleteFromSupabase(existing.file_path);
   }
   await db.prepare(`UPDATE documents SET title=?, description=?, doc_type=?, version=?, owner=?, status=?, file_name=?, file_path=?, file_size=?, mime_type=?, linked_module=?, linked_ref_type=?, linked_ref_id=?, review_date=?, classification=?, updated_at=datetime('now') WHERE id=?`).run(
     title || existing.title, description !== undefined ? description : existing.description,
@@ -1956,6 +1964,11 @@ app.get('/api/link-references', requireOrgContext, async (req, res) => {
   } else if (module === 'operational-planning') {
     const tasks = await db.prepare('SELECT id, title FROM tasks WHERE organization_id = ? ORDER BY title').all(req.orgId);
     tasks.forEach(t => refs.push({ id: t.id, type: 'task', label: t.title }));
+    const actions = await db.prepare('SELECT id, title FROM actions WHERE organization_id = ? ORDER BY title').all(req.orgId);
+    actions.forEach(a => refs.push({ id: a.id, type: 'action', label: a.title }));
+  } else if (module === 'org-planning') {
+    const arch = await db.prepare('SELECT id, name, arch_type FROM org_architecture WHERE organization_id = ? ORDER BY arch_type, name').all(req.orgId);
+    arch.forEach(a => refs.push({ id: a.id, type: a.arch_type, label: `${a.name} (${a.arch_type})` }));
   }
   res.json(refs);
 });

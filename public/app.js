@@ -4620,24 +4620,49 @@ async function loadMissionControl() {
   const mission = await api('/api/mission');
   const missionSection = document.getElementById('mission-section');
 
+  let entities = [];
+  try { entities = JSON.parse(mission.legal_entities || '[]'); } catch (e) {}
+
+  const entitiesDisplayHtml = entities.length > 0
+    ? `<div class="mission-entities-list">${entities.map(e =>
+        `<div class="mission-entity-row"><span class="mission-entity-name">${esc(e.name)}</span><span class="mission-entity-country">${esc(e.country)}</span></div>`
+      ).join('')}</div>`
+    : '<span style="color:var(--text-muted);font-style:italic">No legal entities defined yet.</span>';
+
+  const entitiesEditRows = entities.length > 0
+    ? entities.map((e, i) =>
+        `<div class="mission-entity-edit-row" data-idx="${i}">
+          <input type="text" class="le-name" value="${esc(e.name)}" placeholder="Entity name">
+          <input type="text" class="le-country" value="${esc(e.country)}" placeholder="Country">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="this.closest('.mission-entity-edit-row').remove()" title="Remove">&times;</button>
+        </div>`
+      ).join('')
+    : '';
+
   missionSection.innerHTML = `
     <div class="mission-card">
       <div class="mission-card-header">
-        <h3>Organization Mission</h3>
+        <h3>${mission.org_name ? esc(mission.org_name) : 'Organization Mission'}</h3>
         <button class="btn btn-secondary btn-sm" onclick="toggleMissionEdit()">Edit</button>
       </div>
       <div id="mission-display">
-        <div class="mission-block">
-          <h4>Mission</h4>
-          <p>${mission.content ? esc(mission.content) : '<span style="color:var(--text-muted);font-style:italic">No mission statement defined yet.</span>'}</p>
-        </div>
-        <div class="mission-block">
-          <h4>Vision</h4>
-          <p>${mission.vision ? esc(mission.vision) : '<span style="color:var(--text-muted);font-style:italic">No vision defined yet.</span>'}</p>
+        <div class="mission-block-grid">
+          <div class="mission-block">
+            <h4>Mission</h4>
+            <p>${mission.content ? esc(mission.content) : '<span style="color:var(--text-muted);font-style:italic">No mission statement defined yet.</span>'}</p>
+          </div>
+          <div class="mission-block">
+            <h4>Vision</h4>
+            <p>${mission.vision ? esc(mission.vision) : '<span style="color:var(--text-muted);font-style:italic">No vision defined yet.</span>'}</p>
+          </div>
         </div>
         <div class="mission-block">
           <h4>Values</h4>
           <p>${mission.values_text ? esc(mission.values_text) : '<span style="color:var(--text-muted);font-style:italic">No values defined yet.</span>'}</p>
+        </div>
+        <div class="mission-block">
+          <h4>Legal Entities</h4>
+          ${entitiesDisplayHtml}
         </div>
       </div>
       <div id="mission-edit" class="hidden">
@@ -4653,6 +4678,13 @@ async function loadMissionControl() {
           <label>Values</label>
           <textarea id="mission-values" rows="3" placeholder="What are your organization's core values?">${esc(mission.values_text || '')}</textarea>
         </div>
+        <div class="form-group">
+          <label>Legal Entities</label>
+          <div id="legal-entities-edit">
+            ${entitiesEditRows}
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="addLegalEntityRow()">+ Add Entity</button>
+        </div>
         <div class="form-actions">
           <button class="btn btn-secondary" onclick="toggleMissionEdit()">Cancel</button>
           <button class="btn btn-primary" onclick="saveMission()">Save</button>
@@ -4664,49 +4696,51 @@ async function loadMissionControl() {
   const d = await api('/api/kpis/auto');
   if (d.error) { console.warn('KPI auto load failed:', d.error); return; }
   const soaPct = d.soa_applicable > 0 ? Math.round((d.soa_implemented / d.soa_applicable) * 100) : 0;
+  const kpiStat = (val, label, cls) => `<div class="kpi-tile-stat${cls ? ' ' + cls : ''}"><span class="kpi-tile-val">${val}</span><span class="kpi-tile-lbl">${label}</span></div>`;
+
   document.getElementById('auto-kpi-grid').innerHTML = `
-    <div class="kpi-module-group">
-      <h4 class="kpi-module-title">Task Management</h4>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value">${d.tasks_active}</div><div class="stat-label">Active Tasks</div></div>
-        <div class="stat-card${d.tasks_overdue > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.tasks_overdue}</div><div class="stat-label">Overdue</div></div>
-        <div class="stat-card done"><div class="stat-value">${d.completions_this_month}</div><div class="stat-label">Completions (Month)</div></div>
+    <div class="kpi-tile" onclick="switchView('tasks')">
+      <h4 class="kpi-tile-title">&#9881; Task Management</h4>
+      <div class="kpi-tile-stats">
+        ${kpiStat(d.tasks_active, 'Active', '')}
+        ${kpiStat(d.tasks_overdue, 'Overdue', d.tasks_overdue > 0 ? 'kpi-danger' : 'kpi-ok')}
+        ${kpiStat(d.completions_this_month, 'Done (mo)', 'kpi-ok')}
       </div>
     </div>
-    <div class="kpi-module-group">
-      <h4 class="kpi-module-title">Audits &amp; Compliance</h4>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value">${d.audits_planned}</div><div class="stat-label">Planned Audits</div></div>
-        <div class="stat-card done"><div class="stat-value">${d.audits_completed}</div><div class="stat-label">Completed</div></div>
-        <div class="stat-card${d.open_ncrs > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.open_ncrs}</div><div class="stat-label">Open NCRs</div></div>
-        <div class="stat-card${d.open_actions > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.open_actions}</div><div class="stat-label">Open Actions</div></div>
-        <div class="stat-card"><div class="stat-value">${d.standards_count}</div><div class="stat-label">Standards</div></div>
+    <div class="kpi-tile" onclick="switchView('audit-plan')">
+      <h4 class="kpi-tile-title">&#9998; Audits &amp; Compliance</h4>
+      <div class="kpi-tile-stats">
+        ${kpiStat(d.audits_planned, 'Planned', '')}
+        ${kpiStat(d.audits_completed, 'Completed', 'kpi-ok')}
+        ${kpiStat(d.open_ncrs, 'Open NCRs', d.open_ncrs > 0 ? 'kpi-danger' : 'kpi-ok')}
+        ${kpiStat(d.open_actions, 'Open Actions', d.open_actions > 0 ? 'kpi-danger' : 'kpi-ok')}
+        ${kpiStat(d.standards_count, 'Standards', '')}
       </div>
     </div>
-    <div class="kpi-module-group">
-      <h4 class="kpi-module-title">Risk Management</h4>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value">${d.total_risks}</div><div class="stat-label">Total Risks</div></div>
-        <div class="stat-card${d.high_risks > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.high_risks}</div><div class="stat-label">High / Critical</div></div>
-        <div class="stat-card"><div class="stat-value">${d.open_treatments}</div><div class="stat-label">Open Treatments</div></div>
-        <div class="stat-card${soaPct >= 80 ? ' done' : ''}"><div class="stat-value">${soaPct}%</div><div class="stat-label">SoA Implemented</div></div>
-        <div class="stat-card${d.threat_items_new > 0 ? ' overdue' : ''}"><div class="stat-value">${d.threat_items_new}</div><div class="stat-label">New Threats</div></div>
+    <div class="kpi-tile" onclick="switchView('risk-identification')">
+      <h4 class="kpi-tile-title">&#9888; Risk Management</h4>
+      <div class="kpi-tile-stats">
+        ${kpiStat(d.total_risks, 'Total', '')}
+        ${kpiStat(d.high_risks, 'High/Crit', d.high_risks > 0 ? 'kpi-danger' : 'kpi-ok')}
+        ${kpiStat(d.open_treatments, 'Open Treat.', '')}
+        ${kpiStat(soaPct + '%', 'SoA Impl.', soaPct >= 80 ? 'kpi-ok' : '')}
+        ${kpiStat(d.threat_items_new, 'New Threats', d.threat_items_new > 0 ? 'kpi-danger' : '')}
       </div>
     </div>
-    <div class="kpi-module-group">
-      <h4 class="kpi-module-title">Document Control</h4>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value">${d.total_documents}</div><div class="stat-label">Documents</div></div>
-        <div class="stat-card${d.docs_due_review > 0 ? ' overdue' : ' done'}"><div class="stat-value">${d.docs_due_review}</div><div class="stat-label">Due for Review</div></div>
+    <div class="kpi-tile" onclick="switchView('document-control')">
+      <h4 class="kpi-tile-title">&#128196; Document Control</h4>
+      <div class="kpi-tile-stats">
+        ${kpiStat(d.total_documents, 'Documents', '')}
+        ${kpiStat(d.docs_due_review, 'Due Review', d.docs_due_review > 0 ? 'kpi-danger' : 'kpi-ok')}
       </div>
     </div>
-    <div class="kpi-module-group">
-      <h4 class="kpi-module-title">Architecture</h4>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value">${d.arch_processes}</div><div class="stat-label">Processes</div></div>
-        <div class="stat-card"><div class="stat-value">${d.arch_roles}</div><div class="stat-label">Roles</div></div>
-        <div class="stat-card"><div class="stat-value">${d.arch_systems}</div><div class="stat-label">Systems</div></div>
-        <div class="stat-card"><div class="stat-value">${d.arch_facilities}</div><div class="stat-label">Facilities</div></div>
+    <div class="kpi-tile" onclick="switchView('architecture')">
+      <h4 class="kpi-tile-title">&#127970; Architecture</h4>
+      <div class="kpi-tile-stats">
+        ${kpiStat(d.arch_processes, 'Processes', '')}
+        ${kpiStat(d.arch_roles, 'Roles', '')}
+        ${kpiStat(d.arch_systems, 'Systems', '')}
+        ${kpiStat(d.arch_facilities, 'Facilities', '')}
       </div>
     </div>`;
 
@@ -4761,11 +4795,30 @@ function toggleMissionEdit() {
   document.getElementById('mission-edit').classList.toggle('hidden');
 }
 
+function addLegalEntityRow() {
+  const container = document.getElementById('legal-entities-edit');
+  const row = document.createElement('div');
+  row.className = 'mission-entity-edit-row';
+  row.innerHTML = `
+    <input type="text" class="le-name" placeholder="Entity name">
+    <input type="text" class="le-country" placeholder="Country">
+    <button type="button" class="btn btn-secondary btn-sm" onclick="this.closest('.mission-entity-edit-row').remove()" title="Remove">&times;</button>`;
+  container.appendChild(row);
+}
+
 async function saveMission() {
+  const entityRows = document.querySelectorAll('#legal-entities-edit .mission-entity-edit-row');
+  const legal_entities = [];
+  entityRows.forEach(row => {
+    const name = row.querySelector('.le-name').value.trim();
+    const country = row.querySelector('.le-country').value.trim();
+    if (name) legal_entities.push({ name, country });
+  });
   await api('/api/mission', { method: 'PUT', body: {
     content: document.getElementById('mission-content').value,
     vision: document.getElementById('mission-vision').value,
     values_text: document.getElementById('mission-values').value,
+    legal_entities,
   }});
   loadMissionControl();
 }
@@ -5624,37 +5677,59 @@ function buildDocLinksDetail(links, docId) {
   return html;
 }
 
-function openDocModal(id) {
+async function openDocModal(id) {
   document.getElementById('doc-form').reset();
   document.getElementById('doc-id').value = '';
   document.getElementById('doc-modal-title').textContent = 'Upload Document';
-  document.getElementById('doc-linked-ref').innerHTML = '<option value="">-- None --</option>';
+  document.getElementById('doc-linked-ref').innerHTML = '<option value="">-- Select module first --</option>';
+
+  // Populate owner dropdown from architecture roles + org users
+  await populateDocOwners();
 
   if (id) {
-    api('/api/documents').then(docs => {
-      const d = docs.find(x => x.id === id);
-      if (!d) return;
-      document.getElementById('doc-modal-title').textContent = 'Edit Document';
-      document.getElementById('doc-id').value = d.id;
-      document.getElementById('doc-title').value = d.title;
-      document.getElementById('doc-type').value = d.doc_type;
-      document.getElementById('doc-version').value = d.version;
-      document.getElementById('doc-owner').value = d.owner;
-      document.getElementById('doc-status').value = d.status;
-      document.getElementById('doc-description').value = d.description;
-      document.getElementById('doc-linked-module').value = d.linked_module;
-      document.getElementById('doc-review-date').value = d.review_date || '';
-      document.getElementById('doc-classification').value = d.classification || '';
-      if (d.linked_module) {
-        populateDocRefs(d.linked_module).then(() => {
-          if (d.linked_ref_id) document.getElementById('doc-linked-ref').value = `${d.linked_ref_type}:${d.linked_ref_id}`;
-        });
-      }
-      document.getElementById('doc-modal').classList.remove('hidden');
-    });
-    return;
+    const docs = await api('/api/documents');
+    const d = docs.find(x => x.id === id);
+    if (!d) return;
+    document.getElementById('doc-modal-title').textContent = 'Edit Document';
+    document.getElementById('doc-id').value = d.id;
+    document.getElementById('doc-title').value = d.title;
+    document.getElementById('doc-type').value = d.doc_type;
+    document.getElementById('doc-version').value = d.version;
+    document.getElementById('doc-owner').value = d.owner || '';
+    document.getElementById('doc-status').value = d.status;
+    document.getElementById('doc-description').value = d.description;
+    document.getElementById('doc-linked-module').value = d.linked_module;
+    document.getElementById('doc-review-date').value = d.review_date || '';
+    document.getElementById('doc-classification').value = d.classification || '';
+    if (d.linked_module) {
+      await populateDocRefs(d.linked_module);
+      if (d.linked_ref_id) document.getElementById('doc-linked-ref').value = `${d.linked_ref_type}:${d.linked_ref_id}`;
+    }
   }
   document.getElementById('doc-modal').classList.remove('hidden');
+}
+
+async function populateDocOwners() {
+  const sel = document.getElementById('doc-owner');
+  sel.innerHTML = '<option value="">-- Select Owner --</option>';
+  try {
+    const [roles, users] = await Promise.all([
+      api('/api/architecture?arch_type=role'),
+      api('/api/admin/users').catch(() => []),
+    ]);
+    const seen = new Set();
+    if (Array.isArray(roles) && roles.length > 0) {
+      sel.innerHTML += '<optgroup label="Roles">' +
+        roles.map(r => { seen.add(r.name); return `<option value="${esc(r.name)}">${esc(r.name)}</option>`; }).join('') +
+        '</optgroup>';
+    }
+    if (Array.isArray(users) && users.length > 0) {
+      const userOpts = users.filter(u => !seen.has(u.name)).map(u =>
+        `<option value="${esc(u.name)}">${esc(u.name)}${u.department ? ' (' + esc(u.department) + ')' : ''}</option>`
+      ).join('');
+      if (userOpts) sel.innerHTML += '<optgroup label="Users">' + userOpts + '</optgroup>';
+    }
+  } catch (e) { /* dropdowns stay with just the default option */ }
 }
 
 function closeDocModal() { document.getElementById('doc-modal').classList.add('hidden'); }
@@ -5671,9 +5746,24 @@ document.addEventListener('change', function(e) {
 async function populateDocRefs(module) {
   const refs = await api(`/api/link-references?module=${module}`);
   const sel = document.getElementById('doc-linked-ref');
-  sel.innerHTML = '<option value="">-- None --</option>' + refs.map(r =>
-    `<option value="${r.type}:${r.id}">${esc(r.label)}</option>`
-  ).join('');
+  if (!refs || refs.length === 0) {
+    sel.innerHTML = '<option value="">-- No items in this module --</option>';
+    return;
+  }
+  // Group by type for cleaner display
+  const grouped = {};
+  for (const r of refs) {
+    const typeLabel = r.type.charAt(0).toUpperCase() + r.type.slice(1) + 's';
+    if (!grouped[typeLabel]) grouped[typeLabel] = [];
+    grouped[typeLabel].push(r);
+  }
+  let html = '<option value="">-- None --</option>';
+  for (const [label, items] of Object.entries(grouped)) {
+    html += `<optgroup label="${esc(label)}">` +
+      items.map(r => `<option value="${r.type}:${r.id}">${esc(r.label)}</option>`).join('') +
+      '</optgroup>';
+  }
+  sel.innerHTML = html;
 }
 
 async function saveDocument(e) {
@@ -5704,7 +5794,12 @@ async function saveDocument(e) {
 
   const url = id ? `/api/documents/${id}` : '/api/documents';
   const method = id ? 'PUT' : 'POST';
-  await fetch(url, { method, body: formData });
+  const res = await fetch(url, { method, body: formData });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+    alert(err.error || 'Failed to save document');
+    return;
+  }
   closeDocModal();
   loadDocumentControl();
 }

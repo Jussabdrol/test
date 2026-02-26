@@ -1213,22 +1213,40 @@ body {
 }
 .mission-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .mission-card-header h3 { font-size: 18px; font-weight: 700; }
+.mission-block-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 32px; }
 .mission-block { margin-bottom: 18px; }
 .mission-block h4 { font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; letter-spacing: 0.6px; }
 .mission-block p { font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+.mission-entities-list { display: flex; flex-direction: column; gap: 6px; }
+.mission-entity-row { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--bg); border-radius: var(--radius); border: 1px solid var(--border); font-size: 13px; }
+.mission-entity-name { font-weight: 600; color: var(--text); }
+.mission-entity-country { color: var(--text-muted); margin-left: auto; }
+.mission-entity-edit-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.mission-entity-edit-row input { flex: 1; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; }
 
-/* KPI module groups */
-.kpi-module-group { margin-bottom: 20px; }
-.kpi-module-title {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--text-muted);
-  margin: 0 0 12px 0;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
+/* KPI module tiles */
+.auto-kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.kpi-tile {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  cursor: pointer;
+  transition: box-shadow .15s, transform .15s;
 }
+.kpi-tile:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+.kpi-tile-title { font-size: 13px; font-weight: 700; color: var(--text); margin: 0 0 12px 0; }
+.kpi-tile-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.kpi-tile-stat {
+  display: flex; flex-direction: column; align-items: center;
+  flex: 1 0 55px; min-width: 55px;
+  padding: 6px 4px;
+  background: var(--bg); border-radius: 6px;
+}
+.kpi-tile-val { font-size: 18px; font-weight: 700; line-height: 1.2; color: var(--text); }
+.kpi-tile-lbl { font-size: 10px; color: var(--text-muted); text-align: center; margin-top: 2px; white-space: nowrap; }
+.kpi-tile-stat.kpi-danger .kpi-tile-val { color: var(--danger); }
+.kpi-tile-stat.kpi-ok .kpi-tile-val { color: var(--success); }
 
 /* Custom KPI cards */
 .kpi-card-custom {
