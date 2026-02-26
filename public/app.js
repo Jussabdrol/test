@@ -4413,6 +4413,8 @@ async function openTreatmentModalForRisk(riskId) {
   document.getElementById('treatment-risk-id').value = riskId;
   document.getElementById('treatment-modal-title').textContent = 'New Treatment';
   document.getElementById('treatment-status-group').classList.add('hidden');
+  document.getElementById('treatment-crosslinks').classList.add('hidden');
+  document.getElementById('treatment-crosslinks').innerHTML = '';
   await Promise.all([populateTreatmentRoles(), populateTreatmentControls()]);
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
@@ -4436,6 +4438,10 @@ async function openTreatmentModal(id) {
   await Promise.all([populateTreatmentRoles(), populateTreatmentControls()]);
   document.getElementById('treatment-responsible').value = t.responsible || '';
   document.getElementById('treatment-control-ref').value = t.control_reference || '';
+  // Show cross-links section for existing treatments
+  const clContainer = document.getElementById('treatment-crosslinks');
+  clContainer.classList.remove('hidden');
+  renderCrossLinks('treatment', id, 'treatment-crosslinks');
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
 
