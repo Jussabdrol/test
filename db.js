@@ -38,9 +38,9 @@ async function initDatabase() {
         ssl: { rejectUnauthorized: false },
       };
 
-  // Serverless-friendly pool settings
-  connectionConfig.max = parseInt(process.env.DB_POOL_MAX || '10');
-  connectionConfig.idleTimeoutMillis = 30000;
+  // Connection pool settings (persistent server – higher defaults than serverless)
+  connectionConfig.max = parseInt(process.env.DB_POOL_MAX || '20');
+  connectionConfig.idleTimeoutMillis = 60000;
   connectionConfig.connectionTimeoutMillis = 10000;
 
   pool = new Pool(connectionConfig);

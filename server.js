@@ -60,7 +60,7 @@ async function deleteFromSupabase(storagePath) {
 
 app.use(express.json());
 
-// Trust proxy for Cloud Run / Vercel (needed for secure cookies behind load balancer)
+// Trust proxy (needed for secure cookies behind Railway / load balancer)
 app.set('trust proxy', 1);
 
 // ---------------------------------------------------------------------------
@@ -2984,13 +2984,14 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // Start server with database initialization
+let server;
 async function startServer() {
   try {
     // Initialize Supabase PostgreSQL database
     await db.initDatabase();
     console.log('Database: Supabase PostgreSQL');
 
-    app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       console.log(`Let The Frame Work running at http://localhost:${PORT}`);
     });
   } catch (err) {
@@ -2998,5 +2999,28 @@ async function startServer() {
     process.exit(1);
   }
 }
+
+// Graceful shutdown – Railway sends SIGTERM on deploys/restarts
+function gracefulShutdown(signal) {
+  console.log(`${signal} received – shutting down gracefully…`);
+  if (server) {
+    server.close(async () => {
+      console.log('HTTP server closed');
+      await db.close();
+      console.log('Database pool closed');
+      process.exit(0);
+    });
+    // Force exit after 10s if connections don't drain
+    setTimeout(() => {
+      console.error('Forced shutdown after timeout');
+      process.exit(1);
+    }, 10000);
+  } else {
+    process.exit(0);
+  }
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 startServer();
