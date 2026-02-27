@@ -38,14 +38,15 @@ const POSTGRES_SCHEMA_SQL = `
     completed_by TEXT DEFAULT '',
     completed_at TIMESTAMP DEFAULT NOW(),
     notes TEXT DEFAULT '',
+    evidence_files TEXT DEFAULT '[]',
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS actions (
     id SERIAL PRIMARY KEY,
     organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    completion_id INTEGER NOT NULL,
-    task_id INTEGER NOT NULL,
+    completion_id INTEGER DEFAULT NULL,
+    task_id INTEGER DEFAULT NULL,
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
     assignee TEXT DEFAULT '',
@@ -55,8 +56,8 @@ const POSTGRES_SCHEMA_SQL = `
     resolved_by TEXT DEFAULT '',
     resolved_at TIMESTAMP DEFAULT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
-    FOREIGN KEY (completion_id) REFERENCES completions(id) ON DELETE CASCADE,
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    FOREIGN KEY (completion_id) REFERENCES completions(id) ON DELETE SET NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
   );
 
   CREATE TABLE IF NOT EXISTS audits (
@@ -399,6 +400,9 @@ const POSTGRES_SCHEMA_SQL = `
 
   -- Migrations: add legal_entities to org_mission
   ALTER TABLE org_mission ADD COLUMN IF NOT EXISTS legal_entities TEXT DEFAULT '[]';
+
+  -- Migrations: add evidence_files to completions
+  ALTER TABLE completions ADD COLUMN IF NOT EXISTS evidence_files TEXT DEFAULT '[]';
 `;
 
 // Default threat feeds to seed per organization
