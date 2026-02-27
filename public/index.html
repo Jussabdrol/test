@@ -133,7 +133,10 @@
       <section id="view-tasks" class="view hidden">
         <div class="view-header">
           <h2>Manage Tasks</h2>
-          <button class="btn btn-primary" onclick="openTaskModal()">+ New Task</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-success" onclick="bulkCompleteToday()">&#10003; Complete All Due Today</button>
+            <button class="btn btn-primary" onclick="openTaskModal()">+ New Task</button>
+          </div>
         </div>
         <div class="filters" id="filters-bar"></div>
         <div id="task-table-body" class="task-mgmt-cards"></div>
@@ -174,6 +177,7 @@
       <section id="view-actions" class="view hidden">
         <div class="view-header">
           <h2>Follow-up Actions</h2>
+          <button class="btn btn-primary" onclick="openActionModal()">+ New Action</button>
         </div>
         <div class="filters" id="action-filters-bar"></div>
         <div class="task-table-wrap">
@@ -198,7 +202,9 @@
       <section id="view-history" class="view hidden">
         <div class="view-header">
           <h2>Completion Log</h2>
+          <button class="btn btn-secondary" onclick="exportCompletionLog()">&#128229; Export CSV</button>
         </div>
+        <div class="filters" id="history-filters-bar"></div>
         <div class="history-list" id="history-list"></div>
       </section>
       <!-- Requirements View -->
@@ -1452,26 +1458,53 @@
   <!-- Complete Modal -->
   <div id="complete-modal" class="modal hidden">
     <div class="modal-overlay" onclick="closeCompleteModal()"></div>
-    <div class="modal-content modal-sm">
+    <div class="modal-content">
       <div class="modal-header">
-        <h3>Mark Complete</h3>
+        <h3 id="complete-modal-title">Mark Complete</h3>
         <button class="modal-close" onclick="closeCompleteModal()">&times;</button>
       </div>
       <form id="complete-form" onsubmit="submitComplete(event)">
         <input type="hidden" id="complete-task-id">
         <div class="form-group">
           <label for="complete-by">Completed By</label>
-          <input type="text" id="complete-by" placeholder="Your name">
+          <select id="complete-by">
+            <option value="">-- Select Role --</option>
+          </select>
         </div>
         <div class="form-group">
           <label for="complete-notes">Notes</label>
-          <textarea id="complete-notes" rows="2" placeholder="Optional notes"></textarea>
+          <textarea id="complete-notes" rows="2" placeholder="What was done, observations, etc."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Evidence <span style="font-weight:400;color:var(--text-muted)">(attach files after saving)</span></label>
+          <div id="complete-evidence-list" style="margin-bottom:8px"></div>
+          <div id="complete-evidence-upload" style="display:none">
+            <input type="file" id="complete-evidence-file" style="display:none" onchange="uploadCompletionEvidence()">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('complete-evidence-file').click()">&#128206; Upload File</button>
+          </div>
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeCompleteModal()">Cancel</button>
           <button type="submit" class="btn btn-success">Complete</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Task Detail Modal -->
+  <div id="task-detail-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeTaskDetailModal()"></div>
+    <div class="modal-content" style="width:680px">
+      <div class="modal-header">
+        <h3 id="task-detail-title">Task Details</h3>
+        <button class="modal-close" onclick="closeTaskDetailModal()">&times;</button>
+      </div>
+      <div id="task-detail-body" style="max-height:65vh;overflow-y:auto"></div>
+      <div class="form-actions" style="margin-top:16px">
+        <button class="btn btn-secondary" onclick="closeTaskDetailModal()">Close</button>
+        <button class="btn btn-primary" id="task-detail-edit-btn">&#9998; Edit Task</button>
+        <button class="btn btn-success" id="task-detail-complete-btn">&#10003; Complete</button>
+      </div>
     </div>
   </div>
 
@@ -1547,6 +1580,13 @@
         <h3>Task Completed</h3>
         <button class="modal-close" onclick="closePostCompleteModal()">&times;</button>
       </div>
+      <!-- Evidence upload for this completion -->
+      <div id="post-complete-evidence-wrap" style="display:none;margin-bottom:16px;border:1px solid var(--border);border-radius:var(--radius);padding:14px;background:#f9fafb">
+        <label style="font-size:12px;font-weight:600;text-transform:uppercase;color:var(--text-muted);letter-spacing:.4px;margin-bottom:8px;display:block">Evidence</label>
+        <div id="post-complete-evidence-list" style="margin-bottom:8px"></div>
+        <input type="file" id="post-complete-evidence-file" style="display:none" onchange="uploadPostCompleteEvidence()">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('post-complete-evidence-file').click()">&#128206; Upload Evidence File</button>
+      </div>
       <p style="margin-bottom:16px;color:var(--text-muted)">Any follow-up actions needed from this check?</p>
       <div id="post-complete-actions-list"></div>
       <div style="border:1px dashed var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px" id="quick-action-form">
@@ -1572,6 +1612,15 @@
           <input type="date" id="quick-action-due">
         </div>
         <button class="btn btn-primary btn-sm" onclick="addQuickAction()">+ Add Action</button>
+      </div>
+      <!-- Cross-link section -->
+      <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+        <label style="font-size:12px;font-weight:600;text-transform:uppercase;color:var(--text-muted);letter-spacing:.4px;margin-bottom:8px;display:block">Link to Other Modules</label>
+        <div id="post-complete-crosslinks" style="margin-bottom:8px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="linkCompletionToAudit()">&#9745; Link to Audit Checklist</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="createNcrFromCompletion()">&#9888; Raise NCR</button>
+        </div>
       </div>
       <div class="form-actions">
         <button class="btn btn-secondary" onclick="closePostCompleteModal()">Done</button>

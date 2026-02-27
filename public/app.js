@@ -777,7 +777,7 @@ function renderTaskTable() {
     return `<div class="task-mgmt-card status-${status}${!t.is_active ? ' task-inactive' : ''}">
       <div class="task-mgmt-card-header">
         <div class="task-mgmt-card-header-left">
-          <h3 class="task-mgmt-title" onclick="openTaskModal(${t.id})">${esc(t.title)}</h3>
+          <h3 class="task-mgmt-title" onclick="openTaskDetailModal(${t.id})">${esc(t.title)}</h3>
           ${metaParts.length ? `<div class="task-mgmt-sub">${metaParts.join('<span style="color:var(--border)">·</span>')}</div>` : ''}
         </div>
         <div class="task-mgmt-card-header-right">
@@ -812,18 +812,29 @@ function toggleTaskLinks(taskId) {
 }
 
 // --- History ---
+let historyFilters = { task_id: '', completed_by: '', from: '', to: '' };
+
 async function loadHistory() {
-  const completions = await api('/api/completions?limit=100');
+  const params = new URLSearchParams({ limit: '200' });
+  if (historyFilters.task_id) params.set('task_id', historyFilters.task_id);
+  if (historyFilters.completed_by) params.set('completed_by', historyFilters.completed_by);
+  if (historyFilters.from) params.set('from', historyFilters.from);
+  if (historyFilters.to) params.set('to', historyFilters.to);
+  const completions = await api(`/api/completions?${params}`);
+  renderHistoryFilters(completions);
   const list = document.getElementById('history-list');
   if (completions.length === 0) {
-    list.innerHTML = '<div class="empty-state">No completions yet</div>';
+    list.innerHTML = '<div class="empty-state">No completions match filters</div>';
     return;
   }
-  list.innerHTML = completions.map(c => `
-    <div class="history-item">
+  list.innerHTML = completions.map(c => {
+    let evidenceFiles = [];
+    try { evidenceFiles = JSON.parse(c.evidence_files || '[]'); } catch(e) {}
+    return `<div class="history-item">
       <div class="hi-info">
-        <strong>${esc(c.task_title)}</strong>
-        <div class="hi-meta">${c.completed_by ? 'by ' + esc(c.completed_by) : ''}${c.notes ? ' — ' + esc(c.notes) : ''}</div>
+        <strong style="cursor:pointer;color:var(--primary)" onclick="openTaskDetailModal(${c.task_id})">${esc(c.task_title)}</strong>
+        <div class="hi-meta">${c.completed_by ? 'by ' + esc(c.completed_by) : 'Unknown'}${c.notes ? ' — ' + esc(c.notes) : ''}</div>
+        ${evidenceFiles.length > 0 ? `<div class="hi-meta">${evidenceFiles.map(ef => `<span style="font-size:11px;cursor:pointer;text-decoration:underline;margin-right:8px" onclick="window.open('/api/completions/${c.id}/evidence/${ef.id}/download','_blank')">&#128206; ${esc(ef.name)}</span>`).join('')}</div>` : ''}
         ${c.action_count > 0 ? `<div class="hi-meta"><span class="badge badge-${c.open_action_count > 0 ? 'high' : 'low'}">${c.open_action_count} open / ${c.action_count} actions</span></div>` : ''}
       </div>
       <div style="display:flex;gap:8px;align-items:center">
@@ -832,8 +843,112 @@ async function loadHistory() {
           { label: '&#128203; View Actions', onclick: `viewCompletionActions(${c.id}, ${c.task_id})` },
         ])}
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
+}
+
+function renderHistoryFilters(completions) {
+  const bar = document.getElementById('history-filters-bar');
+  // Derive unique tasks and completers from data
+  const tasks = [...new Map(completions.map(c => [c.task_id, c.task_title])).entries()];
+  const completers = [...new Set(completions.map(c => c.completed_by).filter(Boolean))];
+  bar.innerHTML = `
+    <select onchange="historyFilters.task_id=this.value;loadHistory()">
+      <option value="">All Tasks</option>
+      ${tasks.map(([id, title]) => `<option value="${id}" ${historyFilters.task_id == id ? 'selected' : ''}>${esc(title)}</option>`).join('')}
+    </select>
+    <select onchange="historyFilters.completed_by=this.value;loadHistory()">
+      <option value="">All Completers</option>
+      ${completers.map(n => `<option value="${esc(n)}" ${historyFilters.completed_by === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}
+    </select>
+    <input type="date" value="${historyFilters.from}" onchange="historyFilters.from=this.value;loadHistory()" placeholder="From" title="From date">
+    <input type="date" value="${historyFilters.to}" onchange="historyFilters.to=this.value;loadHistory()" placeholder="To" title="To date">
+  `;
+}
+
+function exportCompletionLog() {
+  const rows = document.querySelectorAll('#history-list .history-item');
+  if (rows.length === 0) return alert('No data to export');
+  // Re-fetch and build CSV from what's loaded
+  api(`/api/completions?limit=500`).then(completions => {
+    let csv = 'Date,Task,Completed By,Notes,Actions,Evidence Files\n';
+    for (const c of completions) {
+      let evidenceFiles = [];
+      try { evidenceFiles = JSON.parse(c.evidence_files || '[]'); } catch(e) {}
+      csv += `"${c.completed_at}","${(c.task_title || '').replace(/"/g, '""')}","${(c.completed_by || '').replace(/"/g, '""')}","${(c.notes || '').replace(/"/g, '""')}","${c.action_count || 0}","${evidenceFiles.map(f => f.name).join('; ')}"\n`;
+    }
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `completion-log-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  });
+}
+
+// --- Task Detail Modal (read-only timeline view) ---
+async function openTaskDetailModal(taskId) {
+  const modal = document.getElementById('task-detail-modal');
+  const body = document.getElementById('task-detail-body');
+  body.innerHTML = '<div class="empty-state">Loading...</div>';
+  modal.classList.remove('hidden');
+
+  const task = await api(`/api/tasks/${taskId}`);
+  const completions = task.completions || [];
+  document.getElementById('task-detail-title').textContent = task.title;
+  document.getElementById('task-detail-edit-btn').onclick = () => { closeTaskDetailModal(); openTaskModal(taskId); };
+  document.getElementById('task-detail-complete-btn').onclick = () => { closeTaskDetailModal(); openCompleteModal(taskId); };
+
+  const recLabel = { daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[task.recurrence] || task.recurrence;
+  const today = new Date().toISOString().split('T')[0];
+  const statusLabel = !task.is_active ? 'Inactive' : task.next_due < today ? 'Overdue' : task.next_due === today ? 'Due Today' : 'Upcoming';
+  const statusBadge = !task.is_active ? 'badge-inactive' : task.next_due < today ? 'badge-overdue' : task.next_due === today ? 'badge-due-today' : 'badge-upcoming';
+
+  let html = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+    <span class="badge badge-${task.priority.toLowerCase()}">${task.priority}</span>
+    <span class="badge ${statusBadge}">${statusLabel}</span>
+    <span class="task-recurrence-badge">&#8635; ${recLabel}</span>
+  </div>`;
+  if (task.description) html += `<p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">${esc(task.description)}</p>`;
+  html += `<div style="display:flex;gap:16px;font-size:13px;color:var(--text-muted);margin-bottom:16px;flex-wrap:wrap">
+    ${task.assignee ? `<span>&#128100; ${esc(task.assignee)}</span>` : ''}
+    ${task.category && task.category !== 'General' ? `<span>&#128260; ${esc(task.category)}</span>` : ''}
+    <span>Next due: <strong>${task.next_due}</strong></span>
+    <span>Start: ${task.start_date}</span>
+  </div>`;
+
+  // Completion timeline
+  html += `<h4 style="font-size:13px;font-weight:600;text-transform:uppercase;color:var(--text-muted);letter-spacing:.5px;margin-bottom:12px;padding-top:12px;border-top:1px solid var(--border)">Completion History (${completions.length})</h4>`;
+  if (completions.length === 0) {
+    html += '<div class="empty-state" style="padding:16px 0">No completions yet</div>';
+  } else {
+    for (const c of completions) {
+      let evidenceFiles = [];
+      try { evidenceFiles = JSON.parse(c.evidence_files || '[]'); } catch(e) {}
+      const actions = await api(`/api/actions?completion_id=${c.id}`);
+      html += `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px;background:#fafbfc">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-size:13px;font-weight:600">${new Date(c.completed_at).toLocaleDateString()}</span>
+          <span style="font-size:12px;color:var(--text-muted)">${c.completed_by ? 'by ' + esc(c.completed_by) : ''}</span>
+        </div>
+        ${c.notes ? `<div style="font-size:13px;color:var(--text-muted);margin-bottom:6px">${esc(c.notes)}</div>` : ''}
+        ${evidenceFiles.length > 0 ? `<div style="margin-bottom:6px">${evidenceFiles.map(ef => `<span style="font-size:12px;cursor:pointer;text-decoration:underline;margin-right:10px" onclick="window.open('/api/completions/${c.id}/evidence/${ef.id}/download','_blank')">&#128206; ${esc(ef.name)}</span>`).join('')}</div>` : ''}
+        ${actions.length > 0 ? `<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--border)">${actions.map(a => {
+          const cls = a.status === 'open' ? 'badge-high' : a.status === 'in_progress' ? 'badge-medium' : 'badge-low';
+          return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
+            <span class="badge ${cls}" style="font-size:10px;padding:1px 6px">${a.status.replace('_',' ')}</span>
+            <span>${esc(a.title)}</span>
+            ${a.assignee ? `<span style="color:var(--text-muted)">— ${esc(a.assignee)}</span>` : ''}
+          </div>`;
+        }).join('')}</div>` : ''}
+      </div>`;
+    }
+  }
+
+  body.innerHTML = html;
+}
+
+function closeTaskDetailModal() {
+  document.getElementById('task-detail-modal').classList.add('hidden');
 }
 
 // --- Task Modal ---
@@ -949,14 +1064,33 @@ async function saveTask(e) {
 }
 
 // --- Complete Modal ---
-function openCompleteModal(taskId) {
+let activeCompletionId = null; // set after first save so evidence can be uploaded
+
+async function openCompleteModal(taskId) {
   document.getElementById('complete-form').reset();
   document.getElementById('complete-task-id').value = taskId;
+  activeCompletionId = null;
+  document.getElementById('complete-evidence-list').innerHTML = '';
+  document.getElementById('complete-evidence-upload').style.display = 'none';
+  document.getElementById('complete-modal-title').textContent = 'Mark Complete';
+
+  // Populate role dropdown
+  const roles = await api('/api/architecture?arch_type=role');
+  const sel = document.getElementById('complete-by');
+  sel.innerHTML = '<option value="">-- Select Role --</option>' +
+    roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+  // Auto-select from logged-in user name if it matches a role
+  if (currentUser && currentUser.name) {
+    const match = roles.find(r => r.name === currentUser.name);
+    if (match) sel.value = match.name;
+  }
+
   document.getElementById('complete-modal').classList.remove('hidden');
 }
 
 function closeCompleteModal() {
   document.getElementById('complete-modal').classList.add('hidden');
+  activeCompletionId = null;
 }
 
 async function submitComplete(e) {
@@ -969,17 +1103,87 @@ async function submitComplete(e) {
       notes: document.getElementById('complete-notes').value,
     },
   });
+  activeCompletionId = result.completion_id;
+  // Enable evidence upload now that we have a completion ID
+  document.getElementById('complete-evidence-upload').style.display = 'block';
+  document.getElementById('complete-modal-title').textContent = 'Completed — Attach Evidence';
+  // Swap the form buttons to a "Done" + "Attach More" pattern
   closeCompleteModal();
   invalidateYearlyCache();
-  // Show post-completion action prompt
+  // Show post-completion action prompt (includes evidence upload option)
   lastCompletionContext = { completion_id: result.completion_id, task_id: parseInt(taskId) };
   await openPostCompleteModal();
 }
 
-// --- Delete ---
+async function uploadCompletionEvidence() {
+  if (!activeCompletionId) return;
+  const fileInput = document.getElementById('complete-evidence-file');
+  if (!fileInput.files.length) return;
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  await fetch(`/api/completions/${activeCompletionId}/evidence`, { method: 'POST', body: formData });
+  fileInput.value = '';
+  await refreshCompletionEvidence(activeCompletionId);
+}
+
+async function refreshCompletionEvidence(completionId) {
+  const completions = await api(`/api/completions?limit=1`);
+  const comp = completions.find(c => c.id === completionId);
+  let evidenceFiles = [];
+  try { evidenceFiles = JSON.parse(comp?.evidence_files || '[]'); } catch(e) {}
+  const container = document.getElementById('complete-evidence-list') || document.getElementById('post-complete-evidence-list');
+  if (!container) return;
+  if (evidenceFiles.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;font-style:italic">No evidence attached</div>';
+    return;
+  }
+  container.innerHTML = evidenceFiles.map(ef => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px">
+    <span>&#128206;</span>
+    <span style="cursor:pointer;text-decoration:underline;flex:1" onclick="window.open('/api/completions/${completionId}/evidence/${ef.id}/download','_blank')">${esc(ef.name)}</span>
+    <span style="color:var(--text-muted);font-size:11px">${ef.size ? (ef.size / 1024).toFixed(1) + ' KB' : ''}</span>
+    <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 6px" onclick="removeCompletionEvidence(${completionId},${ef.id})">&times;</button>
+  </div>`).join('');
+}
+
+async function removeCompletionEvidence(completionId, fileId) {
+  if (!confirm('Remove this evidence file?')) return;
+  await api(`/api/completions/${completionId}/evidence/${fileId}`, { method: 'DELETE' });
+  await refreshCompletionEvidence(completionId);
+}
+
+async function uploadPostCompleteEvidence() {
+  if (!lastCompletionContext) return;
+  const fileInput = document.getElementById('post-complete-evidence-file');
+  if (!fileInput.files.length) return;
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  await fetch(`/api/completions/${lastCompletionContext.completion_id}/evidence`, { method: 'POST', body: formData });
+  fileInput.value = '';
+  await refreshCompletionEvidence(lastCompletionContext.completion_id);
+}
+
+// --- Bulk Complete ---
+async function bulkCompleteToday() {
+  const today = new Date().toISOString().split('T')[0];
+  const tasks = await api(`/api/tasks?active=true`);
+  const dueTasks = tasks.filter(t => t.next_due <= today);
+  if (dueTasks.length === 0) return alert('No tasks are due today or overdue.');
+  const completedBy = currentUser?.name || '';
+  if (!confirm(`Mark ${dueTasks.length} task(s) as complete?\n\nTasks due on or before ${today} will be completed.`)) return;
+  for (const t of dueTasks) {
+    await api(`/api/tasks/${t.id}/complete`, {
+      method: 'POST',
+      body: { completed_by: completedBy, notes: 'Bulk completed' },
+    });
+  }
+  invalidateYearlyCache();
+  refreshCurrentView();
+}
+
+// --- Delete (soft-delete: deactivates task, preserves history) ---
 async function deleteTask(id) {
-  if (!confirm('Delete this task and all its history?')) return;
-  await api(`/api/tasks/${id}`, { method: 'DELETE' });
+  if (!confirm('Deactivate this task? Its completion history will be preserved.')) return;
+  await api(`/api/tasks/${id}`, { method: 'PUT', body: { is_active: 0 } });
   invalidateYearlyCache();
   refreshCurrentView();
 }
@@ -997,13 +1201,79 @@ async function openPostCompleteModal() {
   assigneeSelect.innerHTML = '<option value="">-- Select Role --</option>' +
     roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
 
+  // Show evidence section for this completion
+  const evidenceWrap = document.getElementById('post-complete-evidence-wrap');
+  if (evidenceWrap && lastCompletionContext) {
+    evidenceWrap.style.display = 'block';
+    activeCompletionId = lastCompletionContext.completion_id;
+    await refreshCompletionEvidence(lastCompletionContext.completion_id);
+  }
+
   document.getElementById('post-complete-modal').classList.remove('hidden');
 }
 
 function closePostCompleteModal() {
   document.getElementById('post-complete-modal').classList.add('hidden');
   lastCompletionContext = null;
+  activeCompletionId = null;
   refreshCurrentView();
+}
+
+async function linkCompletionToAudit() {
+  if (!lastCompletionContext) return;
+  // Fetch active audits with checklist items
+  const audits = await api('/api/audits?status=in_progress');
+  if (audits.length === 0) return alert('No in-progress audits found. Start an audit first.');
+  const auditOptions = audits.map(a => `${a.id}: ${a.title}`).join('\n');
+  const auditChoice = prompt(`Select an audit ID to link to:\n\n${auditOptions}`);
+  if (!auditChoice) return;
+  const auditId = parseInt(auditChoice);
+  if (isNaN(auditId)) return;
+  // Create cross-link: task → audit
+  await api('/api/cross-links', {
+    method: 'POST',
+    body: { source_type: 'task', source_id: lastCompletionContext.task_id, target_type: 'audit', target_id: auditId }
+  });
+  const container = document.getElementById('post-complete-crosslinks');
+  const audit = audits.find(a => a.id === auditId);
+  container.innerHTML += `<div style="font-size:12px;padding:4px 0">&#9745; Linked to audit: <strong>${esc(audit?.title || 'Audit #' + auditId)}</strong></div>`;
+}
+
+async function createNcrFromCompletion() {
+  if (!lastCompletionContext) return;
+  const title = prompt('NCR title (describe the nonconformity):');
+  if (!title) return;
+  // Create a new action flagged as NCR-type
+  const action = await api('/api/actions', {
+    method: 'POST',
+    body: {
+      completion_id: lastCompletionContext.completion_id,
+      task_id: lastCompletionContext.task_id,
+      title: '[NCR] ' + title,
+      description: 'Nonconformity raised from task completion',
+      priority: 'High',
+    },
+  });
+  // Also try to create as a real NCR if the endpoint exists
+  try {
+    const ncr = await api('/api/ncrs', {
+      method: 'POST',
+      body: { title, source: 'task_completion', source_id: lastCompletionContext.task_id, severity: 'major' }
+    });
+    if (ncr && ncr.id) {
+      await api('/api/cross-links', {
+        method: 'POST',
+        body: { source_type: 'action', source_id: action.id, target_type: 'ncr', target_id: ncr.id }
+      });
+    }
+  } catch (e) { /* NCR module may not exist, the action is the fallback */ }
+  const container = document.getElementById('post-complete-crosslinks');
+  container.innerHTML += `<div style="font-size:12px;padding:4px 0">&#9888; NCR raised: <strong>${esc(title)}</strong></div>`;
+  // Also add to actions list visually
+  const list = document.getElementById('post-complete-actions-list');
+  list.innerHTML += `<div class="task-card" style="margin-bottom:8px">
+    <div class="task-card-info"><h4>[NCR] ${esc(title)}</h4><div class="meta">High priority</div></div>
+  </div>`;
 }
 
 async function addQuickAction() {
@@ -1140,7 +1410,9 @@ async function openActionModal(id) {
   const form = document.getElementById('action-form');
   form.reset();
   document.getElementById('action-id').value = '';
-  document.getElementById('action-modal-title').textContent = 'New Follow-up Action';
+  document.getElementById('action-completion-id').value = '';
+  document.getElementById('action-task-id').value = '';
+  document.getElementById('action-modal-title').textContent = 'New Action';
   document.getElementById('action-resolved-by-group').classList.add('hidden');
 
   // Populate Role dropdown from Architecture
@@ -1422,8 +1694,8 @@ async function loadYearlyPlan() {
 }
 
 async function quickComplete(taskId, dateStr) {
-  await api('/api/completions', { method: 'POST', body: { task_id: taskId, completed_at: dateStr, notes: '' } });
-  loadYearlyPlan();
+  // Open the full complete modal so the user can record who did it, add notes & evidence
+  openCompleteModal(taskId);
 }
 
 let activePopover = null;

@@ -212,6 +212,13 @@ function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth)
       break;
     case 'weekly':
       d.setDate(d.getDate() + 7);
+      // Snap to target day of week if specified (0=Sun, 1=Mon, ..., 6=Sat)
+      if (dayOfWeek != null && dayOfWeek !== '' && !isNaN(dayOfWeek)) {
+        const target = parseInt(dayOfWeek);
+        const current = d.getDay();
+        const diff = (target - current + 7) % 7;
+        if (diff !== 0) d.setDate(d.getDate() + diff);
+      }
       break;
     case 'biweekly':
       d.setDate(d.getDate() + 14);
@@ -654,7 +661,7 @@ app.delete('/api/tasks/:id', requireOrgContext, async (req, res) => {
 
 // Get completion history
 app.get('/api/completions', requireOrgContext, async (req, res) => {
-  const { task_id, limit } = req.query;
+  const { task_id, limit, completed_by, from, to } = req.query;
   let sql = `SELECT c.*, t.title as task_title,
     (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id) as action_count,
     (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id AND a.status IN ('open','in_progress')) as open_action_count
@@ -664,9 +671,81 @@ app.get('/api/completions', requireOrgContext, async (req, res) => {
     sql += ' AND c.task_id = ?';
     params.push(task_id);
   }
+  if (completed_by) {
+    sql += ' AND c.completed_by = ?';
+    params.push(completed_by);
+  }
+  if (from) {
+    sql += ' AND c.completed_at >= ?';
+    params.push(from);
+  }
+  if (to) {
+    sql += ' AND c.completed_at <= ?';
+    params.push(to + ' 23:59:59');
+  }
   sql += ' ORDER BY c.completed_at DESC LIMIT ?';
   params.push(parseInt(limit) || 50);
   res.json(await db.prepare(sql).all(...params));
+});
+
+// Upload evidence to a completion
+app.post('/api/completions/:id/evidence', requireOrgContext, upload.single('file'), async (req, res) => {
+  const item = await db.prepare('SELECT * FROM completions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!item) return res.status(404).json({ error: 'Completion not found' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  let storagePath;
+  try {
+    storagePath = await uploadToSupabase('completion-evidence', req.file);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+
+  let evidenceFiles = [];
+  try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
+  evidenceFiles.push({
+    id: Date.now(),
+    type: 'file',
+    name: req.file.originalname,
+    path: storagePath,
+    size: req.file.size,
+    mime: req.file.mimetype,
+    uploaded_at: new Date().toISOString()
+  });
+
+  await db.prepare('UPDATE completions SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
+  res.json(await db.prepare('SELECT * FROM completions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+});
+
+// Download completion evidence file
+app.get('/api/completions/:id/evidence/:fileId/download', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM completions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!item) return res.status(404).json({ error: 'Completion not found' });
+  let evidenceFiles = [];
+  try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
+  const file = evidenceFiles.find(f => String(f.id) === String(req.params.fileId));
+  if (!file || file.type !== 'file') return res.status(404).json({ error: 'File not found' });
+  try {
+    const url = await getSignedUrl(file.path);
+    res.redirect(url);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete completion evidence file
+app.delete('/api/completions/:id/evidence/:fileId', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM completions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!item) return res.status(404).json({ error: 'Completion not found' });
+  let evidenceFiles = [];
+  try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
+  const file = evidenceFiles.find(f => String(f.id) === String(req.params.fileId));
+  if (file && file.type === 'file' && file.path) {
+    await deleteFromSupabase(file.path);
+  }
+  evidenceFiles = evidenceFiles.filter(f => String(f.id) !== String(req.params.fileId));
+  await db.prepare('UPDATE completions SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
+  res.json({ success: true });
 });
 
 // Get unique assignees and categories for filters
@@ -744,7 +823,7 @@ app.get('/api/yearly', requireOrgContext, async (req, res) => {
 // Get all actions with optional filters
 app.get('/api/actions', requireOrgContext, async (req, res) => {
   const { task_id, completion_id, status } = req.query;
-  let sql = `SELECT a.*, t.title as task_title FROM actions a JOIN tasks t ON a.task_id = t.id WHERE a.organization_id = ?`;
+  let sql = `SELECT a.*, COALESCE(t.title, 'Standalone') as task_title FROM actions a LEFT JOIN tasks t ON a.task_id = t.id WHERE a.organization_id = ?`;
   const params = [req.orgId];
   if (task_id) { sql += ' AND a.task_id = ?'; params.push(task_id); }
   if (completion_id) { sql += ' AND a.completion_id = ?'; params.push(completion_id); }
@@ -755,20 +834,20 @@ app.get('/api/actions', requireOrgContext, async (req, res) => {
 
 // Get single action
 app.get('/api/actions/:id', requireOrgContext, async (req, res) => {
-  const action = await db.prepare('SELECT a.*, t.title as task_title FROM actions a JOIN tasks t ON a.task_id = t.id WHERE a.id = ? AND a.organization_id = ?').get(req.params.id, req.orgId);
+  const action = await db.prepare('SELECT a.*, t.title as task_title FROM actions a LEFT JOIN tasks t ON a.task_id = t.id WHERE a.id = ? AND a.organization_id = ?').get(req.params.id, req.orgId);
   if (!action) return res.status(404).json({ error: 'Action not found' });
   res.json(action);
 });
 
-// Create action (linked to a completion)
+// Create action (optionally linked to a completion/task, or standalone)
 app.post('/api/actions', requireOrgContext, async (req, res) => {
   const { completion_id, task_id, title, description, assignee, priority, due_date } = req.body;
-  if (!title || !completion_id || !task_id) return res.status(400).json({ error: 'title, completion_id, and task_id are required' });
+  if (!title) return res.status(400).json({ error: 'title is required' });
 
   const result = await db.prepare(`
     INSERT INTO actions (organization_id, completion_id, task_id, title, description, assignee, priority, due_date)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(req.orgId, completion_id, task_id, title, description || '', assignee || '', priority || 'Medium', due_date || null);
+  `).run(req.orgId, completion_id || null, task_id || null, title, description || '', assignee || '', priority || 'Medium', due_date || null);
 
   const action = await db.prepare('SELECT * FROM actions WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(action);
