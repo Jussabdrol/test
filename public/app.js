@@ -761,33 +761,47 @@ async function renderFilters() {
 }
 
 function renderTaskTable() {
-  const tbody = document.getElementById('task-table-body');
+  const container = document.getElementById('task-table-body');
   const today = new Date().toISOString().split('T')[0];
   if (allTasks.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No tasks found</td></tr>';
+    container.innerHTML = '<div class="empty-state">No tasks found.</div>';
     return;
   }
-  tbody.innerHTML = allTasks.map(t => {
-    const status = t.next_due < today ? 'overdue' : t.next_due === today ? 'due-today' : 'upcoming';
-    const statusLabel = status === 'overdue' ? 'Overdue' : status === 'due-today' ? 'Due Today' : 'Upcoming';
-    return `<tr>
-      <td><strong style="cursor:pointer;color:var(--primary)" onclick="openTaskModal(${t.id})">${esc(t.title)}</strong>${t.description ? '<br><small style="color:var(--text-muted);cursor:pointer" onclick="openTaskModal(' + t.id + ')">' + esc(t.description) + '</small>' : ''}
-        <div id="task-links-${t.id}" class="task-inline-links"></div>
-      </td>
-      <td>${esc(t.assignee || '-')}</td>
-      <td>${esc(t.category)}</td>
-      <td><span class="badge badge-${t.priority.toLowerCase()}">${t.priority}</span></td>
-      <td>${t.recurrence}${t.recurrence === 'custom' ? ' (' + t.custom_days + 'd)' : ''}</td>
-      <td>${t.next_due}</td>
-      <td><span class="badge badge-${status}">${statusLabel}</span></td>
-      <td>${actionMenu([
-        { label: '&#10003; Mark Done', onclick: `openCompleteModal(${t.id})`, cls: 'success' },
-        { label: '&#128279; Links', onclick: `toggleTaskLinks(${t.id})` },
-        { label: '&#9998; Edit', onclick: `openTaskModal(${t.id})` },
-        'sep',
-        { label: '&#128465; Delete', onclick: `deleteTask(${t.id})`, cls: 'danger' },
-      ])}</td>
-    </tr>`;
+  const recurrenceLabel = r => ({ daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[r] || r);
+  container.innerHTML = allTasks.map(t => {
+    const status = !t.is_active ? 'inactive' : t.next_due < today ? 'overdue' : t.next_due === today ? 'due-today' : 'upcoming';
+    const statusLabel = { inactive:'Inactive', overdue:'Overdue', 'due-today':'Due Today', upcoming:'Upcoming' }[status];
+    const statusBadge = { inactive:'badge-inactive', overdue:'badge-overdue', 'due-today':'badge-due-today', upcoming:'badge-upcoming' }[status];
+    const recLabel = t.recurrence === 'custom' ? `Every ${t.custom_days}d` : t.day_of_week != null && t.recurrence === 'weekly' ? `${recurrenceLabel(t.recurrence)} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][t.day_of_week]})` : t.day_of_month != null && t.recurrence === 'monthly' ? `Monthly (${t.day_of_month}th)` : recurrenceLabel(t.recurrence);
+    const metaParts = [t.assignee ? `&#128100; ${esc(t.assignee)}` : null, t.category && t.category !== 'General' ? `&#128260; ${esc(t.category)}` : null].filter(Boolean);
+    return `<div class="task-mgmt-card status-${status}${!t.is_active ? ' task-inactive' : ''}">
+      <div class="task-mgmt-card-header">
+        <div class="task-mgmt-card-header-left">
+          <h3 class="task-mgmt-title" onclick="openTaskModal(${t.id})">${esc(t.title)}</h3>
+          ${metaParts.length ? `<div class="task-mgmt-sub">${metaParts.join('<span style="color:var(--border)">·</span>')}</div>` : ''}
+        </div>
+        <div class="task-mgmt-card-header-right">
+          <span class="badge badge-${t.priority.toLowerCase()}">${t.priority}</span>
+          ${actionMenu([
+            { label: '&#10003; Complete', onclick: `openCompleteModal(${t.id})`, cls: 'success' },
+            { label: '&#128279; Links', onclick: `toggleTaskLinks(${t.id})` },
+            { label: '&#9998; Edit', onclick: `openTaskModal(${t.id})` },
+            'sep',
+            { label: '&#128465; Delete', onclick: `deleteTask(${t.id})`, cls: 'danger' },
+          ])}
+        </div>
+      </div>
+      ${t.description ? `<div class="task-mgmt-desc">${esc(t.description)}</div>` : ''}
+      <div class="task-mgmt-card-footer">
+        <div class="task-mgmt-footer-left">
+          <span class="badge ${statusBadge}">${statusLabel}</span>
+          <span class="task-recurrence-badge">&#8635; ${recLabel}</span>
+          <span style="font-size:12px;color:var(--text-muted)">Due ${esc(t.next_due)}</span>
+        </div>
+        ${t.is_active ? `<button class="btn btn-primary btn-sm" style="font-size:11px" onclick="openCompleteModal(${t.id})">&#10003; Complete</button>` : ''}
+      </div>
+      <div id="task-links-${t.id}" class="task-inline-links"></div>
+    </div>`;
   }).join('');
 }
 
@@ -831,7 +845,7 @@ async function openTaskModal(id) {
   document.getElementById('task-id').value = '';
   document.getElementById('task-start').value = new Date().toISOString().split('T')[0];
   document.getElementById('modal-title').textContent = 'New Task';
-  document.getElementById('custom-days-group').classList.add('hidden');
+  toggleRecurrenceFields();
 
   // Populate Role dropdown from Architecture roles
   const roles = await api('/api/architecture?arch_type=role');
@@ -856,8 +870,10 @@ async function openTaskModal(id) {
     document.getElementById('task-priority').value = task.priority;
     document.getElementById('task-recurrence').value = task.recurrence;
     document.getElementById('task-custom-days').value = task.custom_days || 1;
+    if (task.day_of_week != null) document.getElementById('task-day-of-week').value = task.day_of_week;
+    if (task.day_of_month != null) document.getElementById('task-day-of-month').value = task.day_of_month;
     document.getElementById('task-start').value = task.start_date;
-    toggleCustomDays();
+    toggleRecurrenceFields();
   }
 
   modal.classList.remove('hidden');
@@ -867,9 +883,12 @@ function closeTaskModal() {
   document.getElementById('task-modal').classList.add('hidden');
 }
 
-function toggleCustomDays() {
+function toggleCustomDays() { toggleRecurrenceFields(); } // backwards compat alias
+function toggleRecurrenceFields() {
   const sel = document.getElementById('task-recurrence').value;
   document.getElementById('custom-days-group').classList.toggle('hidden', sel !== 'custom');
+  document.getElementById('task-day-of-week-group').classList.toggle('hidden', sel !== 'weekly');
+  document.getElementById('task-day-of-month-group').classList.toggle('hidden', sel !== 'monthly');
 }
 
 async function saveTask(e) {
@@ -877,14 +896,17 @@ async function saveTask(e) {
   const id = document.getElementById('task-id').value;
   const assigneeName = document.getElementById('task-assignee').value;
   const categoryName = document.getElementById('task-category').value || 'General';
+  const recurrence = document.getElementById('task-recurrence').value;
   const body = {
     title: document.getElementById('task-title').value,
     description: document.getElementById('task-desc').value,
     assignee: assigneeName,
     category: categoryName,
     priority: document.getElementById('task-priority').value,
-    recurrence: document.getElementById('task-recurrence').value,
-    custom_days: parseInt(document.getElementById('task-custom-days').value) || null,
+    recurrence,
+    custom_days: recurrence === 'custom' ? (parseInt(document.getElementById('task-custom-days').value) || null) : null,
+    day_of_week: recurrence === 'weekly' ? parseInt(document.getElementById('task-day-of-week').value) : null,
+    day_of_month: recurrence === 'monthly' ? parseInt(document.getElementById('task-day-of-month').value) : null,
     start_date: document.getElementById('task-start').value,
   };
 
@@ -1328,7 +1350,8 @@ async function loadYearlyPlan() {
   overdueItems.sort((a, b) => a.date.localeCompare(b.date));
   upcomingItems.sort((a, b) => a.date.localeCompare(b.date));
 
-  const priorityBadge = p => p === 'High' ? 'badge-high' : p === 'Medium' ? 'badge-medium' : 'badge-low';
+  const priorityBadge = p => p === 'Critical' ? 'badge-critical' : p === 'High' ? 'badge-high' : p === 'Medium' ? 'badge-medium' : 'badge-low';
+  const recurrenceLabel = r => ({ daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[r] || r);
   const dayLabel = ds => {
     const d = new Date(ds + 'T00:00:00');
     const diff = Math.round((d - todayDate) / 86400000);
@@ -1343,39 +1366,37 @@ async function loadYearlyPlan() {
     return MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate() + ` (${diff}d ago)`;
   };
 
+  const buildCard = (item, isOverdue) => {
+    const dateStr = isOverdue ? overdueDayLabel(item.date) : dayLabel(item.date);
+    const metaParts = [item.assignee ? esc(item.assignee) : null, item.category ? esc(item.category) : null].filter(Boolean).join(' · ');
+    return `<div class="upcoming-card${isOverdue ? ' card-overdue' : ''}">
+      <div class="upcoming-card-top">
+        <span class="upcoming-card-title" onclick="openTaskModal(${item.task_id})">${esc(item.title)}</span>
+        <div class="upcoming-card-badges">
+          <span class="badge ${priorityBadge(item.priority)}">${item.priority}</span>
+          <span class="task-recurrence-badge">&#8635; ${recurrenceLabel(item.recurrence)}</span>
+        </div>
+      </div>
+      ${metaParts ? `<div class="upcoming-card-meta">${metaParts}</div>` : ''}
+      <div class="upcoming-card-footer">
+        <span class="upcoming-date${isOverdue ? ' overdue' : ''}">${dateStr}</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="openTaskModal(${item.task_id})">&#9998; Edit</button>
+          <button class="btn btn-primary btn-sm" style="font-size:11px" onclick="quickComplete(${item.task_id},'${item.date}')">&#10003; Complete</button>
+        </div>
+      </div>
+    </div>`;
+  };
+
   let html = '';
 
   // Overdue section
   if (overdueItems.length > 0) {
-    html += `<h3 class="section-title" style="margin-top:28px;color:var(--danger)">Overdue Tasks</h3>
-    <div class="upcoming-table">
-      <div class="upcoming-table-head">
-        <div class="upcoming-col-task">Task</div>
-        <div class="upcoming-col-date">Due Date</div>
-        <div class="upcoming-col-assign">Assignee</div>
-        <div class="upcoming-col-priority">Priority</div>
-        <div class="upcoming-col-recurrence">Recurrence</div>
-        <div class="upcoming-col-actions"></div>
-      </div>`;
-    for (const item of overdueItems) {
-      html += `<div class="upcoming-table-row upcoming-overdue">
-        <div class="upcoming-col-task">
-          <span class="upcoming-task-title">${esc(item.title)}</span>
-          ${item.category ? `<span class="upcoming-task-cat">${esc(item.category)}</span>` : ''}
-        </div>
-        <div class="upcoming-col-date"><span class="upcoming-date overdue">${overdueDayLabel(item.date)}</span></div>
-        <div class="upcoming-col-assign"><span style="font-size:12px">${esc(item.assignee || '-')}</span></div>
-        <div class="upcoming-col-priority"><span class="badge ${priorityBadge(item.priority)}">${item.priority}</span></div>
-        <div class="upcoming-col-recurrence"><span style="font-size:12px">${esc(item.recurrence)}</span></div>
-        <div class="upcoming-col-actions">
-          <button class="btn btn-primary btn-sm" style="font-size:11px;padding:2px 8px" onclick="quickComplete(${item.task_id},'${item.date}')">Complete</button>
-        </div>
-      </div>`;
-    }
-    html += '</div>';
+    html += `<h3 class="section-title" style="margin-top:28px;color:var(--danger)">&#9888; Overdue Tasks <span class="req-cat-count">(${overdueItems.length})</span></h3>
+    <div class="upcoming-cards">${overdueItems.map(item => buildCard(item, true)).join('')}</div>`;
   }
 
-  // Upcoming section
+  // Coming Up section
   html += `<h3 class="section-title" style="margin-top:28px">Coming Up — Next 4 Weeks</h3>`;
   if (upcomingItems.length === 0) {
     html += '<div class="empty-state">No tasks scheduled in the next 4 weeks.</div>';
@@ -1389,35 +1410,11 @@ async function loadYearlyPlan() {
       if (!weeks[weekNum]) weeks[weekNum] = [];
       weeks[weekNum].push(item);
     }
-
     for (const [weekLabel, items] of Object.entries(weeks)) {
       html += `<div class="upcoming-group">
         <div class="upcoming-group-header">${weekLabel} <span class="req-cat-count">(${items.length})</span></div>
-        <div class="upcoming-table">
-          <div class="upcoming-table-head">
-            <div class="upcoming-col-task">Task</div>
-            <div class="upcoming-col-date">Due Date</div>
-            <div class="upcoming-col-assign">Assignee</div>
-            <div class="upcoming-col-priority">Priority</div>
-            <div class="upcoming-col-recurrence">Recurrence</div>
-            <div class="upcoming-col-actions"></div>
-          </div>`;
-      for (const item of items) {
-        html += `<div class="upcoming-table-row">
-          <div class="upcoming-col-task">
-            <span class="upcoming-task-title">${esc(item.title)}</span>
-            ${item.category ? `<span class="upcoming-task-cat">${esc(item.category)}</span>` : ''}
-          </div>
-          <div class="upcoming-col-date"><span class="upcoming-date">${dayLabel(item.date)}</span></div>
-          <div class="upcoming-col-assign"><span style="font-size:12px">${esc(item.assignee || '-')}</span></div>
-          <div class="upcoming-col-priority"><span class="badge ${priorityBadge(item.priority)}">${item.priority}</span></div>
-          <div class="upcoming-col-recurrence"><span style="font-size:12px">${esc(item.recurrence)}</span></div>
-          <div class="upcoming-col-actions">
-            <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px" onclick="quickComplete(${item.task_id},'${item.date}')">Complete</button>
-          </div>
-        </div>`;
-      }
-      html += '</div></div>';
+        <div style="padding:16px"><div class="upcoming-cards">${items.map(item => buildCard(item, false)).join('')}</div></div>
+      </div>`;
     }
   }
 
@@ -4413,6 +4410,8 @@ async function openTreatmentModalForRisk(riskId) {
   document.getElementById('treatment-risk-id').value = riskId;
   document.getElementById('treatment-modal-title').textContent = 'New Treatment';
   document.getElementById('treatment-status-group').classList.add('hidden');
+  document.getElementById('treatment-crosslinks').classList.add('hidden');
+  document.getElementById('treatment-crosslinks').innerHTML = '';
   await Promise.all([populateTreatmentRoles(), populateTreatmentControls()]);
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
@@ -4436,6 +4435,10 @@ async function openTreatmentModal(id) {
   await Promise.all([populateTreatmentRoles(), populateTreatmentControls()]);
   document.getElementById('treatment-responsible').value = t.responsible || '';
   document.getElementById('treatment-control-ref').value = t.control_reference || '';
+  // Show cross-links section for existing treatments
+  const clContainer = document.getElementById('treatment-crosslinks');
+  clContainer.classList.remove('hidden');
+  renderCrossLinks('treatment', id, 'treatment-crosslinks');
   document.getElementById('treatment-modal').classList.remove('hidden');
 }
 

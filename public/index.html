@@ -136,23 +136,7 @@
           <button class="btn btn-primary" onclick="openTaskModal()">+ New Task</button>
         </div>
         <div class="filters" id="filters-bar"></div>
-        <div class="task-table-wrap">
-          <table class="task-table" id="task-table">
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Role</th>
-                <th>Process</th>
-                <th>Priority</th>
-                <th>Recurrence</th>
-                <th>Next Due</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="task-table-body"></tbody>
-          </table>
-        </div>
+        <div id="task-table-body" class="task-mgmt-cards"></div>
       </section>
 
       <!-- Yearly Plan View -->
@@ -1411,7 +1395,7 @@
           </div>
           <div class="form-group">
             <label for="task-recurrence">Recurrence</label>
-            <select id="task-recurrence" onchange="toggleCustomDays()">
+            <select id="task-recurrence" onchange="toggleRecurrenceFields()">
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="biweekly">Biweekly</option>
@@ -1425,6 +1409,33 @@
         <div class="form-group hidden" id="custom-days-group">
           <label for="task-custom-days">Repeat every N days</label>
           <input type="number" id="task-custom-days" min="1" value="1">
+        </div>
+        <div class="form-group hidden" id="task-day-of-week-group">
+          <label for="task-day-of-week">Day of Week</label>
+          <select id="task-day-of-week">
+            <option value="1">Monday</option>
+            <option value="2">Tuesday</option>
+            <option value="3">Wednesday</option>
+            <option value="4">Thursday</option>
+            <option value="5">Friday</option>
+            <option value="6">Saturday</option>
+            <option value="0">Sunday</option>
+          </select>
+        </div>
+        <div class="form-group hidden" id="task-day-of-month-group">
+          <label for="task-day-of-month">Day of Month</label>
+          <select id="task-day-of-month">
+            <option value="1">1st</option><option value="2">2nd</option><option value="3">3rd</option>
+            <option value="4">4th</option><option value="5">5th</option><option value="6">6th</option>
+            <option value="7">7th</option><option value="8">8th</option><option value="9">9th</option>
+            <option value="10">10th</option><option value="11">11th</option><option value="12">12th</option>
+            <option value="13">13th</option><option value="14">14th</option><option value="15">15th</option>
+            <option value="16">16th</option><option value="17">17th</option><option value="18">18th</option>
+            <option value="19">19th</option><option value="20">20th</option><option value="21">21st</option>
+            <option value="22">22nd</option><option value="23">23rd</option><option value="24">24th</option>
+            <option value="25">25th</option><option value="26">26th</option><option value="27">27th</option>
+            <option value="28">28th</option>
+          </select>
         </div>
         <div class="form-group">
           <label for="task-start">Start Date</label>
@@ -1735,6 +1746,7 @@
           <label for="treatment-notes">Notes</label>
           <textarea id="treatment-notes" rows="2" placeholder="Additional notes"></textarea>
         </div>
+        <div id="treatment-crosslinks" class="hidden" style="margin-bottom:16px"></div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeTreatmentModal()">Cancel</button>
           <button type="submit" class="btn btn-primary">Save Treatment</button>

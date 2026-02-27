@@ -1551,8 +1551,8 @@ app.post('/api/treatments', requireOrgContext, async (req, res) => {
   // Verify the risk belongs to this org
   const risk = await db.prepare('SELECT id FROM risks WHERE id = ? AND organization_id = ?').get(risk_id, req.orgId);
   if (!risk) return res.status(404).json({ error: 'Risk not found' });
-  const result = await db.prepare(`INSERT INTO risk_treatments (risk_id, treatment_type, description, control_reference, requirement_id, responsible, due_date, residual_likelihood, residual_impact, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    risk_id, treatment_type || 'mitigate', description || '', control_reference || '', requirement_id || null, responsible || '', due_date || null, residual_likelihood || null, residual_impact || null, notes || ''
+  const result = await db.prepare(`INSERT INTO risk_treatments (organization_id, risk_id, treatment_type, description, control_reference, requirement_id, responsible, due_date, residual_likelihood, residual_impact, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    req.orgId, risk_id, treatment_type || 'mitigate', description || '', control_reference || '', requirement_id || null, responsible || '', due_date || null, residual_likelihood || null, residual_impact || null, notes || ''
   );
   res.status(201).json(await db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -1569,15 +1569,15 @@ app.put('/api/treatments/:id', requireOrgContext, async (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
-  await db.prepare(`UPDATE risk_treatments SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
-  res.json(await db.prepare('SELECT * FROM risk_treatments WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+  await db.prepare(`UPDATE risk_treatments SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM risk_treatments WHERE id = ?').get(req.params.id));
 });
 
 app.delete('/api/treatments/:id', requireOrgContext, async (req, res) => {
   // Verify the treatment belongs to a risk in this org before deleting
   const existing = await db.prepare('SELECT rt.id FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id WHERE rt.id = ? AND r.organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Treatment not found' });
-  await db.prepare('DELETE FROM risk_treatments WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
+  await db.prepare('DELETE FROM risk_treatments WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 

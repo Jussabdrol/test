@@ -356,6 +356,36 @@ body {
 .task-table tr:hover td { background: #f9fafb; }
 .task-table tr:last-child td { border-bottom: none; }
 
+/* Task management cards (Manage Tasks view) */
+.task-mgmt-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.task-mgmt-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left: 4px solid #e5e7eb;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px;
+  transition: all .15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.task-mgmt-card:hover { box-shadow: var(--shadow-lg); }
+.task-mgmt-card.status-overdue { border-left-color: var(--danger); background: #fff9f9; }
+.task-mgmt-card.status-due-today { border-left-color: #f59e0b; }
+.task-mgmt-card.status-upcoming { border-left-color: var(--primary); }
+.task-mgmt-card.task-inactive { opacity: .65; border-left-color: #d1d5db; }
+.task-mgmt-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.task-mgmt-card-header-left { flex: 1; min-width: 0; }
+.task-mgmt-card-header-right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.task-mgmt-title { font-size: 14px; font-weight: 600; color: var(--primary); cursor: pointer; margin: 0 0 3px 0; line-height: 1.35; }
+.task-mgmt-title:hover { text-decoration: underline; }
+.task-mgmt-sub { font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; flex-wrap: wrap; }
+.task-mgmt-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.task-mgmt-card-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 8px; }
+.task-mgmt-footer-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.task-recurrence-badge { font-size: 11px; font-weight: 600; color: #374151; background: #f1f5f9; border: 1px solid #e2e8f0; padding: 2px 9px; border-radius: 10px; text-transform: capitalize; white-space: nowrap; }
+
 /* Badges */
 .badge {
   display: inline-block;
@@ -517,6 +547,30 @@ body {
 .upcoming-col-actions { display: flex; justify-content: center; align-items: center; }
 .upcoming-date { font-size: 12px; font-weight: 600; }
 .upcoming-date.overdue { color: var(--danger); font-weight: 700; }
+
+/* Upcoming task cards (Yearly Plan – Coming Up section) */
+.upcoming-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 10px; }
+.upcoming-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  transition: all .15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.upcoming-card:hover { box-shadow: var(--shadow-lg); border-color: #d1d5db; }
+.upcoming-card.card-overdue { border-left-color: var(--danger); background: #fff5f5; }
+.upcoming-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.upcoming-card-title { font-size: 13px; font-weight: 600; color: var(--primary); flex: 1; min-width: 0; cursor: pointer; }
+.upcoming-card-title:hover { text-decoration: underline; }
+.upcoming-card-badges { display: flex; gap: 4px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.upcoming-card-meta { font-size: 11px; color: var(--text-muted); }
+.upcoming-card-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 6px; border-top: 1px solid var(--border); gap: 6px; }
+
 .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); font-weight: 500; }
 .legend-dot { width: 14px; height: 14px; border-radius: 6px; }
 .legend-completed { background: var(--success-gradient); }
