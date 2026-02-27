@@ -38,12 +38,20 @@ async function initDatabase() {
         ssl: { rejectUnauthorized: false },
       };
 
-  // Connection pool settings (persistent server – higher defaults than serverless)
-  connectionConfig.max = parseInt(process.env.DB_POOL_MAX || '20');
-  connectionConfig.idleTimeoutMillis = 60000;
-  connectionConfig.connectionTimeoutMillis = 10000;
+  // Connection pool settings – tuned for Railway persistent server
+  connectionConfig.max = parseInt(process.env.DB_POOL_MAX || '20');   // max concurrent connections
+  connectionConfig.min = parseInt(process.env.DB_POOL_MIN || '2');    // keep warm connections alive
+  connectionConfig.idleTimeoutMillis = parseInt(process.env.DB_IDLE_TIMEOUT || '1800000');       // 30 min – persistent server keeps connections longer
+  connectionConfig.connectionTimeoutMillis = parseInt(process.env.DB_CONNECT_TIMEOUT || '15000'); // 15 s – allow for Railway network latency
+  connectionConfig.keepAlive = true;                // prevent TCP connections being silently dropped
+  connectionConfig.keepAliveInitialDelayMillis = 10000; // start keepalive probes after 10 s of idle
 
   pool = new Pool(connectionConfig);
+
+  // Log and swallow idle-client errors so a dropped connection doesn't crash the process
+  pool.on('error', (err) => {
+    console.error('Unexpected idle-client error:', err.message);
+  });
 
   // Test connection
   try {
