@@ -720,8 +720,8 @@ body {
 .gantt-table tr:hover td { background: #f9fafb; }
 .gantt-table tr:hover td:first-child { background: #f3f4f6; }
 .gantt-cell { position: relative; min-width: 70px; }
-.gantt-bar { position: relative; height: 100%; display: flex; align-items: center; justify-content: center; }
-.gantt-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin: 0 2px; cursor: default; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+.gantt-bar { position: relative; height: 100%; min-height: 28px; }
+.gantt-dot { width: 10px; height: 10px; border-radius: 50%; position: absolute; top: 50%; transform: translateY(-50%); cursor: default; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
 .gantt-dot.due { background: var(--primary-gradient); }
 .gantt-dot.completed { background: var(--success-gradient); }
 .gantt-dot.overdue { background: var(--danger-gradient); }

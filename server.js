@@ -714,6 +714,15 @@ app.post('/api/completions/:id/evidence', requireOrgContext, upload.single('file
   });
 
   await db.prepare('UPDATE completions SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
+
+  // Also create a Document Control entry for this evidence
+  const task = await db.prepare('SELECT title FROM tasks WHERE id = ?').get(item.task_id);
+  const docTitle = `Evidence: ${req.file.originalname}`;
+  const docDesc = `Evidence uploaded for task "${task ? task.title : 'Unknown'}" (completion #${req.params.id})`;
+  await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, classification) VALUES (?, ?, ?, 'evidence', '1.0', '', 'approved', ?, ?, ?, ?, 'operational-planning', 'task', ?, 'confidential')`).run(
+    req.orgId, docTitle, docDesc, req.file.originalname, storagePath, req.file.size, req.file.mimetype, item.task_id
+  );
+
   res.json(await db.prepare('SELECT * FROM completions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
@@ -1169,6 +1178,15 @@ app.post('/api/checklist/:id/evidence', requireOrgContext, upload.single('file')
 
   // Update the checklist item
   await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
+
+  // Also create a Document Control entry for this evidence
+  const audit = await db.prepare('SELECT title FROM audits WHERE id = ?').get(item.audit_id);
+  const docTitle = `Evidence: ${req.file.originalname}`;
+  const docDesc = `Evidence uploaded for audit "${audit ? audit.title : 'Unknown'}" — checklist item: ${item.clause || item.title || '#' + req.params.id}`;
+  await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, classification) VALUES (?, ?, ?, 'evidence', '1.0', '', 'approved', ?, ?, ?, ?, 'audits', 'audit', ?, 'confidential')`).run(
+    req.orgId, docTitle, docDesc, req.file.originalname, storagePath, req.file.size, req.file.mimetype, item.audit_id
+  );
+
   res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 

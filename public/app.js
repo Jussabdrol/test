@@ -429,8 +429,7 @@ function switchView(view) {
     }
   }
 
-  if (view === 'dashboard') loadDashboard();
-  else if (view === 'tasks') loadTasks();
+  if (view === 'tasks') loadTasks();
   else if (view === 'yearly') loadYearlyPlan();
   else if (view === 'actions') loadActions();
   else if (view === 'history') loadHistory();
@@ -1386,7 +1385,7 @@ async function updateActionStatus(id, status) {
 
 async function updateActionStatusAndRefresh(id, status) {
   await api(`/api/actions/${id}`, { method: 'PUT', body: { status } });
-  loadDashboard();
+  refreshCurrentView();
 }
 
 async function resolveAction(id) {
@@ -1547,7 +1546,6 @@ async function loadYearlyPlan() {
   document.getElementById('yearly-title').textContent = `Yearly Plan ${yearlyYear}`;
   const data = await api(`/api/yearly?year=${yearlyYear}`);
   yearlyData = data;
-  const grid = document.getElementById('yearly-grid');
   const today = new Date().toISOString().split('T')[0];
 
   // Compute per-month stats
@@ -1562,10 +1560,12 @@ async function loadYearlyPlan() {
       const ds = `${yearlyYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
       if (data.dueDates[ds]) {
         due += data.dueDates[ds].length;
-        if (ds < today) overdue += data.dueDates[ds].length;
         for (const t of data.dueDates[ds]) {
+          const wasCompleted = data.completedDates[ds] && data.completedDates[ds].some(c => c.task_id === t.task_id);
+          const isOverdue = ds < today && !wasCompleted;
+          if (isOverdue) overdue++;
           if (!taskDates[t.task_id]) taskDates[t.task_id] = { ...t, dates: [] };
-          taskDates[t.task_id].dates.push({ date: ds, type: ds < today ? 'overdue' : 'due' });
+          taskDates[t.task_id].dates.push({ date: ds, type: isOverdue ? 'overdue' : 'due' });
         }
       }
       if (data.completedDates[ds]) {
@@ -3287,7 +3287,9 @@ function renderGanttChart(data, monthStats, today) {
         html += `<div class="gantt-today-line" style="left:${pct}%"></div>`;
       }
       for (const d of dates) {
-        html += `<span class="gantt-dot ${d.type}" title="${d.date}"></span>`;
+        const dayNum = parseInt(d.date.split('-')[2]);
+        const pct = ((dayNum - 0.5) / daysInMonth) * 100;
+        html += `<span class="gantt-dot ${d.type}" style="left:calc(${pct}% - 5px)" title="${d.date}"></span>`;
       }
       html += '</div></td>';
     }
@@ -5815,6 +5817,7 @@ async function loadDocumentControl() {
         <option value="record" ${docFilters.doc_type==='record'?'selected':''}>Record</option>
         <option value="form" ${docFilters.doc_type==='form'?'selected':''}>Form / Template</option>
         <option value="report" ${docFilters.doc_type==='report'?'selected':''}>Report</option>
+        <option value="evidence" ${docFilters.doc_type==='evidence'?'selected':''}>Evidence</option>
         <option value="other" ${docFilters.doc_type==='other'?'selected':''}>Other</option>
       </select>
       <select onchange="docFilters.status=this.value;loadDocumentControl()">
@@ -5850,7 +5853,7 @@ async function loadDocumentControl() {
     return;
   }
 
-  const docTypeLabels = { policy: 'Policy', procedure: 'Procedure', work_instruction: 'Work Instruction', record: 'Record', form: 'Form', report: 'Report', other: 'Other' };
+  const docTypeLabels = { policy: 'Policy', procedure: 'Procedure', work_instruction: 'Work Instruction', record: 'Record', form: 'Form', report: 'Report', evidence: 'Evidence', other: 'Other' };
   const statusBadge = s => s === 'approved' ? 'badge-low' : s === 'review' ? 'badge-medium' : s === 'obsolete' ? 'badge-inactive' : 'badge-high';
   const classificationBadge = c => c === 'restricted' ? 'badge-critical' : c === 'confidential' ? 'badge-high' : c === 'internal' ? 'badge-medium' : 'badge-low';
   const today = new Date().toISOString().split('T')[0];
