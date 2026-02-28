@@ -404,6 +404,11 @@ const POSTGRES_SCHEMA_SQL = `
   -- Migrations: add evidence_files to completions
   ALTER TABLE completions ADD COLUMN IF NOT EXISTS evidence_files TEXT DEFAULT '[]';
 
+  -- Migrations: backfill NULL organization_id on audit_checklist from parent audit
+  UPDATE audit_checklist SET organization_id = (
+    SELECT a.organization_id FROM audits a WHERE a.id = audit_checklist.audit_id
+  ) WHERE organization_id IS NULL;
+
   -- Migrations: allow 'evidence' doc_type in documents table
   DO $$ BEGIN
     ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_doc_type_check;
