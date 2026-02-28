@@ -2543,8 +2543,8 @@ app.post('/api/admin/backups', requireAdmin, async (req, res) => {
   const size = Buffer.byteLength(content, 'utf8');
 
   // Upload backup to Supabase Storage
-  if (!supabase) return res.status(500).json({ error: 'Supabase is not configured (missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY)' });
-  const { error: uploadError } = await supabase.storage
+  if (!storageClient) return res.status(500).json({ error: 'Supabase is not configured (missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY)' });
+  const { error: uploadError } = await storageClient.storage
     .from(UPLOADS_BUCKET)
     .upload(`backups/${filename}`, Buffer.from(content, 'utf8'), { contentType: 'application/json', upsert: false });
   if (uploadError) return res.status(500).json({ error: `Backup storage failed: ${uploadError.message}` });
