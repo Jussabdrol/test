@@ -2904,8 +2904,11 @@ async function raiseNcrFromChecklist(auditId, checklistItemId, clause, severity)
 
 // --- Checklist Evidence Upload & Links ---
 async function uploadChecklistEvidence(itemId, auditId) {
-  const fileInput = document.getElementById(`cl-evidence-file-${itemId}`);
-  if (!fileInput.files.length) return;
+  // Two file inputs may exist for the same item (assessed "-a-" vs unassessed)
+  const inputA = document.getElementById(`cl-evidence-file-a-${itemId}`);
+  const inputB = document.getElementById(`cl-evidence-file-${itemId}`);
+  const fileInput = (inputA && inputA.files.length) ? inputA : (inputB && inputB.files.length) ? inputB : null;
+  if (!fileInput) return;
 
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
