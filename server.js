@@ -1105,7 +1105,7 @@ app.post('/api/audits/:id/checklist', requireOrgContext, async (req, res) => {
 
 // Update checklist item (during execution)
 app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
-  const existing = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  const existing = await getChecklistItemWithOrgCheck(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Checklist item not found' });
   const fields = ['clause', 'requirement', 'evidence', 'finding', 'rating', 'notes', 'sort_order', 'evidence_files'];
   const updates = [];
@@ -1115,7 +1115,7 @@ app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   params.push(req.params.id);
-  await db.prepare(`UPDATE audit_checklist SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+  await db.prepare(`UPDATE audit_checklist SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
   // Auto-create or remove NCR when rating changes
   if (req.body.rating) {
@@ -1147,60 +1147,79 @@ app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
 
 // Delete checklist item
 app.delete('/api/checklist/:id', requireOrgContext, async (req, res) => {
-  const result = await db.prepare('DELETE FROM audit_checklist WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
-  if (result.changes === 0) return res.status(404).json({ error: 'Item not found' });
+  const existing = await getChecklistItemWithOrgCheck(req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Item not found' });
+  await db.prepare('DELETE FROM audit_checklist WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
 // Upload evidence file to checklist item
 app.post('/api/checklist/:id/evidence', requireOrgContext, upload.single('file'), async (req, res) => {
-  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  if (!item) return res.status(404).json({ error: 'Checklist item not found' });
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-  let storagePath;
   try {
-    storagePath = await uploadToSupabase('evidence', req.file);
+    // Look up item by id, then verify org ownership through the parent audit
+    const item = await db.prepare('SELECT cl.*, a.organization_id as audit_org_id FROM audit_checklist cl JOIN audits a ON a.id = cl.audit_id WHERE cl.id = ?').get(req.params.id);
+    if (!item || item.audit_org_id !== req.orgId) return res.status(404).json({ error: 'Checklist item not found' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    let storagePath;
+    try {
+      storagePath = await uploadToSupabase('evidence', req.file);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+
+    // Parse existing evidence_files array
+    let evidenceFiles = [];
+    try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
+
+    // Add new file to array
+    evidenceFiles.push({
+      id: Date.now(),
+      type: 'file',
+      name: req.file.originalname,
+      path: storagePath,
+      size: req.file.size,
+      mime: req.file.mimetype,
+      uploaded_at: new Date().toISOString()
+    });
+
+    // Update the checklist item (use id only — org ownership already verified via audit)
+    await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
+
+    // Backfill organization_id if it was NULL
+    if (item.organization_id == null) {
+      await db.prepare('UPDATE audit_checklist SET organization_id = ? WHERE id = ? AND organization_id IS NULL').run(req.orgId, req.params.id);
+    }
+
+    // Also create a Document Control entry for this evidence
+    try {
+      const audit = await db.prepare('SELECT title FROM audits WHERE id = ?').get(item.audit_id);
+      const docTitle = `Evidence: ${req.file.originalname}`;
+      const docDesc = `Evidence uploaded for audit "${audit ? audit.title : 'Unknown'}" — checklist item: ${item.clause || item.title || '#' + req.params.id}`;
+      await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, classification) VALUES (?, ?, ?, 'evidence', '1.0', '', 'approved', ?, ?, ?, ?, 'audits', 'audit', ?, 'confidential')`).run(
+        req.orgId, docTitle, docDesc, req.file.originalname, storagePath, req.file.size, req.file.mimetype, item.audit_id
+      );
+    } catch (docErr) {
+      console.error('Failed to create Document Control entry for checklist evidence:', docErr.message);
+    }
+
+    res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('Evidence upload error:', err);
+    res.status(500).json({ error: 'Evidence upload failed' });
   }
-
-  // Parse existing evidence_files array
-  let evidenceFiles = [];
-  try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
-
-  // Add new file to array
-  evidenceFiles.push({
-    id: Date.now(),
-    type: 'file',
-    name: req.file.originalname,
-    path: storagePath,
-    size: req.file.size,
-    mime: req.file.mimetype,
-    uploaded_at: new Date().toISOString()
-  });
-
-  // Update the checklist item
-  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
-
-  // Also create a Document Control entry for this evidence
-  try {
-    const audit = await db.prepare('SELECT title FROM audits WHERE id = ?').get(item.audit_id);
-    const docTitle = `Evidence: ${req.file.originalname}`;
-    const docDesc = `Evidence uploaded for audit "${audit ? audit.title : 'Unknown'}" — checklist item: ${item.clause || item.title || '#' + req.params.id}`;
-    await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, classification) VALUES (?, ?, ?, 'evidence', '1.0', '', 'approved', ?, ?, ?, ?, 'audits', 'audit', ?, 'confidential')`).run(
-      req.orgId, docTitle, docDesc, req.file.originalname, storagePath, req.file.size, req.file.mimetype, item.audit_id
-    );
-  } catch (docErr) {
-    console.error('Failed to create Document Control entry for checklist evidence:', docErr.message);
-  }
-
-  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
+
+// Helper: look up checklist item by id and verify org ownership through parent audit
+async function getChecklistItemWithOrgCheck(itemId, orgId) {
+  const item = await db.prepare('SELECT cl.*, a.organization_id as audit_org_id FROM audit_checklist cl JOIN audits a ON a.id = cl.audit_id WHERE cl.id = ?').get(itemId);
+  if (!item || item.audit_org_id !== orgId) return null;
+  return item;
+}
 
 // Download evidence file from checklist item
 app.get('/api/checklist/:id/evidence/:fileId/download', requireOrgContext, async (req, res) => {
-  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  const item = await getChecklistItemWithOrgCheck(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
 
   let evidenceFiles = [];
@@ -1219,7 +1238,7 @@ app.get('/api/checklist/:id/evidence/:fileId/download', requireOrgContext, async
 
 // Delete evidence file from checklist item
 app.delete('/api/checklist/:id/evidence/:fileId', requireOrgContext, async (req, res) => {
-  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  const item = await getChecklistItemWithOrgCheck(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
 
   let evidenceFiles = [];
@@ -1236,13 +1255,13 @@ app.delete('/api/checklist/:id/evidence/:fileId', requireOrgContext, async (req,
 
   // Remove from array
   evidenceFiles.splice(fileIndex, 1);
-  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
+  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
   res.json({ success: true });
 });
 
 // Add link evidence to checklist item
 app.post('/api/checklist/:id/evidence-link', requireOrgContext, async (req, res) => {
-  const item = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  const item = await getChecklistItemWithOrgCheck(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Checklist item not found' });
   const { link_type, link_id, link_name } = req.body;
   if (!link_type || !link_id) return res.status(400).json({ error: 'Link type and id required' });
@@ -1262,8 +1281,8 @@ app.post('/api/checklist/:id/evidence-link', requireOrgContext, async (req, res)
   });
 
   // Update the checklist item
-  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
-  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+  await db.prepare('UPDATE audit_checklist SET evidence_files = ? WHERE id = ?').run(JSON.stringify(evidenceFiles), req.params.id);
+  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ?').get(req.params.id));
 });
 
 // --- Non-Conformity API ---

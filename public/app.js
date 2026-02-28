@@ -1120,7 +1120,17 @@ async function uploadCompletionEvidence() {
   if (!fileInput.files.length) return;
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
-  await fetch(`/api/completions/${activeCompletionId}/evidence`, { method: 'POST', body: formData });
+  try {
+    const res = await fetch(`/api/completions/${activeCompletionId}/evidence`, { method: 'POST', body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+      alert(err.error || 'Evidence upload failed');
+      return;
+    }
+  } catch (e) {
+    alert('Evidence upload failed: network error');
+    return;
+  }
   fileInput.value = '';
   await refreshCompletionEvidence(activeCompletionId);
 }
@@ -2913,7 +2923,17 @@ async function uploadChecklistEvidence(itemId, auditId) {
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
 
-  await fetch(`/api/checklist/${itemId}/evidence`, { method: 'POST', body: formData });
+  try {
+    const res = await fetch(`/api/checklist/${itemId}/evidence`, { method: 'POST', body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+      alert(err.error || 'Evidence upload failed');
+      return;
+    }
+  } catch (e) {
+    alert('Evidence upload failed: network error');
+    return;
+  }
   fileInput.value = '';
   loadAuditExecution(auditId);
 }
