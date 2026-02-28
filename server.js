@@ -32,10 +32,13 @@ function storageKey(folder, originalname) {
 }
 
 // Helper: upload a buffer to Supabase Storage; returns the storage path
+// Use the service-role client for server-side storage operations (bypasses RLS)
+const storageClient = supabaseAdmin || supabase;
+
 async function uploadToSupabase(folder, file) {
-  if (!supabase) throw new Error('Supabase is not configured (missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY)');
+  if (!storageClient) throw new Error('Supabase is not configured (missing SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY)');
   const key = storageKey(folder, file.originalname);
-  const { error } = await supabase.storage
+  const { error } = await storageClient.storage
     .from(UPLOADS_BUCKET)
     .upload(key, file.buffer, { contentType: file.mimetype, upsert: false });
   if (error) throw new Error(`Supabase upload failed: ${error.message}`);
@@ -44,8 +47,8 @@ async function uploadToSupabase(folder, file) {
 
 // Helper: get a short-lived signed download URL from Supabase Storage
 async function getSignedUrl(storagePath, expiresIn = 300) {
-  if (!supabase) throw new Error('Supabase is not configured (missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY)');
-  const { data, error } = await supabase.storage
+  if (!storageClient) throw new Error('Supabase is not configured (missing SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY)');
+  const { data, error } = await storageClient.storage
     .from(UPLOADS_BUCKET)
     .createSignedUrl(storagePath, expiresIn);
   if (error) throw new Error(`Supabase signed URL failed: ${error.message}`);
@@ -54,8 +57,8 @@ async function getSignedUrl(storagePath, expiresIn = 300) {
 
 // Helper: delete a file from Supabase Storage (ignores "not found" errors)
 async function deleteFromSupabase(storagePath) {
-  if (!supabase) return;
-  await supabase.storage.from(UPLOADS_BUCKET).remove([storagePath]);
+  if (!storageClient) return;
+  await storageClient.storage.from(UPLOADS_BUCKET).remove([storagePath]);
 }
 
 app.use(express.json());
