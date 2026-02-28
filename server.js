@@ -1068,14 +1068,14 @@ app.put('/api/audits/:id', requireOrgContext, async (req, res) => {
   // Add checklist items from newly selected requirements (skip existing clauses)
   if (req.body.requirement_ids && Array.isArray(req.body.requirement_ids)) {
     const existingClauses = (await db.prepare('SELECT clause FROM audit_checklist WHERE audit_id = ?').all(req.params.id)).map(c => c.clause);
-    const insertCl = db.prepare('INSERT INTO audit_checklist (audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?)');
+    const insertCl = db.prepare('INSERT INTO audit_checklist (organization_id, audit_id, clause, requirement, sort_order) VALUES (?, ?, ?, ?, ?)');
     const getReq = db.prepare('SELECT * FROM standard_requirements WHERE id = ?');
     const maxOrder = (await db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM audit_checklist WHERE audit_id = ?').get(req.params.id)).m;
     let order = maxOrder + 1;
     for (const reqId of req.body.requirement_ids) {
       const r = await getReq.get(reqId);
       if (r && !existingClauses.includes(r.clause)) {
-        await insertCl.run(req.params.id, r.clause, r.title, order++);
+        await insertCl.run(req.orgId, req.params.id, r.clause, r.title, order++);
       }
     }
   }
