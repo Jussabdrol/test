@@ -247,7 +247,7 @@ CREATE TABLE IF NOT EXISTS documents (
   organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT DEFAULT '',
-  doc_type TEXT DEFAULT 'policy' CHECK(doc_type IN ('policy','procedure','work_instruction','record','form','report','other')),
+  doc_type TEXT DEFAULT 'policy' CHECK(doc_type IN ('policy','procedure','work_instruction','record','form','report','evidence','other')),
   version TEXT DEFAULT '1.0',
   owner TEXT DEFAULT '',
   status TEXT DEFAULT 'draft' CHECK(status IN ('draft','review','approved','obsolete')),
