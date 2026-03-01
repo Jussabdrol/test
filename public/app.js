@@ -4019,8 +4019,8 @@ async function loadThreatIntelligence() {
 
   // Stats — only count enabled feeds (items list filters by enabled=1)
   const enabledFeeds = feeds.filter(f => f.enabled);
-  const totalNew = enabledFeeds.reduce((s, f) => s + (f.new_count || 0), 0);
-  const totalItems = enabledFeeds.reduce((s, f) => s + (f.item_count || 0), 0);
+  const totalNew = enabledFeeds.reduce((s, f) => s + Number(f.new_count || 0), 0);
+  const totalItems = enabledFeeds.reduce((s, f) => s + Number(f.item_count || 0), 0);
   document.getElementById('ti-stats').innerHTML = `
     <div class="stats-grid" style="margin-bottom:20px">
       <div class="stat-card"><div class="stat-value">${enabledFeeds.length}</div><div class="stat-label">Active Feeds</div></div>
