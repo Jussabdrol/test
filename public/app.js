@@ -4017,15 +4017,16 @@ async function loadThreatIntelligence() {
   if (tiFilters.feed_id) params.set('feed_id', tiFilters.feed_id);
   const items = await api(`/api/threat-items?${params}`);
 
-  // Stats
-  const totalNew = feeds.reduce((s, f) => s + f.new_count, 0);
-  const totalItems = feeds.reduce((s, f) => s + f.item_count, 0);
+  // Stats — only count enabled feeds (items list filters by enabled=1)
+  const enabledFeeds = feeds.filter(f => f.enabled);
+  const totalNew = enabledFeeds.reduce((s, f) => s + (f.new_count || 0), 0);
+  const totalItems = enabledFeeds.reduce((s, f) => s + (f.item_count || 0), 0);
   document.getElementById('ti-stats').innerHTML = `
     <div class="stats-grid" style="margin-bottom:20px">
-      <div class="stat-card"><div class="stat-value">${feeds.length}</div><div class="stat-label">Active Feeds</div></div>
+      <div class="stat-card"><div class="stat-value">${enabledFeeds.length}</div><div class="stat-label">Active Feeds</div></div>
       <div class="stat-card${totalNew > 0 ? ' overdue' : ''}"><div class="stat-value">${totalNew}</div><div class="stat-label">New Threats</div></div>
       <div class="stat-card"><div class="stat-value">${totalItems}</div><div class="stat-label">Total Items</div></div>
-      <div class="stat-card"><div class="stat-value">${feeds.filter(f => f.tier === 1).length}</div><div class="stat-label">Tier 1 Feeds</div></div>
+      <div class="stat-card"><div class="stat-value">${enabledFeeds.filter(f => f.tier === 1).length}</div><div class="stat-label">Tier 1 Feeds</div></div>
     </div>`;
 
   // Filters

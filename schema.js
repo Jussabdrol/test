@@ -419,12 +419,14 @@ const POSTGRES_SCHEMA_SQL = `
 
 // Default threat feeds to seed per organization
 const DEFAULT_THREAT_FEEDS = [
-  { name: 'CERT-EU Latest', url: 'https://cert.europa.eu/publications/security-advisories/rss', tier: 1 },
+  { name: 'NCSC-NL Advisories', url: 'https://advisories.ncsc.nl/rss/advisories', tier: 1 },
+  { name: 'NCSC-NL Nieuwsberichten', url: 'https://feeds.ncsc.nl/nieuws.rss', tier: 1 },
   { name: 'NCSC-UK Advisories', url: 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml', tier: 1 },
   { name: 'ENISA News', url: 'https://www.enisa.europa.eu/rss.xml', tier: 1 },
   { name: 'CISA Advisories', url: 'https://www.cisa.gov/cybersecurity-advisories/all.xml', tier: 2 },
   { name: 'US-CERT Alerts', url: 'https://www.us-cert.gov/ncas/alerts.xml', tier: 2 },
   { name: 'SANS ISC', url: 'https://isc.sans.edu/rssfeed_full.xml', tier: 3 },
+  { name: 'NOS Nieuws Tech', url: 'https://feeds.nos.nl/nosnieuwstech', tier: 3 },
   { name: 'Schneier on Security', url: 'https://www.schneier.com/feed/atom/', tier: 3 },
   { name: 'Krebs on Security', url: 'https://krebsonsecurity.com/feed/', tier: 3 },
   { name: 'NVD CVE Feed', url: 'https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml', tier: 4 },
