@@ -5790,6 +5790,53 @@ async function deleteArch(id) {
 // --- Document Control ---
 let docFilters = { doc_type: '', status: '', classification: '', process: '', owner: '', search: '' };
 
+// Column visibility — persisted in localStorage
+const DOC_COL_STORAGE_KEY = 'docColumnVisibility';
+const DOC_COLUMNS = [
+  { key: 'type',           label: 'Type',           default: true },
+  { key: 'classification', label: 'Classification', default: true },
+  { key: 'status',         label: 'Status',         default: true },
+  { key: 'version',        label: 'Version',        default: true },
+  { key: 'owner',          label: 'Owner',          default: true },
+  { key: 'review',         label: 'Review Date',    default: true },
+  { key: 'links',          label: 'Linked Items',   default: true },
+];
+
+function getDocColumnVisibility() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DOC_COL_STORAGE_KEY));
+    if (stored && typeof stored === 'object') return stored;
+  } catch (e) {}
+  const defaults = {};
+  DOC_COLUMNS.forEach(c => defaults[c.key] = c.default);
+  return defaults;
+}
+
+function setDocColumnVisibility(vis) {
+  localStorage.setItem(DOC_COL_STORAGE_KEY, JSON.stringify(vis));
+}
+
+function toggleDocColumn(key) {
+  const vis = getDocColumnVisibility();
+  vis[key] = !vis[key];
+  setDocColumnVisibility(vis);
+  loadDocumentControl();
+}
+
+function buildDocGridCols(vis) {
+  // Title column (always visible) + dynamic columns + actions (always visible)
+  let cols = '1fr';
+  if (vis.type) cols += ' 110px';
+  if (vis.classification) cols += ' 100px';
+  if (vis.status) cols += ' 80px';
+  if (vis.version) cols += ' 60px';
+  if (vis.owner) cols += ' 90px';
+  if (vis.review) cols += ' 90px';
+  if (vis.links) cols += ' 120px';
+  cols += ' 44px';
+  return cols;
+}
+
 async function loadDocumentControl() {
   const params = new URLSearchParams();
   if (docFilters.doc_type) params.set('doc_type', docFilters.doc_type);
@@ -5827,6 +5874,8 @@ async function loadDocumentControl() {
       (d.file_name && d.file_name.toLowerCase().includes(searchLower))
     );
   }
+
+  const vis = getDocColumnVisibility();
 
   document.getElementById('doc-filters-bar').innerHTML = `
     <div class="filter-row" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px">
@@ -5868,8 +5917,22 @@ async function loadDocumentControl() {
       </select>
       ${(docFilters.doc_type || docFilters.status || docFilters.classification || docFilters.process || docFilters.owner || docFilters.search) ?
         `<button class="btn btn-secondary btn-sm" onclick="docFilters={doc_type:'',status:'',classification:'',process:'',owner:'',search:''};loadDocumentControl()">Clear Filters</button>` : ''}
+      <div class="doc-col-toggle" style="margin-left:auto">
+        <button class="doc-col-toggle-btn" onclick="this.nextElementSibling.classList.toggle('open')" type="button">&#9881; Columns</button>
+        <div class="doc-col-dropdown">
+          ${DOC_COLUMNS.map(c => `<label><input type="checkbox" ${vis[c.key] ? 'checked' : ''} onchange="toggleDocColumn('${c.key}')"> ${esc(c.label)}</label>`).join('')}
+        </div>
+      </div>
     </div>
     <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">${docs.length} document${docs.length!==1?'s':''} found</div>`;
+
+  // Close column dropdown when clicking outside
+  document.addEventListener('click', function _closeDocColDrop(e) {
+    if (!e.target.closest('.doc-col-toggle')) {
+      const dd = document.querySelector('.doc-col-dropdown.open');
+      if (dd) dd.classList.remove('open');
+    }
+  }, { once: true });
 
   const list = document.getElementById('doc-list');
   if (docs.length === 0) {
@@ -5878,80 +5941,72 @@ async function loadDocumentControl() {
   }
 
   const docTypeLabels = { policy: 'Policy', procedure: 'Procedure', work_instruction: 'Work Instruction', record: 'Record', form: 'Form', report: 'Report', evidence: 'Evidence', other: 'Other' };
+  const docTypeBadge = t => t === 'policy' ? 'badge-critical' : t === 'procedure' ? 'badge-high' : t === 'work_instruction' ? 'badge-medium' : t === 'evidence' ? 'badge-inactive' : 'badge-low';
   const statusBadge = s => s === 'approved' ? 'badge-low' : s === 'review' ? 'badge-medium' : s === 'obsolete' ? 'badge-inactive' : 'badge-high';
   const classificationBadge = c => c === 'restricted' ? 'badge-critical' : c === 'confidential' ? 'badge-high' : c === 'internal' ? 'badge-medium' : 'badge-low';
   const today = new Date().toISOString().split('T')[0];
+  const gridCols = buildDocGridCols(vis);
 
-  // Group by doc_type
-  const groups = {};
+  let html = `<div class="doc-table">
+    <div class="doc-table-head" style="grid-template-columns:${gridCols}">
+      <div class="doc-col-title">Document</div>
+      ${vis.type ? '<div class="doc-col-type">Type</div>' : ''}
+      ${vis.classification ? '<div class="doc-col-class">Classification</div>' : ''}
+      ${vis.status ? '<div class="doc-col-status">Status</div>' : ''}
+      ${vis.version ? '<div class="doc-col-ver">Version</div>' : ''}
+      ${vis.owner ? '<div class="doc-col-owner">Owner</div>' : ''}
+      ${vis.review ? '<div class="doc-col-review">Review</div>' : ''}
+      ${vis.links ? '<div class="doc-col-links">Linked Items</div>' : ''}
+      <div class="doc-col-actions"></div>
+    </div>`;
+
   for (const d of docs) {
-    const t = docTypeLabels[d.doc_type] || d.doc_type || 'Other';
-    if (!groups[t]) groups[t] = [];
-    groups[t].push(d);
-  }
+    const reviewOverdue = d.review_date && d.review_date < today;
+    const links = allLinks[d.id] || [];
+    const processLinks = links.filter(l => l.type === 'process');
+    const reqLinks = links.filter(l => l.type === 'requirement');
+    const otherLinks = links.filter(l => l.type !== 'process' && l.type !== 'requirement');
+    const linkParts = [];
+    if (reqLinks.length > 0) linkParts.push(reqLinks.length + ' standard' + (reqLinks.length !== 1 ? 's' : ''));
+    if (processLinks.length > 0) linkParts.push(processLinks.length + ' process' + (processLinks.length !== 1 ? 'es' : ''));
+    if (otherLinks.length > 0) linkParts.push(otherLinks.length + ' other');
+    const linkSummary = linkParts.length > 0 ? linkParts.join(', ') : '-';
+    const collapseId = `doc-cl-${d.id}`;
+    const typeLabel = docTypeLabels[d.doc_type] || d.doc_type || 'Other';
 
-  let html = '';
-  for (const [typeName, items] of Object.entries(groups)) {
-    html += `<div class="doc-type-group">
-      <div class="doc-type-header">${esc(typeName)} <span class="req-cat-count">(${items.length})</span></div>
-      <div class="doc-table">
-        <div class="doc-table-head">
-          <div class="doc-col-title">Document</div>
-          <div class="doc-col-class">Classification</div>
-          <div class="doc-col-status">Status</div>
-          <div class="doc-col-ver">Version</div>
-          <div class="doc-col-owner">Owner</div>
-          <div class="doc-col-review">Review</div>
-          <div class="doc-col-links">Linked Items</div>
-          <div class="doc-col-actions"></div>
-        </div>`;
-    for (const d of items) {
-      const reviewOverdue = d.review_date && d.review_date < today;
-      const links = allLinks[d.id] || [];
-      const processLinks = links.filter(l => l.type === 'process');
-      const reqLinks = links.filter(l => l.type === 'requirement');
-      const otherLinks = links.filter(l => l.type !== 'process' && l.type !== 'requirement');
-      // Build a brief summary for the links column
-      const linkParts = [];
-      if (reqLinks.length > 0) linkParts.push(reqLinks.length + ' standard' + (reqLinks.length !== 1 ? 's' : ''));
-      if (processLinks.length > 0) linkParts.push(processLinks.length + ' process' + (processLinks.length !== 1 ? 'es' : ''));
-      if (otherLinks.length > 0) linkParts.push(otherLinks.length + ' other');
-      const linkSummary = linkParts.length > 0 ? linkParts.join(', ') : '-';
-      const collapseId = `doc-cl-${d.id}`;
-
-      html += `<div class="doc-table-row${d.status === 'obsolete' ? ' doc-obsolete' : ''}">
-          <div class="doc-col-title" style="cursor:pointer" onclick="openDocModal(${d.id})">
-            <span class="doc-row-title" style="color:var(--primary)">${esc(d.title)}</span>
-            ${d.file_name ? `<span class="doc-row-file">${esc(d.file_name)}</span>` : ''}
-          </div>
-          <div class="doc-col-class">
-            ${d.classification ? `<span class="badge ${classificationBadge(d.classification)}">${esc(d.classification)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
-          </div>
-          <div class="doc-col-status"><span class="badge ${statusBadge(d.status)}">${esc(d.status)}</span></div>
-          <div class="doc-col-ver">v${esc(d.version)}</div>
-          <div class="doc-col-owner">${d.owner ? `<span style="font-size:12px">${esc(d.owner)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
-          <div class="doc-col-review">${d.review_date ? `<span style="font-size:12px;${reviewOverdue ? 'color:var(--danger);font-weight:600' : ''}">${d.review_date}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
-          <div class="doc-col-links">
-            <span class="doc-link-summary" style="cursor:pointer;font-size:12px" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">${linkSummary} <span class="cl-toggle-icon">${links.length > 0 ? '+' : ''}</span></span>
-          </div>
-          <div class="doc-col-actions">
-            ${actionMenu([
-              ...(d.file_name ? [{ label: '&#128229; Download', onclick: `downloadDoc(${d.id})` }] : []),
-              { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('document',${d.id},'doc-expand-${d.id}')` },
-              { label: '&#9998; Edit', onclick: `openDocModal(${d.id})` },
-              'sep',
-              { label: '&#128465; Delete', onclick: `deleteDoc(${d.id})`, cls: 'danger' },
-            ])}
-          </div>
+    html += `<div class="doc-table-row${d.status === 'obsolete' ? ' doc-obsolete' : ''}" style="grid-template-columns:${gridCols}">
+        <div class="doc-col-title" style="cursor:pointer" onclick="openDocModal(${d.id})">
+          <span class="doc-row-title" style="color:var(--primary)">${esc(d.title)}</span>
+          ${d.file_name ? `<span class="doc-row-file">${esc(d.file_name)}</span>` : ''}
         </div>
-        <div id="doc-expand-${d.id}" class="doc-expand-row">
-          <div id="${collapseId}" class="doc-links-detail collapsed">
-            ${links.length === 0 ? '<span style="font-size:12px;color:var(--text-muted);font-style:italic">No linked items. Use the action menu to link items.</span>' : buildDocLinksDetail(links, d.id)}
-          </div>
-        </div>`;
-    }
-    html += '</div></div>';
+        ${vis.type ? `<div class="doc-col-type"><span class="badge ${docTypeBadge(d.doc_type)}">${esc(typeLabel)}</span></div>` : ''}
+        ${vis.classification ? `<div class="doc-col-class">
+          ${d.classification ? `<span class="badge ${classificationBadge(d.classification)}">${esc(d.classification)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
+        </div>` : ''}
+        ${vis.status ? `<div class="doc-col-status"><span class="badge ${statusBadge(d.status)}">${esc(d.status)}</span></div>` : ''}
+        ${vis.version ? `<div class="doc-col-ver">v${esc(d.version)}</div>` : ''}
+        ${vis.owner ? `<div class="doc-col-owner">${d.owner ? `<span style="font-size:12px">${esc(d.owner)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>` : ''}
+        ${vis.review ? `<div class="doc-col-review">${d.review_date ? `<span style="font-size:12px;${reviewOverdue ? 'color:var(--danger);font-weight:600' : ''}">${d.review_date}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>` : ''}
+        ${vis.links ? `<div class="doc-col-links">
+          <span class="doc-link-summary" style="cursor:pointer;font-size:12px" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">${linkSummary} <span class="cl-toggle-icon">${links.length > 0 ? '+' : ''}</span></span>
+        </div>` : ''}
+        <div class="doc-col-actions">
+          ${actionMenu([
+            ...(d.file_name ? [{ label: '&#128229; Download', onclick: `downloadDoc(${d.id})` }] : []),
+            { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('document',${d.id},'doc-expand-${d.id}')` },
+            { label: '&#9998; Edit', onclick: `openDocModal(${d.id})` },
+            'sep',
+            { label: '&#128465; Delete', onclick: `deleteDoc(${d.id})`, cls: 'danger' },
+          ])}
+        </div>
+      </div>
+      <div id="doc-expand-${d.id}" class="doc-expand-row">
+        <div id="${collapseId}" class="doc-links-detail collapsed">
+          ${links.length === 0 ? '<span style="font-size:12px;color:var(--text-muted);font-style:italic">No linked items. Use the action menu to link items.</span>' : buildDocLinksDetail(links, d.id)}
+        </div>
+      </div>`;
   }
+  html += '</div>';
   list.innerHTML = html;
 }
 
@@ -6083,8 +6138,9 @@ async function saveDocument(e) {
   formData.append('classification', document.getElementById('doc-classification').value);
 
   const refVal = document.getElementById('doc-linked-ref').value;
+  let refType = '', refId = '';
   if (refVal) {
-    const [refType, refId] = refVal.split(':');
+    [refType, refId] = refVal.split(':');
     formData.append('linked_ref_type', refType);
     formData.append('linked_ref_id', refId);
   }
@@ -6102,6 +6158,24 @@ async function saveDocument(e) {
     alert(err.error || 'Failed to save document');
     return;
   }
+
+  // Auto-create cross-link when a linked item is selected
+  if (refType && refId) {
+    const savedDoc = await res.json().catch(() => null);
+    const docId = savedDoc ? savedDoc.id : (id ? parseInt(id) : null);
+    if (docId) {
+      // Check for existing link to avoid duplicates
+      const existingLinks = await api(`/api/cross-links/document/${docId}`);
+      const alreadyLinked = existingLinks.some(l => l.type === refType && l.id === parseInt(refId));
+      if (!alreadyLinked) {
+        await api('/api/cross-links', {
+          method: 'POST',
+          body: { source_type: 'document', source_id: docId, target_type: refType, target_id: parseInt(refId) }
+        }).catch(() => {});
+      }
+    }
+  }
+
   closeDocModal();
   loadDocumentControl();
 }
