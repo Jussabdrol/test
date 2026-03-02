@@ -1920,6 +1920,45 @@ app.delete('/api/architecture/:id', requireOrgContext, async (req, res) => {
   res.json({ success: true });
 });
 
+// Org users list – accessible to all authenticated org members (for role assignment picker)
+app.get('/api/org-users', requireOrgContext, async (req, res) => {
+  const users = await db.prepare(
+    "SELECT id, name, email, department FROM users WHERE organization_id = ? AND status = 'active' AND role != 'superadmin' ORDER BY name"
+  ).all(req.orgId);
+  res.json(users);
+});
+
+// My Tasks – aggregates tasks, actions, and NCRs assigned to the current user
+app.get('/api/my-tasks', requireOrgContext, async (req, res) => {
+  const userId = req.session.userId;
+  const user = await db.prepare('SELECT name, email FROM users WHERE id = ?').get(userId);
+  if (!user) return res.json({ tasks: [], actions: [], ncrs: [] });
+
+  const nameMatches = [user.name, user.email].filter(Boolean);
+  // Build OR-clause to match assignee/responsible by name or email
+  const placeholders = nameMatches.map(() => '?').join(', ');
+
+  const tasks = await db.prepare(
+    `SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1 AND assignee IN (${placeholders}) ORDER BY next_due ASC`
+  ).all(req.orgId, ...nameMatches);
+
+  const actions = await db.prepare(
+    `SELECT a.*, COALESCE(t.title, 'Standalone') as task_title
+     FROM actions a LEFT JOIN tasks t ON a.task_id = t.id
+     WHERE a.organization_id = ? AND a.assignee IN (${placeholders}) AND a.status NOT IN ('resolved','closed')
+     ORDER BY a.due_date ASC NULLS LAST, a.created_at DESC`
+  ).all(req.orgId, ...nameMatches);
+
+  const ncrs = await db.prepare(
+    `SELECT n.*, a.title as audit_title FROM non_conformities n
+     JOIN audits a ON n.audit_id = a.id
+     WHERE n.organization_id = ? AND n.responsible IN (${placeholders}) AND n.status NOT IN ('closed','verified')
+     ORDER BY n.due_date ASC NULLS LAST, n.created_at DESC`
+  ).all(req.orgId, ...nameMatches);
+
+  res.json({ tasks, actions, ncrs, user: { name: user.name, email: user.email } });
+});
+
 // --- Document Control API ---
 
 app.get('/api/documents', requireOrgContext, async (req, res) => {
