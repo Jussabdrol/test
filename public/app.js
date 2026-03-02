@@ -469,6 +469,20 @@ async function api(url, options = {}) {
   return res.json();
 }
 
+// Run async tasks with bounded concurrency to avoid overwhelming connections
+async function batchAll(items, fn, concurrency = 6) {
+  const results = [];
+  let i = 0;
+  async function next() {
+    const idx = i++;
+    if (idx >= items.length) return;
+    results[idx] = await fn(items[idx], idx);
+    await next();
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => next()));
+  return results;
+}
+
 // --- Cross-Link System ---
 const linkableTypes = {
   risk: { label: 'Risk', icon: '&#9888;', canLink: ['role','process','system','asset','facility','requirement','document','task','action'] },
@@ -3356,7 +3370,7 @@ async function loadRequirements() {
 
   // Prefetch cross-links for all requirements
   const allLinks = {};
-  await Promise.all(reqs.map(async r => { allLinks[r.id] = await api(`/api/cross-links/requirement/${r.id}`); }));
+  await batchAll(reqs, async r => { allLinks[r.id] = await api(`/api/cross-links/requirement/${r.id}`); });
 
   // Render filter bar
   document.getElementById('req-filters-bar').innerHTML = `
@@ -4330,7 +4344,7 @@ async function loadRiskIdentification() {
 
   // Prefetch cross-links
   const allLinks = {};
-  await Promise.all(risks.map(async r => { allLinks[r.id] = await api(`/api/cross-links/risk/${r.id}`); }));
+  await batchAll(risks, async r => { allLinks[r.id] = await api(`/api/cross-links/risk/${r.id}`); });
 
   // Filters
   const categories = [...new Set(risks.map(r => r.category).filter(Boolean))];
@@ -4592,14 +4606,14 @@ async function loadRiskTreatmentView() {
   const risks = await api('/api/risks');
   // Fetch all treatment details
   const details = {};
-  await Promise.all(risks.map(async r => { details[r.id] = await api(`/api/risks/${r.id}`); }));
+  await batchAll(risks, async r => { details[r.id] = await api(`/api/risks/${r.id}`); });
 
   // Fetch treatment links
   const treatmentLinks = {};
   const allTreatments = Object.values(details).flatMap(d => d.treatments || []);
-  await Promise.all(allTreatments.map(async t => {
+  await batchAll(allTreatments, async t => {
     treatmentLinks[t.id] = await api(`/api/cross-links/treatment/${t.id}`);
-  }));
+  });
 
   const totalTreatments = Object.values(details).reduce((s, d) => s + (d.treatments || []).length, 0);
   const openTreatments = Object.values(details).reduce((s, d) => s + (d.treatments || []).filter(t => t.status === 'planned' || t.status === 'in_progress').length, 0);
@@ -5256,9 +5270,9 @@ async function loadArchitecture() {
 
   // Fetch cross-links for all items
   const allLinks = {};
-  await Promise.all(items.map(async item => {
+  await batchAll(items, async item => {
     allLinks[item.id] = await api(`/api/cross-links/${currentArchTab}/${item.id}`);
-  }));
+  });
   // Second race-condition check after cross-link fetches
   if (loadId !== _archLoadId) return;
 
@@ -5877,9 +5891,9 @@ async function loadDocumentControl() {
 
   // Prefetch all cross-links for documents
   const allLinks = {};
-  await Promise.all(docs.map(async d => {
+  await batchAll(docs, async d => {
     allLinks[d.id] = await api(`/api/cross-links/document/${d.id}`);
-  }));
+  });
 
   // Fetch processes for filter dropdown
   const processes = await api('/api/architecture?arch_type=process');
