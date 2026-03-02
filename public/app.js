@@ -460,6 +460,12 @@ async function api(url, options = {}) {
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const msg = body.error || `HTTP ${res.status}`;
+    console.error(`[API] ${options.method || 'GET'} ${url} → ${res.status}: ${msg}`);
+    throw new Error(msg);
+  }
   return res.json();
 }
 
@@ -1554,6 +1560,7 @@ function invalidateYearlyCache() {
 
 async function loadYearlyPlan() {
   document.getElementById('yearly-title').textContent = `Yearly Plan ${yearlyYear}`;
+  try {
   const data = await api(`/api/yearly?year=${yearlyYear}`);
   yearlyData = data;
   const today = new Date().toISOString().split('T')[0];
@@ -1701,6 +1708,11 @@ async function loadYearlyPlan() {
   }
 
   upcomingEl.innerHTML = html;
+  } catch (err) {
+    console.error('[loadYearlyPlan] Failed:', err);
+    const el = document.getElementById('yearly-summary');
+    if (el) el.innerHTML = `<div class="empty-state" style="color:var(--danger)">Failed to load yearly plan: ${esc(err.message)}</div>`;
+  }
 }
 
 async function quickComplete(taskId, dateStr) {
@@ -3336,6 +3348,7 @@ function ratingLabel(rating) {
 let reqFilters = { standard: '' };
 
 async function loadRequirements() {
+  try {
   const params = new URLSearchParams();
   if (reqFilters.standard) params.set('standard', reqFilters.standard);
   const reqs = await api(`/api/requirements?${params}`);
@@ -3450,6 +3463,11 @@ async function loadRequirements() {
     html += '</div></div>';
   }
   list.innerHTML = html;
+  } catch (err) {
+    console.error('[loadRequirements] Failed:', err);
+    const list = document.getElementById('req-list');
+    if (list) list.innerHTML = `<div class="empty-state" style="color:var(--danger)">Failed to load requirements: ${esc(err.message)}</div>`;
+  }
 }
 
 // toggleReqLinks removed — links now inline in table
@@ -5198,9 +5216,15 @@ function switchArchTab(type) {
 }
 
 let orgChartZoom = 1;
+let _archLoadId = 0; // race-condition guard for rapid tab switching
 
 async function loadArchitecture() {
+  const loadId = ++_archLoadId;
+  const tabAtStart = currentArchTab;
+  try {
   const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
+  // If user clicked a different tab while we were fetching, discard this result
+  if (loadId !== _archLoadId) return;
   const list = document.getElementById('arch-list');
 
   // Update Add button label to match current tab
@@ -5235,6 +5259,8 @@ async function loadArchitecture() {
   await Promise.all(items.map(async item => {
     allLinks[item.id] = await api(`/api/cross-links/${currentArchTab}/${item.id}`);
   }));
+  // Second race-condition check after cross-link fetches
+  if (loadId !== _archLoadId) return;
 
   // Summary stats
   const activeCount = items.filter(i => i.status === 'active').length;
@@ -5262,6 +5288,11 @@ async function loadArchitecture() {
 
   html += '</div>';
   list.innerHTML = html;
+  } catch (err) {
+    console.error(`[loadArchitecture:${tabAtStart}] Failed:`, err);
+    const list = document.getElementById('arch-list');
+    if (list) list.innerHTML = `<div class="empty-state" style="color:var(--danger)">Failed to load ${archTypeLabels[tabAtStart] || 'architecture'}: ${esc(err.message)}</div>`;
+  }
 }
 
 // --- Organization Chart ---
