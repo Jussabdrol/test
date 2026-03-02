@@ -1932,31 +1932,67 @@ app.get('/api/org-users', requireOrgContext, async (req, res) => {
 app.get('/api/my-tasks', requireOrgContext, async (req, res) => {
   const userId = req.session.userId;
   const user = await db.prepare('SELECT name, email FROM users WHERE id = ?').get(userId);
-  if (!user) return res.json({ tasks: [], actions: [], ncrs: [] });
+  if (!user) return res.json({ tasks: [], actions: [], ncrs: [], audits: [], treatments: [], assignedRoles: [] });
 
-  const nameMatches = [user.name, user.email].filter(Boolean);
-  // Build OR-clause to match assignee/responsible by name or email
-  const placeholders = nameMatches.map(() => '?').join(', ');
+  // --- Resolve roles assigned to this user ---
+  const allRoles = await db.prepare(
+    "SELECT name, metadata FROM org_architecture WHERE organization_id = ? AND arch_type = 'role'"
+  ).all(req.orgId);
 
+  const assignedRoles = allRoles
+    .filter(r => {
+      try {
+        return String(JSON.parse(r.metadata || '{}').assigned_user_id) === String(userId);
+      } catch { return false; }
+    })
+    .map(r => r.name);
+
+  // Full set of identifiers: user's own name/email + every role they hold
+  const matches = [...new Set([user.name, user.email, ...assignedRoles].filter(Boolean))];
+  const ph = matches.map(() => '?').join(', '); // reusable placeholders
+
+  // --- Recurring Tasks ---
   const tasks = await db.prepare(
-    `SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1 AND assignee IN (${placeholders}) ORDER BY next_due ASC`
-  ).all(req.orgId, ...nameMatches);
+    `SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1 AND assignee IN (${ph}) ORDER BY next_due ASC`
+  ).all(req.orgId, ...matches);
 
+  // --- Follow-up Actions ---
   const actions = await db.prepare(
-    `SELECT a.*, COALESCE(t.title, 'Standalone') as task_title
+    `SELECT a.*, COALESCE(t.title, 'Standalone') AS task_title
      FROM actions a LEFT JOIN tasks t ON a.task_id = t.id
-     WHERE a.organization_id = ? AND a.assignee IN (${placeholders}) AND a.status NOT IN ('resolved','closed')
+     WHERE a.organization_id = ? AND a.assignee IN (${ph}) AND a.status NOT IN ('resolved','closed')
      ORDER BY a.due_date ASC NULLS LAST, a.created_at DESC`
-  ).all(req.orgId, ...nameMatches);
+  ).all(req.orgId, ...matches);
 
+  // --- Non-Conformities ---
   const ncrs = await db.prepare(
-    `SELECT n.*, a.title as audit_title FROM non_conformities n
+    `SELECT n.*, a.title AS audit_title FROM non_conformities n
      JOIN audits a ON n.audit_id = a.id
-     WHERE n.organization_id = ? AND n.responsible IN (${placeholders}) AND n.status NOT IN ('closed','verified')
+     WHERE n.organization_id = ? AND n.responsible IN (${ph}) AND n.status NOT IN ('closed','verified')
      ORDER BY n.due_date ASC NULLS LAST, n.created_at DESC`
-  ).all(req.orgId, ...nameMatches);
+  ).all(req.orgId, ...matches);
 
-  res.json({ tasks, actions, ncrs, user: { name: user.name, email: user.email } });
+  // --- Audits (as lead auditor or auditee, not yet completed) ---
+  const audits = await db.prepare(
+    `SELECT * FROM audits
+     WHERE organization_id = ? AND status != 'completed'
+       AND (lead_auditor IN (${ph}) OR auditee IN (${ph}))
+     ORDER BY planned_date ASC NULLS LAST`
+  ).all(req.orgId, ...matches, ...matches); // matches twice for both IN clauses
+
+  // --- Risk Treatments (open/in-progress) ---
+  const treatments = await db.prepare(
+    `SELECT rt.*, r.title AS risk_title FROM risk_treatments rt
+     JOIN risks r ON rt.risk_id = r.id
+     WHERE r.organization_id = ? AND rt.responsible IN (${ph}) AND rt.status IN ('planned','in_progress')
+     ORDER BY rt.due_date ASC NULLS LAST, rt.created_at DESC`
+  ).all(req.orgId, ...matches);
+
+  res.json({
+    tasks, actions, ncrs, audits, treatments,
+    assignedRoles,
+    user: { name: user.name, email: user.email }
+  });
 });
 
 // --- Document Control API ---
