@@ -6333,8 +6333,11 @@ async function loadMyTasks() {
 }
 
 function renderMyTasksContent(data) {
-  const { tasks = [], actions = [], ncrs = [] } = data;
+  const { tasks = [], actions = [], ncrs = [], audits = [], treatments = [], assignedRoles = [] } = data;
   const today = new Date().toISOString().split('T')[0];
+  const roleSet = new Set(assignedRoles);
+
+  // ── Shared helpers ─────────────────────────────────────────────────────────
 
   function priorityBadge(p) {
     const map = { Critical: 'badge-critical', High: 'badge-high', Medium: 'badge-medium', Low: 'badge-low' };
@@ -6343,41 +6346,73 @@ function renderMyTasksContent(data) {
 
   function statusBadge(s, statusMap) {
     const map = statusMap || { open: 'badge-medium', in_progress: 'badge-high', resolved: 'badge-low', closed: 'badge-inactive' };
-    return `<span class="badge ${map[s] || 'badge-medium'}">${(s || '').replace('_', ' ')}</span>`;
+    return `<span class="badge ${map[s] || 'badge-medium'}">${(s || '').replace(/_/g, ' ')}</span>`;
   }
 
   function dueDateLabel(dateStr) {
-    if (!dateStr) return '<span style="color:var(--text-muted);font-size:11px">No due date</span>';
+    if (!dateStr) return '<span class="my-tasks-due">—</span>';
     const isOverdue = dateStr < today;
     const isToday = dateStr === today;
     const cls = isOverdue ? 'my-tasks-overdue' : isToday ? 'my-tasks-today' : '';
-    const label = isOverdue ? '⚠ Overdue' : isToday ? '● Due Today' : '';
-    return `<span class="my-tasks-due ${cls}">${label ? label + ' · ' : ''}${dateStr}</span>`;
+    const label = isOverdue ? '⚠ Overdue · ' : isToday ? '● Due Today · ' : '';
+    return `<span class="my-tasks-due ${cls}">${label}${dateStr}</span>`;
   }
 
-  let html = '';
+  // Returns a "via Role" chip when the assignee field is a role name (not the user directly)
+  function roleTag(assigneeField) {
+    if (assigneeField && roleSet.has(assigneeField)) {
+      return `<span class="my-tasks-role-tag" title="Assigned via role">&#128100; ${esc(assigneeField)}</span>`;
+    }
+    return '';
+  }
 
-  // ---- TASKS SECTION ----
-  html += `
-    <div class="my-tasks-section">
-      <div class="my-tasks-section-header">
-        <span class="my-tasks-section-icon">&#9745;</span>
-        <h3>Recurring Tasks <span class="my-tasks-count">${tasks.length}</span></h3>
+  // ── Section builder ────────────────────────────────────────────────────────
+
+  function section(icon, title, count, body) {
+    return `
+      <div class="my-tasks-section">
+        <div class="my-tasks-section-header">
+          <span class="my-tasks-section-icon">${icon}</span>
+          <h3>${title} <span class="my-tasks-count">${count}</span></h3>
+        </div>
+        ${body}
       </div>`;
+  }
 
+  function emptyMsg(msg) {
+    return `<div class="my-tasks-empty">${msg}</div>`;
+  }
+
+  function itemRowCls(dateStr) {
+    if (!dateStr) return 'my-tasks-item';
+    return dateStr < today ? 'my-tasks-item overdue' : dateStr === today ? 'my-tasks-item today' : 'my-tasks-item';
+  }
+
+  // ── Assigned-roles header ──────────────────────────────────────────────────
+  let headerHtml = '';
+  if (assignedRoles.length > 0) {
+    headerHtml = `
+      <div class="my-tasks-roles-bar">
+        <span class="my-tasks-roles-label">&#128100; Your roles:</span>
+        ${assignedRoles.map(r => `<span class="my-tasks-role-chip">${esc(r)}</span>`).join('')}
+      </div>`;
+  }
+
+  // ── Recurring Tasks ────────────────────────────────────────────────────────
+  let tasksBody = '';
   if (tasks.length === 0) {
-    html += '<div class="my-tasks-empty">No recurring tasks assigned to you.</div>';
+    tasksBody = emptyMsg('No recurring tasks assigned to you or your roles.');
   } else {
-    html += '<div class="my-tasks-list">';
+    tasksBody = '<div class="my-tasks-list">';
     for (const t of tasks) {
-      const isOverdue = t.next_due < today;
-      const isToday = t.next_due === today;
-      const rowCls = isOverdue ? 'my-tasks-item overdue' : isToday ? 'my-tasks-item today' : 'my-tasks-item';
-      html += `
-        <div class="${rowCls}" onclick="switchView('tasks')">
+      tasksBody += `
+        <div class="${itemRowCls(t.next_due)}" onclick="switchView('tasks')">
           <div class="my-tasks-item-main">
             <div class="my-tasks-item-title">${esc(t.title)}</div>
-            ${t.category ? `<span class="my-tasks-cat">${esc(t.category)}</span>` : ''}
+            <div class="my-tasks-item-sub">
+              ${t.category ? `<span class="my-tasks-cat">${esc(t.category)}</span>` : ''}
+              ${roleTag(t.assignee)}
+            </div>
           </div>
           <div class="my-tasks-item-meta">
             ${priorityBadge(t.priority)}
@@ -6386,32 +6421,25 @@ function renderMyTasksContent(data) {
           </div>
         </div>`;
     }
-    html += '</div>';
+    tasksBody += '</div>';
   }
-  html += '</div>';
 
-  // ---- ACTIONS SECTION ----
-  html += `
-    <div class="my-tasks-section">
-      <div class="my-tasks-section-header">
-        <span class="my-tasks-section-icon">&#9889;</span>
-        <h3>Actions <span class="my-tasks-count">${actions.length}</span></h3>
-      </div>`;
-
+  // ── Follow-up Actions ──────────────────────────────────────────────────────
+  let actionsBody = '';
+  const actionStatusMap = { open: 'badge-medium', in_progress: 'badge-high', resolved: 'badge-low', closed: 'badge-inactive' };
   if (actions.length === 0) {
-    html += '<div class="my-tasks-empty">No open actions assigned to you.</div>';
+    actionsBody = emptyMsg('No open actions assigned to you or your roles.');
   } else {
-    const actionStatusMap = { open: 'badge-medium', in_progress: 'badge-high', resolved: 'badge-low', closed: 'badge-inactive' };
-    html += '<div class="my-tasks-list">';
+    actionsBody = '<div class="my-tasks-list">';
     for (const a of actions) {
-      const isOverdue = a.due_date && a.due_date < today;
-      const isToday = a.due_date && a.due_date === today;
-      const rowCls = isOverdue ? 'my-tasks-item overdue' : isToday ? 'my-tasks-item today' : 'my-tasks-item';
-      html += `
-        <div class="${rowCls}" onclick="switchView('actions')">
+      actionsBody += `
+        <div class="${itemRowCls(a.due_date)}" onclick="switchView('actions')">
           <div class="my-tasks-item-main">
             <div class="my-tasks-item-title">${esc(a.title)}</div>
-            ${a.task_title ? `<span class="my-tasks-cat">&#128279; ${esc(a.task_title)}</span>` : ''}
+            <div class="my-tasks-item-sub">
+              ${a.task_title ? `<span class="my-tasks-cat">&#128279; ${esc(a.task_title)}</span>` : ''}
+              ${roleTag(a.assignee)}
+            </div>
           </div>
           <div class="my-tasks-item-meta">
             ${priorityBadge(a.priority)}
@@ -6420,32 +6448,84 @@ function renderMyTasksContent(data) {
           </div>
         </div>`;
     }
-    html += '</div>';
+    actionsBody += '</div>';
   }
-  html += '</div>';
 
-  // ---- NON-CONFORMITIES SECTION ----
-  html += `
-    <div class="my-tasks-section">
-      <div class="my-tasks-section-header">
-        <span class="my-tasks-section-icon">&#9888;</span>
-        <h3>Non-Conformities <span class="my-tasks-count">${ncrs.length}</span></h3>
-      </div>`;
-
-  if (ncrs.length === 0) {
-    html += '<div class="my-tasks-empty">No open non-conformities assigned to you.</div>';
+  // ── Audits ─────────────────────────────────────────────────────────────────
+  let auditsBody = '';
+  const auditStatusMap = { planned: 'badge-medium', in_progress: 'badge-high', completed: 'badge-low' };
+  if (audits.length === 0) {
+    auditsBody = emptyMsg('No upcoming audits assigned to you or your roles.');
   } else {
-    const ncrStatusMap = { open: 'badge-medium', in_progress: 'badge-high', closed: 'badge-low', verified: 'badge-inactive' };
-    html += '<div class="my-tasks-list">';
-    for (const n of ncrs) {
-      const isOverdue = n.due_date && n.due_date < today;
-      const isToday = n.due_date && n.due_date === today;
-      const rowCls = isOverdue ? 'my-tasks-item overdue' : isToday ? 'my-tasks-item today' : 'my-tasks-item';
-      html += `
-        <div class="${rowCls}" onclick="switchView('audit-ncrs')">
+    auditsBody = '<div class="my-tasks-list">';
+    for (const a of audits) {
+      // Determine whether user is lead auditor, auditee, or both (via direct match or role)
+      const roles = [];
+      if (a.lead_auditor) roles.push({ field: a.lead_auditor, label: 'Lead Auditor' });
+      if (a.auditee) roles.push({ field: a.auditee, label: 'Auditee' });
+      const roleChips = roles.map(r =>
+        `<span class="my-tasks-cat">${r.label}: ${esc(r.field)}${roleSet.has(r.field) ? ' <span class="my-tasks-role-tag" title="Via role">&#128100;</span>' : ''}</span>`
+      ).join('');
+      auditsBody += `
+        <div class="${itemRowCls(a.planned_date)}" onclick="switchView('audit-plan')">
           <div class="my-tasks-item-main">
-            <div class="my-tasks-item-title">${esc(n.description.substring(0, 100))}${n.description.length > 100 ? '…' : ''}</div>
-            ${n.audit_title ? `<span class="my-tasks-cat">&#9998; ${esc(n.audit_title)}</span>` : ''}
+            <div class="my-tasks-item-title">${esc(a.title)}</div>
+            <div class="my-tasks-item-sub">${roleChips}</div>
+          </div>
+          <div class="my-tasks-item-meta">
+            ${statusBadge(a.status, auditStatusMap)}
+            ${dueDateLabel(a.planned_date)}
+          </div>
+        </div>`;
+    }
+    auditsBody += '</div>';
+  }
+
+  // ── Risk Treatments ────────────────────────────────────────────────────────
+  let treatmentsBody = '';
+  const treatmentStatusMap = { planned: 'badge-medium', in_progress: 'badge-high', completed: 'badge-low', accepted: 'badge-inactive' };
+  if (treatments.length === 0) {
+    treatmentsBody = emptyMsg('No open risk treatments assigned to you or your roles.');
+  } else {
+    treatmentsBody = '<div class="my-tasks-list">';
+    for (const t of treatments) {
+      const desc = t.description ? (t.description.length > 90 ? t.description.substring(0, 90) + '…' : t.description) : '—';
+      treatmentsBody += `
+        <div class="${itemRowCls(t.due_date)}" onclick="switchView('risk-treatment')">
+          <div class="my-tasks-item-main">
+            <div class="my-tasks-item-title">${esc(desc)}</div>
+            <div class="my-tasks-item-sub">
+              ${t.risk_title ? `<span class="my-tasks-cat">&#9888; ${esc(t.risk_title)}</span>` : ''}
+              ${roleTag(t.responsible)}
+            </div>
+          </div>
+          <div class="my-tasks-item-meta">
+            ${t.treatment_type ? `<span class="my-tasks-recurrence">${esc(t.treatment_type)}</span>` : ''}
+            ${statusBadge(t.status, treatmentStatusMap)}
+            ${dueDateLabel(t.due_date)}
+          </div>
+        </div>`;
+    }
+    treatmentsBody += '</div>';
+  }
+
+  // ── Non-Conformities ───────────────────────────────────────────────────────
+  let ncrsBody = '';
+  const ncrStatusMap = { open: 'badge-medium', in_progress: 'badge-high', closed: 'badge-low', verified: 'badge-inactive' };
+  if (ncrs.length === 0) {
+    ncrsBody = emptyMsg('No open non-conformities assigned to you or your roles.');
+  } else {
+    ncrsBody = '<div class="my-tasks-list">';
+    for (const n of ncrs) {
+      const desc = n.description.length > 100 ? n.description.substring(0, 100) + '…' : n.description;
+      ncrsBody += `
+        <div class="${itemRowCls(n.due_date)}" onclick="switchView('audit-ncrs')">
+          <div class="my-tasks-item-main">
+            <div class="my-tasks-item-title">${esc(desc)}</div>
+            <div class="my-tasks-item-sub">
+              ${n.audit_title ? `<span class="my-tasks-cat">&#9998; ${esc(n.audit_title)}</span>` : ''}
+              ${roleTag(n.responsible)}
+            </div>
           </div>
           <div class="my-tasks-item-meta">
             <span class="badge ${n.severity === 'major' ? 'badge-critical' : 'badge-medium'}">${n.severity || 'minor'}</span>
@@ -6454,19 +6534,25 @@ function renderMyTasksContent(data) {
           </div>
         </div>`;
     }
-    html += '</div>';
+    ncrsBody += '</div>';
   }
-  html += '</div>';
 
-  const totalCount = tasks.length + actions.length + ncrs.length;
+  // ── All-done state ─────────────────────────────────────────────────────────
+  const totalCount = tasks.length + actions.length + ncrs.length + audits.length + treatments.length;
   if (totalCount === 0) {
-    return `<div class="my-tasks-all-done">
-      <div class="my-tasks-all-done-icon">&#10003;</div>
-      <div class="my-tasks-all-done-text">You're all caught up! Nothing is currently assigned to you.</div>
-    </div>`;
+    return `${headerHtml}
+      <div class="my-tasks-all-done">
+        <div class="my-tasks-all-done-icon">&#10003;</div>
+        <div class="my-tasks-all-done-text">You're all caught up! Nothing is currently assigned to you${assignedRoles.length ? ' or your roles' : ''}.</div>
+      </div>`;
   }
 
-  return html;
+  return headerHtml
+    + section('&#9745;', 'Recurring Tasks', tasks.length, tasksBody)
+    + section('&#9889;', 'Follow-up Actions', actions.length, actionsBody)
+    + section('&#9998;', 'Audits', audits.length, auditsBody)
+    + section('&#128737;', 'Risk Treatments', treatments.length, treatmentsBody)
+    + section('&#9888;', 'Non-Conformities', ncrs.length, ncrsBody);
 }
 
 // --- Helpers ---
