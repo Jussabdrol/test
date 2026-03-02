@@ -410,11 +410,9 @@ const POSTGRES_SCHEMA_SQL = `
   ) WHERE organization_id IS NULL;
 
   -- Migrations: allow 'evidence' doc_type in documents table
-  DO $$ BEGIN
-    ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_doc_type_check;
-    ALTER TABLE documents ADD CONSTRAINT documents_doc_type_check
-      CHECK (doc_type IN ('policy','procedure','work_instruction','record','form','report','evidence','other'));
-  END $$;
+  ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_doc_type_check;
+  ALTER TABLE documents ADD CONSTRAINT documents_doc_type_check
+    CHECK (doc_type IN ('policy','procedure','work_instruction','record','form','report','evidence','other'));
 `;
 
 // Default threat feeds to seed per organization
