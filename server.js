@@ -718,14 +718,21 @@ app.post('/api/completions/:id/evidence', requireOrgContext, upload.single('file
 
   await db.prepare('UPDATE completions SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
 
-  // Also create a Document Control entry for this evidence
+  // Also create a Document Control entry for this evidence and auto-cross-link to the task
   try {
     const task = await db.prepare('SELECT title FROM tasks WHERE id = ?').get(item.task_id);
     const docTitle = `Evidence: ${req.file.originalname}`;
     const docDesc = `Evidence uploaded for task "${task ? task.title : 'Unknown'}" (completion #${req.params.id})`;
-    await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, classification) VALUES (?, ?, ?, 'evidence', '1.0', '', 'approved', ?, ?, ?, ?, 'operational-planning', 'task', ?, 'confidential')`).run(
+    const docResult = await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, classification) VALUES (?, ?, ?, 'evidence', '1.0', '', 'approved', ?, ?, ?, ?, 'operational-planning', 'task', ?, 'confidential')`).run(
       req.orgId, docTitle, docDesc, req.file.originalname, storagePath, req.file.size, req.file.mimetype, item.task_id
     );
+    // Auto-create cross-link between the new document and the source task
+    if (docResult.lastInsertRowid && item.task_id) {
+      const [s_type, s_id, t_type, t_id] = 'document' < 'task'
+        ? ['document', docResult.lastInsertRowid, 'task', item.task_id]
+        : ['task', item.task_id, 'document', docResult.lastInsertRowid];
+      await db.prepare('INSERT OR IGNORE INTO cross_links (organization_id, source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?, ?)').run(req.orgId, s_type, s_id, t_type, t_id);
+    }
   } catch (docErr) {
     console.error('Failed to create Document Control entry for completion evidence:', docErr.message);
   }
@@ -1194,14 +1201,21 @@ app.post('/api/checklist/:id/evidence', requireOrgContext, upload.single('file')
       await db.prepare('UPDATE audit_checklist SET organization_id = ? WHERE id = ? AND organization_id IS NULL').run(req.orgId, req.params.id);
     }
 
-    // Also create a Document Control entry for this evidence
+    // Also create a Document Control entry for this evidence and auto-cross-link to the audit
     try {
       const audit = await db.prepare('SELECT title FROM audits WHERE id = ?').get(item.audit_id);
       const docTitle = `Evidence: ${req.file.originalname}`;
       const docDesc = `Evidence uploaded for audit "${audit ? audit.title : 'Unknown'}" — checklist item: ${item.clause || item.title || '#' + req.params.id}`;
-      await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, classification) VALUES (?, ?, ?, 'evidence', '1.0', '', 'approved', ?, ?, ?, ?, 'audits', 'audit', ?, 'confidential')`).run(
+      const docResult = await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, classification) VALUES (?, ?, ?, 'evidence', '1.0', '', 'approved', ?, ?, ?, ?, 'audits', 'audit', ?, 'confidential')`).run(
         req.orgId, docTitle, docDesc, req.file.originalname, storagePath, req.file.size, req.file.mimetype, item.audit_id
       );
+      // Auto-create cross-link between the new document and the source audit
+      if (docResult.lastInsertRowid && item.audit_id) {
+        const [s_type, s_id, t_type, t_id] = 'audit' < 'document'
+          ? ['audit', item.audit_id, 'document', docResult.lastInsertRowid]
+          : ['document', docResult.lastInsertRowid, 'audit', item.audit_id];
+        await db.prepare('INSERT OR IGNORE INTO cross_links (organization_id, source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?, ?)').run(req.orgId, s_type, s_id, t_type, t_id);
+      }
     } catch (docErr) {
       console.error('Failed to create Document Control entry for checklist evidence:', docErr.message);
     }
