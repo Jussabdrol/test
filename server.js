@@ -550,7 +550,7 @@ app.get('/api/dashboard', requireOrgContext, async (req, res) => {
     const byTask = {};
     for (const c of completions) {
       if (!byTask[c.task_id]) byTask[c.task_id] = [];
-      byTask[c.task_id].push(c.completed_at.split(' ')[0]);
+      byTask[c.task_id].push((c.completed_at instanceof Date ? c.completed_at.toISOString() : String(c.completed_at)).split('T')[0]);
     }
     for (const [taskId, dates] of Object.entries(byTask)) {
       const rec = taskRecMap[taskId];
@@ -824,7 +824,7 @@ app.get('/api/yearly', requireOrgContext, async (req, res) => {
 
   const completedDates = {};
   for (const c of completions) {
-    const ds = c.completed_at.split(' ')[0];
+    const ds = (c.completed_at instanceof Date ? c.completed_at.toISOString() : String(c.completed_at)).split('T')[0];
     if (!completedDates[ds]) completedDates[ds] = [];
     completedDates[ds].push({
       task_id: c.task_id,
