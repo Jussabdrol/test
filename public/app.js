@@ -444,6 +444,7 @@ function switchView(view) {
   else if (view === 'mission-control') loadMissionControl();
   else if (view === 'architecture') loadArchitecture();
   else if (view === 'document-control') loadDocumentControl();
+  else if (view === 'my-tasks') loadMyTasks();
   // Admin views
   else if (view === 'admin-overview') loadAdminOverview();
   else if (view === 'admin-users') loadAdminUsers();
@@ -5392,9 +5393,11 @@ function renderOrgNode(role, childrenMap, isTopLevel = false, depth = 0) {
   const depthStyle = !isTopLevel && depth > 0 ? depthColors[Math.min(depth, 5)] : '';
 
   let contact = '';
-  if (meta.contact_name || meta.contact_email) {
-    const parts = [meta.contact_name, meta.contact_email].filter(Boolean);
-    contact = `<div class="org-node-contact">${esc(parts.join(' · '))}</div>`;
+  const displayContactName = meta.assigned_user_name || meta.contact_name || '';
+  const isLinkedUser = !!meta.assigned_user_id;
+  if (displayContactName || meta.contact_email) {
+    const parts = [displayContactName, meta.contact_email].filter(Boolean);
+    contact = `<div class="org-node-contact">${isLinkedUser ? '&#128100; ' : ''}${esc(parts.join(' · '))}</div>`;
   }
 
   let html = `
@@ -5628,8 +5631,13 @@ function buildArchTableRow(item, meta, links, archType) {
 
   let detailCol = '';
   if (archType === 'role') {
-    const contact = [meta.contact_name, meta.contact_email].filter(Boolean).join(' · ');
-    detailCol = contact ? `<span style="font-size:12px">${esc(contact)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>';
+    const displayName = meta.assigned_user_name || meta.contact_name || '';
+    const displayEmail = meta.contact_email || '';
+    const isLinkedUser = !!meta.assigned_user_id;
+    const contact = [displayName, displayEmail].filter(Boolean).join(' · ');
+    detailCol = contact
+      ? `<span style="font-size:12px">${isLinkedUser ? '<span class="arch-user-badge" title="Linked to app user">&#128100;</span> ' : ''}${esc(contact)}</span>`
+      : '<span style="color:var(--text-muted);font-size:11px">-</span>';
   } else if (archType === 'system') {
     if (meta.criticality) {
       const critBadge = meta.criticality === 'critical' ? 'badge-critical' : meta.criticality === 'high' ? 'badge-high' : meta.criticality === 'medium' ? 'badge-medium' : 'badge-low';
@@ -5738,9 +5746,28 @@ async function openArchModal(id) {
   const extraFields = document.getElementById('arch-extra-fields');
   const archType = document.getElementById('arch-type').value;
   if (archType === 'role') {
+    // Fetch org users for the assigned-user picker
+    let orgUsers = [];
+    try { orgUsers = await api('/api/org-users'); } catch (e) {}
+
+    const assignedUserId = metadata.assigned_user_id || '';
+    const userOptions = orgUsers.map(u =>
+      `<option value="${u.id}" data-name="${esc(u.name)}" data-email="${esc(u.email)}" ${String(u.id) === String(assignedUserId) ? 'selected' : ''}>${esc(u.name)}${u.email ? ' — ' + esc(u.email) : ''}</option>`
+    ).join('');
+
     extraFields.innerHTML = `
-      <div class="form-group"><label>Contact Name</label><input type="text" id="arch-contact-name" value="${esc(metadata.contact_name || '')}" placeholder="Full name of person in this role"></div>
-      <div class="form-group"><label>Contact Email</label><input type="email" id="arch-contact-email" value="${esc(metadata.contact_email || '')}" placeholder="Email address"></div>
+      <div class="form-group arch-assigned-user-group">
+        <label>Assigned User <span class="field-hint" style="font-weight:400">(optional – links this role to an app user)</span></label>
+        <select id="arch-assigned-user" onchange="onArchAssignedUserChange()">
+          <option value="">— No user assigned —</option>
+          ${userOptions}
+        </select>
+      </div>
+      <div class="form-divider"><span>Contact Details</span></div>
+      <div class="form-row">
+        <div class="form-group"><label>Contact Name</label><input type="text" id="arch-contact-name" value="${esc(metadata.contact_name || '')}" placeholder="Full name of person in this role"></div>
+        <div class="form-group"><label>Contact Email</label><input type="email" id="arch-contact-email" value="${esc(metadata.contact_email || '')}" placeholder="Email address"></div>
+      </div>
       <div class="form-group"><label>Contact Phone</label><input type="text" id="arch-contact-phone" value="${esc(metadata.contact_phone || '')}" placeholder="Phone number"></div>`;
   } else if (archType === 'system') {
     extraFields.innerHTML = `
@@ -5783,6 +5810,21 @@ async function openArchModal(id) {
 }
 function closeArchModal() { document.getElementById('arch-modal').classList.add('hidden'); }
 
+// Auto-populate contact fields when an org user is selected for a role
+function onArchAssignedUserChange() {
+  const sel = document.getElementById('arch-assigned-user');
+  if (!sel) return;
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt || !opt.value) return; // cleared – leave fields as-is
+  const name = opt.dataset.name || '';
+  const email = opt.dataset.email || '';
+  const nameField = document.getElementById('arch-contact-name');
+  const emailField = document.getElementById('arch-contact-email');
+  // Only auto-fill if fields are currently empty, to avoid overwriting intentional manual entries
+  if (nameField && !nameField.value) nameField.value = name;
+  if (emailField && !emailField.value) emailField.value = email;
+}
+
 function updateArchOwnerLabel() {
   const isRole = document.getElementById('arch-type').value === 'role';
   document.getElementById('arch-owner-label').textContent = isRole ? 'Reports to' : 'Owner';
@@ -5819,6 +5861,20 @@ async function saveArch(e) {
     status: document.getElementById('arch-status').value,
     metadata: JSON.stringify(metadata),
   };
+  // Persist assigned user for roles
+  if (archType === 'role') {
+    const assignedUserSel = document.getElementById('arch-assigned-user');
+    if (assignedUserSel && assignedUserSel.value) {
+      const opt = assignedUserSel.options[assignedUserSel.selectedIndex];
+      metadata.assigned_user_id = parseInt(assignedUserSel.value, 10);
+      metadata.assigned_user_name = opt ? (opt.dataset.name || '') : '';
+    } else {
+      delete metadata.assigned_user_id;
+      delete metadata.assigned_user_name;
+    }
+    body.metadata = JSON.stringify(metadata);
+  }
+
   if (id) await api(`/api/architecture/${id}`, { method: 'PUT', body });
   else await api('/api/architecture', { method: 'POST', body });
   closeArchModal();
@@ -6233,6 +6289,184 @@ async function deleteDoc(id) {
 
 function downloadDoc(id) {
   window.open(`/api/documents/${id}/download`, '_blank');
+}
+
+// --- User Widget Dropdown ---
+function toggleUserDropdown(e) {
+  e.stopPropagation();
+  const dropdown = document.getElementById('user-widget-dropdown');
+  const trigger = document.getElementById('user-widget-trigger');
+  const isOpen = dropdown.classList.contains('open');
+  if (isOpen) {
+    dropdown.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+  } else {
+    dropdown.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+  }
+}
+
+function closeUserDropdown() {
+  const dropdown = document.getElementById('user-widget-dropdown');
+  const trigger = document.getElementById('user-widget-trigger');
+  if (dropdown) dropdown.classList.remove('open');
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  const widget = document.getElementById('user-widget');
+  if (widget && !widget.contains(e.target)) closeUserDropdown();
+});
+
+// --- My Tasks View ---
+async function loadMyTasks() {
+  const container = document.getElementById('my-tasks-content');
+  if (!container) return;
+  container.innerHTML = '<div class="empty-state">Loading your tasks…</div>';
+  try {
+    const data = await api('/api/my-tasks');
+    container.innerHTML = renderMyTasksContent(data);
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state" style="color:var(--danger)">Failed to load tasks: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderMyTasksContent(data) {
+  const { tasks = [], actions = [], ncrs = [] } = data;
+  const today = new Date().toISOString().split('T')[0];
+
+  function priorityBadge(p) {
+    const map = { Critical: 'badge-critical', High: 'badge-high', Medium: 'badge-medium', Low: 'badge-low' };
+    return `<span class="badge ${map[p] || 'badge-low'}">${p || 'Medium'}</span>`;
+  }
+
+  function statusBadge(s, statusMap) {
+    const map = statusMap || { open: 'badge-medium', in_progress: 'badge-high', resolved: 'badge-low', closed: 'badge-inactive' };
+    return `<span class="badge ${map[s] || 'badge-medium'}">${(s || '').replace('_', ' ')}</span>`;
+  }
+
+  function dueDateLabel(dateStr) {
+    if (!dateStr) return '<span style="color:var(--text-muted);font-size:11px">No due date</span>';
+    const isOverdue = dateStr < today;
+    const isToday = dateStr === today;
+    const cls = isOverdue ? 'my-tasks-overdue' : isToday ? 'my-tasks-today' : '';
+    const label = isOverdue ? '⚠ Overdue' : isToday ? '● Due Today' : '';
+    return `<span class="my-tasks-due ${cls}">${label ? label + ' · ' : ''}${dateStr}</span>`;
+  }
+
+  let html = '';
+
+  // ---- TASKS SECTION ----
+  html += `
+    <div class="my-tasks-section">
+      <div class="my-tasks-section-header">
+        <span class="my-tasks-section-icon">&#9745;</span>
+        <h3>Recurring Tasks <span class="my-tasks-count">${tasks.length}</span></h3>
+      </div>`;
+
+  if (tasks.length === 0) {
+    html += '<div class="my-tasks-empty">No recurring tasks assigned to you.</div>';
+  } else {
+    html += '<div class="my-tasks-list">';
+    for (const t of tasks) {
+      const isOverdue = t.next_due < today;
+      const isToday = t.next_due === today;
+      const rowCls = isOverdue ? 'my-tasks-item overdue' : isToday ? 'my-tasks-item today' : 'my-tasks-item';
+      html += `
+        <div class="${rowCls}" onclick="switchView('tasks')">
+          <div class="my-tasks-item-main">
+            <div class="my-tasks-item-title">${esc(t.title)}</div>
+            ${t.category ? `<span class="my-tasks-cat">${esc(t.category)}</span>` : ''}
+          </div>
+          <div class="my-tasks-item-meta">
+            ${priorityBadge(t.priority)}
+            <span class="my-tasks-recurrence">&#8635; ${t.recurrence}</span>
+            ${dueDateLabel(t.next_due)}
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // ---- ACTIONS SECTION ----
+  html += `
+    <div class="my-tasks-section">
+      <div class="my-tasks-section-header">
+        <span class="my-tasks-section-icon">&#9889;</span>
+        <h3>Actions <span class="my-tasks-count">${actions.length}</span></h3>
+      </div>`;
+
+  if (actions.length === 0) {
+    html += '<div class="my-tasks-empty">No open actions assigned to you.</div>';
+  } else {
+    const actionStatusMap = { open: 'badge-medium', in_progress: 'badge-high', resolved: 'badge-low', closed: 'badge-inactive' };
+    html += '<div class="my-tasks-list">';
+    for (const a of actions) {
+      const isOverdue = a.due_date && a.due_date < today;
+      const isToday = a.due_date && a.due_date === today;
+      const rowCls = isOverdue ? 'my-tasks-item overdue' : isToday ? 'my-tasks-item today' : 'my-tasks-item';
+      html += `
+        <div class="${rowCls}" onclick="switchView('actions')">
+          <div class="my-tasks-item-main">
+            <div class="my-tasks-item-title">${esc(a.title)}</div>
+            ${a.task_title ? `<span class="my-tasks-cat">&#128279; ${esc(a.task_title)}</span>` : ''}
+          </div>
+          <div class="my-tasks-item-meta">
+            ${priorityBadge(a.priority)}
+            ${statusBadge(a.status, actionStatusMap)}
+            ${dueDateLabel(a.due_date)}
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // ---- NON-CONFORMITIES SECTION ----
+  html += `
+    <div class="my-tasks-section">
+      <div class="my-tasks-section-header">
+        <span class="my-tasks-section-icon">&#9888;</span>
+        <h3>Non-Conformities <span class="my-tasks-count">${ncrs.length}</span></h3>
+      </div>`;
+
+  if (ncrs.length === 0) {
+    html += '<div class="my-tasks-empty">No open non-conformities assigned to you.</div>';
+  } else {
+    const ncrStatusMap = { open: 'badge-medium', in_progress: 'badge-high', closed: 'badge-low', verified: 'badge-inactive' };
+    html += '<div class="my-tasks-list">';
+    for (const n of ncrs) {
+      const isOverdue = n.due_date && n.due_date < today;
+      const isToday = n.due_date && n.due_date === today;
+      const rowCls = isOverdue ? 'my-tasks-item overdue' : isToday ? 'my-tasks-item today' : 'my-tasks-item';
+      html += `
+        <div class="${rowCls}" onclick="switchView('audit-ncrs')">
+          <div class="my-tasks-item-main">
+            <div class="my-tasks-item-title">${esc(n.description.substring(0, 100))}${n.description.length > 100 ? '…' : ''}</div>
+            ${n.audit_title ? `<span class="my-tasks-cat">&#9998; ${esc(n.audit_title)}</span>` : ''}
+          </div>
+          <div class="my-tasks-item-meta">
+            <span class="badge ${n.severity === 'major' ? 'badge-critical' : 'badge-medium'}">${n.severity || 'minor'}</span>
+            ${statusBadge(n.status, ncrStatusMap)}
+            ${dueDateLabel(n.due_date)}
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  const totalCount = tasks.length + actions.length + ncrs.length;
+  if (totalCount === 0) {
+    return `<div class="my-tasks-all-done">
+      <div class="my-tasks-all-done-icon">&#10003;</div>
+      <div class="my-tasks-all-done-text">You're all caught up! Nothing is currently assigned to you.</div>
+    </div>`;
+  }
+
+  return html;
 }
 
 // --- Helpers ---

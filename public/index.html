@@ -97,14 +97,36 @@
 
     <!-- User Widget - Top Right -->
     <div class="user-widget" id="user-widget">
-      <div class="user-widget-info">
+      <button class="user-widget-trigger" id="user-widget-trigger" onclick="toggleUserDropdown(event)" aria-haspopup="true" aria-expanded="false">
         <span class="user-widget-icon">&#128100;</span>
         <span class="user-widget-name" id="current-user-name">User</span>
+        <span class="user-widget-chevron">&#9662;</span>
+      </button>
+      <div class="user-widget-dropdown" id="user-widget-dropdown" role="menu">
+        <a class="user-widget-menu-item" onclick="switchView('my-tasks');closeUserDropdown()" role="menuitem">
+          <span class="uwm-icon">&#9745;</span>
+          <span>My Tasks</span>
+        </a>
+        <div class="user-widget-divider"></div>
+        <a class="user-widget-menu-item danger" onclick="logout()" role="menuitem">
+          <span class="uwm-icon">&#10006;</span>
+          <span>Sign Out</span>
+        </a>
       </div>
-      <button class="user-widget-logout" onclick="logout()" title="Sign out">Sign Out</button>
     </div>
 
     <main class="content">
+      <!-- My Tasks View -->
+      <section id="view-my-tasks" class="view hidden">
+        <div class="view-header">
+          <h2>&#9745; My Tasks</h2>
+          <button class="btn btn-secondary btn-sm" onclick="loadMyTasks()">&#8635; Refresh</button>
+        </div>
+        <div id="my-tasks-content">
+          <div class="empty-state">Loading your tasks…</div>
+        </div>
+      </section>
+
       <!-- Manage Tasks View -->
       <section id="view-tasks" class="view hidden">
         <div class="view-header">
