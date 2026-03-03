@@ -3521,6 +3521,66 @@ app.post('/api/management-reviews/:id/generate-report', requireOrgContext, async
   res.json({ success: true, doc_id: docId, report_html: reportHtml });
 });
 
+// Upload a client-generated PDF report for a management review and attach it to Document Control
+app.post('/api/management-reviews/:id/upload-report', requireOrgContext, upload.single('pdf'), async (req, res) => {
+  const review = await db.prepare(
+    'SELECT * FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(req.params.id, req.orgId);
+  if (!review) return res.status(404).json({ error: 'Review not found' });
+  if (!req.file) return res.status(400).json({ error: 'No PDF file provided' });
+
+  let filePath = '';
+  let fileSize = req.file.size;
+  try {
+    const fileObj = {
+      originalname: `management-review-${review.id}.pdf`,
+      buffer: req.file.buffer,
+      mimetype: 'application/pdf',
+    };
+    filePath = await uploadToSupabase('reports', fileObj);
+  } catch (uploadErr) {
+    console.warn('Supabase upload failed, storing reference only:', uploadErr.message);
+    // Continue without Supabase – document record still created
+  }
+
+  // Mark review complete and save a plain-text marker in report_html
+  await db.prepare(
+    "UPDATE management_reviews SET status = 'completed', report_html = '[PDF]', updated_at = datetime('now') WHERE id = ?"
+  ).run(review.id);
+
+  // Create or update document record
+  let docId = review.report_doc_id;
+  const docTitle = `Management Review Report – ${review.title}`;
+  if (!docId) {
+    const docResult = await db.prepare(
+      `INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status,
+        file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id,
+        review_date, classification)
+       VALUES (?, ?, ?, 'report', '1.0', ?, 'approved', ?, ?, ?, 'application/pdf',
+               'management_review', 'management_review', ?, NULL, '')`
+    ).run(
+      req.orgId,
+      docTitle,
+      `Auto-generated PDF report for management review: ${review.title}`,
+      review.chairperson || '',
+      `management-review-${review.id}.pdf`,
+      filePath,
+      fileSize,
+      review.id
+    );
+    docId = docResult.lastInsertRowid;
+    await db.prepare(
+      "UPDATE management_reviews SET report_doc_id = ?, updated_at = datetime('now') WHERE id = ?"
+    ).run(docId, review.id);
+  } else {
+    await db.prepare(
+      "UPDATE documents SET file_path = ?, file_size = ?, file_name = ?, mime_type = 'application/pdf', updated_at = datetime('now') WHERE id = ?"
+    ).run(filePath, fileSize, `management-review-${review.id}.pdf`, docId);
+  }
+
+  res.json({ success: true, doc_id: docId });
+});
+
 // Reference data for auto-populating management review input categories
 app.get('/api/management-reviews/:id/reference-data', requireOrgContext, async (req, res) => {
   const review = await db.prepare(

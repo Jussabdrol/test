@@ -2612,278 +2612,282 @@ async function updateChecklistField(itemId, field, value) {
 }
 
 // PDF Export for Audit Report
+// ── Shared BOP PDF design tokens ──────────────────────────────────────────────
+const BOP_PDF = {
+  primary:    [17,  24,  39],   // #111827
+  primaryMid: [55,  65,  81],   // #374151
+  accentBg:   [243, 244, 246],  // #f3f4f6
+  cardBg:     [248, 250, 252],  // #f8fafc
+  success:    [16,  185, 129],  // #10b981
+  successBg:  [209, 250, 229],  // #d1fae5
+  warning:    [245, 158, 11],   // #f59e0b
+  warningBg:  [254, 243, 199],  // #fef3c7
+  danger:     [239, 68,  68],   // #ef4444
+  dangerBg:   [254, 226, 226],  // #fee2e2
+  purple:     [139, 92,  246],  // #8b5cf6
+  purpleBg:   [237, 233, 254],  // #ede9fe
+  text:       [17,  24,  39],   // #111827
+  muted:      [107, 114, 128],  // #6b7280
+  border:     [229, 231, 235],  // #e5e7eb
+  white:      [255, 255, 255],
+};
+
+// Draws the tall first-page header (primary dark bar + green left accent)
+function bopDrawMainHeader(doc, reportType, line1, line2) {
+  const C = BOP_PDF;
+  doc.setFillColor(...C.primary);
+  doc.rect(0, 0, 210, 42, 'F');
+  // Green left accent strip
+  doc.setFillColor(...C.success);
+  doc.rect(0, 0, 5, 42, 'F');
+  // 'Bop' wordmark
+  doc.setTextColor(...C.white);
+  doc.setFontSize(26);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Bop', 14, 18);
+  // Platform tag
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(156, 163, 175);
+  doc.text('Business Orchestration Platform', 14, 26);
+  // Report type (right)
+  doc.setFontSize(13);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...C.white);
+  doc.text(reportType, 196, 16, { align: 'right' });
+  if (line1) {
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(209, 213, 219);
+    doc.text(String(line1).substring(0, 50), 196, 24, { align: 'right' });
+  }
+  if (line2) {
+    doc.setFontSize(7.5);
+    doc.setTextColor(156, 163, 175);
+    doc.text(String(line2), 196, 31, { align: 'right' });
+  }
+  doc.setFontSize(7);
+  doc.setTextColor(156, 163, 175);
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, 196, 38, { align: 'right' });
+}
+
+// Thin continuation header for subsequent pages
+function bopDrawContinuationHeader(doc, title) {
+  const C = BOP_PDF;
+  doc.setFillColor(...C.primary);
+  doc.rect(0, 0, 210, 11, 'F');
+  doc.setFillColor(...C.success);
+  doc.rect(0, 0, 5, 11, 'F');
+  doc.setTextColor(...C.white);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Bop', 14, 7.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(209, 213, 219);
+  doc.text('· ' + String(title).substring(0, 55), 24, 7.5);
+}
+
+// Footer on every page
+function bopDrawFooters(doc) {
+  const C = BOP_PDF;
+  const n = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(...C.border);
+    doc.setLineWidth(0.3);
+    doc.line(10, 283, 200, 283);
+    doc.setFontSize(7);
+    doc.setTextColor(...C.muted);
+    doc.text('Bop · Business Orchestration Platform', 10, 288);
+    doc.text(`Page ${i} of ${n}`, 105, 288, { align: 'center' });
+    doc.text(new Date().toISOString().split('T')[0], 200, 288, { align: 'right' });
+  }
+}
+
 async function exportAuditPDF(auditId) {
   const audit = await api(`/api/audits/${auditId}`);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
+  const C = BOP_PDF;
 
-  // Colors
-  const primaryColor = [99, 102, 241];
-  const successColor = [16, 185, 129];
-  const warningColor = [245, 158, 11];
-  const dangerColor = [239, 68, 68];
-  const textColor = [26, 26, 46];
-  const mutedColor = [107, 122, 153];
-
-  // Standards
   let auditStandards = [];
-  try { auditStandards = JSON.parse(audit.standards || '[]'); } catch(e) { auditStandards = audit.standard ? [audit.standard] : []; }
-  if (auditStandards.length === 0 && audit.standard) auditStandards = [audit.standard];
+  try { auditStandards = JSON.parse(audit.standards || '[]'); } catch(e) {}
+  if (!auditStandards.length && audit.standard) auditStandards = [audit.standard];
 
-  // Stats
-  const totalItems = audit.checklist.length;
-  const assessed = audit.checklist.filter(c => c.rating !== 'not_assessed').length;
-  const conforming = audit.checklist.filter(c => c.rating === 'conforming').length;
-  const observations = audit.checklist.filter(c => c.rating === 'observation').length;
-  const minorNc = audit.checklist.filter(c => c.rating === 'minor_nc').length;
-  const majorNc = audit.checklist.filter(c => c.rating === 'major_nc').length;
+  const checklist   = audit.checklist || [];
+  const totalItems  = checklist.length;
+  const conforming  = checklist.filter(c => c.rating === 'conforming').length;
+  const observations= checklist.filter(c => c.rating === 'observation').length;
+  const minorNc     = checklist.filter(c => c.rating === 'minor_nc').length;
+  const majorNc     = checklist.filter(c => c.rating === 'major_nc').length;
 
-  // Header with gradient-like effect
-  doc.setFillColor(...primaryColor);
-  doc.rect(0, 0, 210, 45, 'F');
-  doc.setFillColor(118, 75, 162);
-  doc.rect(0, 0, 210, 25, 'F');
+  // ── PAGE 1 HEADER ──────────────────────────────────────────────────────────
+  bopDrawMainHeader(doc, 'Audit Report', audit.title, auditStandards.join(', '));
+  let yPos = 52;
 
-  // Title
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(24);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Audit Report', 15, 18);
+  // ── AUDIT DETAILS CARD ─────────────────────────────────────────────────────
+  doc.setFillColor(...C.cardBg);
+  doc.setDrawColor(...C.border);
+  doc.setLineWidth(0.4);
+  doc.roundedRect(14, yPos, 182, 34, 2, 2, 'FD');
 
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'normal');
-  doc.text(audit.title, 15, 30);
+  // Left accent bar on card
+  doc.setFillColor(...C.primary);
+  doc.roundedRect(14, yPos, 2.5, 34, 1, 1, 'F');
+
   doc.setFontSize(10);
-  doc.text(`Generated: ${new Date().toLocaleDateString()}`, 15, 38);
-
-  // Company info on right
-  doc.setFontSize(10);
-  doc.text('Bop', 195, 18, { align: 'right' });
-  doc.text('Business Orchestration Platform', 195, 25, { align: 'right' });
-
-  let yPos = 55;
-
-  // Audit Details Box
-  doc.setDrawColor(...primaryColor);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(15, yPos, 180, 35, 3, 3, 'S');
-
-  doc.setTextColor(...textColor);
-  doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('Audit Details', 20, yPos + 8);
+  doc.setTextColor(...C.primary);
+  doc.text('Audit Details', 21, yPos + 8);
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(...mutedColor);
-  doc.text(`Standard${auditStandards.length > 1 ? 's' : ''}:`, 20, yPos + 17);
-  doc.text('Lead Auditor:', 20, yPos + 25);
-  doc.text('Auditee:', 110, yPos + 17);
-  doc.text('Status:', 110, yPos + 25);
-
-  doc.setTextColor(...textColor);
-  doc.text(auditStandards.join(', '), 55, yPos + 17);
-  doc.text(audit.lead_auditor || 'Unassigned', 55, yPos + 25);
-  doc.text(audit.auditee || 'Unassigned', 135, yPos + 17);
-  doc.text(audit.status.replace('_', ' ').toUpperCase(), 135, yPos + 25);
-
-  yPos += 45;
-
-  // Executive Summary Box
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(15, yPos, 180, 32, 3, 3, 'F');
-  doc.setDrawColor(...primaryColor);
-  doc.roundedRect(15, yPos, 180, 32, 3, 3, 'S');
-
-  doc.setTextColor(...textColor);
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Executive Summary', 20, yPos + 8);
-
-  // Stats boxes
-  const boxWidth = 32;
-  const startX = 20;
-  const statY = yPos + 15;
-
-  // Total
-  doc.setFillColor(240, 244, 255);
-  doc.roundedRect(startX, statY, boxWidth, 12, 2, 2, 'F');
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...primaryColor);
-  doc.text(String(totalItems), startX + boxWidth/2, statY + 8, { align: 'center' });
-  doc.setFontSize(7);
-  doc.setTextColor(...mutedColor);
-  doc.text('TOTAL', startX + boxWidth/2, statY + 11.5, { align: 'center' });
-
-  // Conforming
-  doc.setFillColor(209, 250, 229);
-  doc.roundedRect(startX + 36, statY, boxWidth, 12, 2, 2, 'F');
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...successColor);
-  doc.text(String(conforming), startX + 36 + boxWidth/2, statY + 8, { align: 'center' });
-  doc.setFontSize(7);
-  doc.setTextColor(...mutedColor);
-  doc.text('CONFORM', startX + 36 + boxWidth/2, statY + 11.5, { align: 'center' });
-
-  // Observations
-  doc.setFillColor(254, 243, 199);
-  doc.roundedRect(startX + 72, statY, boxWidth, 12, 2, 2, 'F');
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...warningColor);
-  doc.text(String(observations), startX + 72 + boxWidth/2, statY + 8, { align: 'center' });
-  doc.setFontSize(7);
-  doc.setTextColor(...mutedColor);
-  doc.text('OBS', startX + 72 + boxWidth/2, statY + 11.5, { align: 'center' });
-
-  // Minor NC
-  doc.setFillColor(254, 226, 226);
-  doc.roundedRect(startX + 108, statY, boxWidth, 12, 2, 2, 'F');
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...dangerColor);
-  doc.text(String(minorNc), startX + 108 + boxWidth/2, statY + 8, { align: 'center' });
-  doc.setFontSize(7);
-  doc.setTextColor(...mutedColor);
-  doc.text('MINOR NC', startX + 108 + boxWidth/2, statY + 11.5, { align: 'center' });
-
-  // Major NC
-  doc.setFillColor(237, 233, 254);
-  doc.roundedRect(startX + 144, statY, boxWidth, 12, 2, 2, 'F');
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(139, 92, 246);
-  doc.text(String(majorNc), startX + 144 + boxWidth/2, statY + 8, { align: 'center' });
-  doc.setFontSize(7);
-  doc.setTextColor(...mutedColor);
-  doc.text('MAJOR NC', startX + 144 + boxWidth/2, statY + 11.5, { align: 'center' });
-
+  const detailPairs = [
+    [`Standard${auditStandards.length > 1 ? 's' : ''}`, auditStandards.join(', ') || '—'],
+    ['Lead Auditor', audit.lead_auditor || 'Unassigned'],
+    ['Auditee', audit.auditee || 'Unassigned'],
+    ['Status', (audit.status || '').replace(/_/g, ' ').toUpperCase()],
+    ['Planned Date', audit.planned_date || '—'],
+    ['Completed Date', audit.completed_date || '—'],
+  ];
+  let dy = yPos + 16;
+  for (let i = 0; i < detailPairs.length; i++) {
+    const xL = i % 2 === 0 ? 21 : 112;
+    if (i > 0 && i % 2 === 0) dy += 8;
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.muted);
+    doc.text(detailPairs[i][0].toUpperCase(), xL, dy);
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text(String(detailPairs[i][1]).substring(0, 28), xL, dy + 5);
+  }
   yPos += 42;
 
-  // Findings Table
-  doc.setTextColor(...textColor);
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Audit Findings', 15, yPos);
-  yPos += 5;
+  // ── EXECUTIVE SUMMARY (STAT BOXES) ─────────────────────────────────────────
+  doc.setFillColor(...C.cardBg);
+  doc.setDrawColor(...C.border);
+  doc.roundedRect(14, yPos, 182, 35, 2, 2, 'FD');
+  doc.setFillColor(...C.primary);
+  doc.roundedRect(14, yPos, 2.5, 35, 1, 1, 'F');
+
+  doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.primary);
+  doc.text('Executive Summary', 21, yPos + 8);
+
+  const bw = 31, bh = 15, statY = yPos + 15;
+  const statBoxes = [
+    { n: totalItems,   label: 'TOTAL',    fill: C.accentBg,  col: C.primary  },
+    { n: conforming,   label: 'CONFORM',  fill: C.successBg, col: C.success  },
+    { n: observations, label: 'OBS',      fill: C.warningBg, col: C.warning  },
+    { n: minorNc,      label: 'MINOR NC', fill: C.dangerBg,  col: C.danger   },
+    { n: majorNc,      label: 'MAJOR NC', fill: C.purpleBg,  col: C.purple   },
+  ];
+  statBoxes.forEach(({ n, label, fill, col }, i) => {
+    const sx = 20 + i * (bw + 4);
+    doc.setFillColor(...fill);
+    doc.roundedRect(sx, statY, bw, bh, 2, 2, 'F');
+    doc.setFontSize(15); doc.setFont('helvetica', 'bold'); doc.setTextColor(...col);
+    doc.text(String(n), sx + bw / 2, statY + 9, { align: 'center' });
+    doc.setFontSize(6.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.muted);
+    doc.text(label, sx + bw / 2, statY + 13.5, { align: 'center' });
+  });
+  yPos += 44;
+
+  // ── FINDINGS TABLE ──────────────────────────────────────────────────────────
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.primary);
+  doc.text('Audit Findings', 14, yPos + 1);
+  doc.setFillColor(...C.success);
+  doc.rect(14, yPos + 3, 18, 0.5, 'F');
+  yPos += 8;
 
   const ratingLabels = {
-    not_assessed: 'Not Assessed',
-    conforming: 'Conforming',
-    observation: 'Observation',
-    minor_nc: 'Minor NC',
-    major_nc: 'Major NC'
+    not_assessed: 'Not Assessed', conforming: 'Conforming',
+    observation: 'Observation',   minor_nc: 'Minor NC', major_nc: 'Major NC',
   };
-
-  const tableData = audit.checklist.map(item => [
-    item.clause,
-    item.standard || audit.standard,
-    (item.requirement || '').substring(0, 40) + ((item.requirement || '').length > 40 ? '...' : ''),
-    ratingLabels[item.rating] || item.rating,
-    (item.finding || '-').substring(0, 50) + ((item.finding || '').length > 50 ? '...' : '')
-  ]);
-
   doc.autoTable({
     startY: yPos,
+    margin: { left: 14, right: 14 },
     head: [['Clause', 'Standard', 'Requirement', 'Rating', 'Finding']],
-    body: tableData,
-    theme: 'striped',
+    body: checklist.map(item => [
+      item.clause,
+      item.standard || audit.standard,
+      (item.requirement || '').substring(0, 42) + ((item.requirement || '').length > 42 ? '…' : ''),
+      ratingLabels[item.rating] || item.rating,
+      (item.finding || '—').substring(0, 55) + ((item.finding || '').length > 55 ? '…' : ''),
+    ]),
+    theme: 'plain',
     styles: {
-      fontSize: 8,
-      cellPadding: 3,
-      overflow: 'linebreak',
-      textColor: textColor
+      fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
+      textColor: C.text, lineColor: C.border, lineWidth: 0.25, overflow: 'linebreak',
     },
     headStyles: {
-      fillColor: primaryColor,
-      textColor: [255, 255, 255],
-      fontStyle: 'bold',
-      fontSize: 8
+      fillColor: C.primary, textColor: C.white, fontStyle: 'bold', fontSize: 8,
     },
     columnStyles: {
-      0: { cellWidth: 20 },
-      1: { cellWidth: 25 },
-      2: { cellWidth: 45 },
-      3: { cellWidth: 25 },
-      4: { cellWidth: 65 }
+      0: { cellWidth: 18 }, 1: { cellWidth: 24 },
+      2: { cellWidth: 48 }, 3: { cellWidth: 26 }, 4: { cellWidth: 66 },
     },
-    alternateRowStyles: {
-      fillColor: [248, 250, 252]
-    },
-    didParseCell: function(data) {
+    alternateRowStyles: { fillColor: C.accentBg },
+    didParseCell(data) {
       if (data.column.index === 3 && data.section === 'body') {
-        const rating = audit.checklist[data.row.index]?.rating;
-        if (rating === 'conforming') data.cell.styles.textColor = successColor;
-        else if (rating === 'observation') data.cell.styles.textColor = warningColor;
-        else if (rating === 'minor_nc') data.cell.styles.textColor = dangerColor;
-        else if (rating === 'major_nc') data.cell.styles.textColor = [139, 92, 246];
+        const r = checklist[data.row.index]?.rating;
+        data.cell.styles.fontStyle = 'bold';
+        if (r === 'conforming')  data.cell.styles.textColor = C.success;
+        else if (r === 'observation') data.cell.styles.textColor = C.warning;
+        else if (r === 'minor_nc')    data.cell.styles.textColor = C.danger;
+        else if (r === 'major_nc')    data.cell.styles.textColor = C.purple;
       }
-    }
+    },
+    didDrawPage(data) {
+      if (data.pageNumber > 1) bopDrawContinuationHeader(doc, `Audit Report – ${audit.title}`);
+    },
   });
 
-  // Non-Conformities Section (if any)
+  // ── NCR TABLE ──────────────────────────────────────────────────────────────
   if (audit.non_conformities && audit.non_conformities.length > 0) {
     yPos = doc.lastAutoTable.finalY + 10;
+    if (yPos > 252) { doc.addPage(); bopDrawContinuationHeader(doc, `Audit Report – ${audit.title}`); yPos = 18; }
 
-    if (yPos > 250) {
-      doc.addPage();
-      yPos = 20;
-    }
-
-    doc.setTextColor(...textColor);
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Non-Conformity Reports (NCRs)', 15, yPos);
-    yPos += 5;
-
-    const ncrData = audit.non_conformities.map(nc => [
-      nc.description?.substring(0, 60) + ((nc.description || '').length > 60 ? '...' : '') || '-',
-      nc.root_cause?.substring(0, 40) + ((nc.root_cause || '').length > 40 ? '...' : '') || '-',
-      nc.status?.replace('_', ' ').toUpperCase() || 'OPEN'
-    ]);
+    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.primary);
+    doc.text('Non-Conformity Reports (NCRs)', 14, yPos + 1);
+    doc.setFillColor(...C.danger);
+    doc.rect(14, yPos + 3, 22, 0.5, 'F');
+    yPos += 8;
 
     doc.autoTable({
       startY: yPos,
-      head: [['Description', 'Root Cause', 'Status']],
-      body: ncrData,
-      theme: 'striped',
+      margin: { left: 14, right: 14 },
+      head: [['Clause', 'Severity', 'Description', 'Root Cause', 'Responsible', 'Status']],
+      body: audit.non_conformities.map(nc => [
+        nc.clause || '—',
+        (nc.severity || 'minor').toUpperCase(),
+        (nc.description || '—').substring(0, 55) + ((nc.description || '').length > 55 ? '…' : ''),
+        (nc.root_cause || '—').substring(0, 40) + ((nc.root_cause || '').length > 40 ? '…' : ''),
+        nc.responsible || '—',
+        (nc.status || 'open').replace(/_/g, ' ').toUpperCase(),
+      ]),
+      theme: 'plain',
       styles: {
-        fontSize: 8,
-        cellPadding: 3,
-        textColor: textColor
+        fontSize: 7.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
+        textColor: C.text, lineColor: C.border, lineWidth: 0.25, overflow: 'linebreak',
       },
-      headStyles: {
-        fillColor: dangerColor,
-        textColor: [255, 255, 255],
-        fontStyle: 'bold',
-        fontSize: 8
-      },
+      headStyles: { fillColor: C.danger, textColor: C.white, fontStyle: 'bold', fontSize: 7.5 },
       columnStyles: {
-        0: { cellWidth: 80 },
-        1: { cellWidth: 70 },
-        2: { cellWidth: 30 }
+        0: { cellWidth: 14 }, 1: { cellWidth: 16 }, 2: { cellWidth: 55 },
+        3: { cellWidth: 45 }, 4: { cellWidth: 30 }, 5: { cellWidth: 22 },
       },
-      alternateRowStyles: {
-        fillColor: [254, 242, 242]
-      }
+      alternateRowStyles: { fillColor: C.dangerBg },
+      didParseCell(data) {
+        if (data.column.index === 1 && data.section === 'body') {
+          const sev = (audit.non_conformities[data.row.index]?.severity || '').toLowerCase();
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.textColor = sev === 'major' ? C.danger : C.warning;
+        }
+      },
+      didDrawPage(data) {
+        if (data.pageNumber > 1) bopDrawContinuationHeader(doc, `Audit Report – ${audit.title}`);
+      },
     });
   }
 
-  // Footer
-  const pageCount = doc.internal.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    doc.setFontSize(8);
-    doc.setTextColor(...mutedColor);
-    doc.text(`Page ${i} of ${pageCount}`, 105, 290, { align: 'center' });
-    doc.text('Generated by Bop', 15, 290);
-    doc.text(new Date().toISOString().split('T')[0], 195, 290, { align: 'right' });
-  }
+  bopDrawFooters(doc);
 
-  // Save
-  const filename = `Audit_Report_${audit.title.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+  const filename = `Audit_Report_${(audit.title || 'report').replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
   doc.save(filename);
 }
 
@@ -8492,14 +8496,218 @@ async function pushOutputToAction(outputId) {
   renderMgmtOutputsList(data.outputs);
 }
 
+// ── Management Review PDF ─────────────────────────────────────────────────────
+
+async function generateMgmtReviewPDF(reviewId) {
+  const { jsPDF } = window.jspdf;
+  const C = BOP_PDF;
+
+  // Fetch fresh data
+  const [data, refData] = await Promise.all([
+    api(`/api/management-reviews/${reviewId}`),
+    api(`/api/management-reviews/${reviewId}/reference-data`).catch(() => null),
+  ]);
+  const { review, inputs, outputs } = data;
+
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const PW = 210; const ML = 14; const MR = 14; const CW = PW - ML - MR;
+
+  // ── Cover Header ──
+  bopDrawMainHeader(doc, 'Management Review Report', review.title,
+    `Review Date: ${review.review_date || '—'}`);
+
+  // ── Meta card ──
+  let y = 50;
+  doc.setFillColor(...C.cardBg);
+  doc.setDrawColor(...C.border);
+  doc.roundedRect(ML, y, CW, 38, 2, 2, 'FD');
+  // Left accent bar
+  doc.setFillColor(...C.success);
+  doc.roundedRect(ML, y, 3, 38, 1, 1, 'F');
+
+  const col1 = ML + 8; const col2 = ML + CW / 2 + 4;
+  const metaFields = [
+    ['Status', (review.status || 'scheduled').replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())],
+    ['Chairperson', review.chairperson || '—'],
+    ['Review Date', review.review_date || '—'],
+    ['Next Review', review.next_review_date || '—'],
+  ];
+  metaFields.forEach(([label, value], i) => {
+    const cx = i < 2 ? col1 : col2;
+    const row = i % 2;
+    const ry = y + 8 + row * 13;
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.muted);
+    doc.text(label.toUpperCase(), cx, ry);
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text(String(value), cx, ry + 5.5);
+  });
+  y += 44;
+
+  // ── Attendees ──
+  const attendees = JSON.parse(review.attendees || '[]');
+  if (attendees.length) {
+    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text('Attendees', ML, y + 5);
+    doc.setFillColor(...C.success); doc.rect(ML, y + 7, CW, 0.5, 'F');
+    y += 11;
+    doc.setFontSize(9.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.text);
+    const perRow = 3; const colW = CW / perRow;
+    attendees.forEach((a, i) => {
+      const col = i % perRow; const row = Math.floor(i / perRow);
+      doc.text(`• ${a}`, ML + col * colW, y + 5 + row * 6);
+    });
+    y += 6 + Math.ceil(attendees.length / perRow) * 6 + 4;
+  }
+
+  // ── Summary ──
+  if (review.summary && review.summary.trim()) {
+    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text('Executive Summary', ML, y + 5);
+    doc.setFillColor(...C.success); doc.rect(ML, y + 7, CW, 0.5, 'F');
+    y += 11;
+    doc.setFontSize(9.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.primaryMid);
+    const summaryLines = doc.splitTextToSize(review.summary, CW);
+    const summaryH = summaryLines.length * 5.5 + 8;
+    doc.setFillColor(...C.accentBg);
+    doc.setDrawColor(...C.border);
+    doc.roundedRect(ML, y, CW, summaryH, 2, 2, 'FD');
+    doc.text(summaryLines, ML + 4, y + 7);
+    y += summaryH + 6;
+  }
+
+  // ── Input Categories ──
+  const inputMap = {};
+  for (const inp of inputs) inputMap[inp.category] = inp.content || '';
+
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+  doc.text('Review Inputs (ISO 9001 Cl. 9.3.2)', ML, y + 5);
+  doc.setFillColor(...C.success); doc.rect(ML, y + 7, CW, 0.5, 'F');
+  y += 14;
+
+  for (const cat of MGMT_REVIEW_CATEGORIES) {
+    const content = inputMap[cat.key] || '';
+    const lines = doc.splitTextToSize(content || '(No data recorded)', CW - 8);
+    const blockH = lines.length * 5 + 14;
+
+    // Page break check
+    if (y + blockH > 270) {
+      doc.addPage();
+      bopDrawContinuationHeader(doc, 'Management Review Report');
+      y = 20;
+    }
+
+    // Category block
+    doc.setFillColor(...C.cardBg);
+    doc.setDrawColor(...C.border);
+    doc.roundedRect(ML, y, CW, blockH, 2, 2, 'FD');
+    doc.setFillColor(...C.purple);
+    doc.roundedRect(ML, y, 3, blockH, 1, 1, 'F');
+
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text(cat.label, ML + 7, y + 6);
+
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    doc.setTextColor(content ? C.primaryMid : C.muted);
+    doc.text(lines, ML + 7, y + 12);
+
+    y += blockH + 4;
+  }
+
+  // ── Outputs ──
+  if (outputs.length) {
+    if (y + 20 > 270) {
+      doc.addPage();
+      bopDrawContinuationHeader(doc, 'Management Review Report');
+      y = 20;
+    }
+    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text('Review Outputs & Actions (ISO 9001 Cl. 9.3.3)', ML, y + 5);
+    doc.setFillColor(...C.success); doc.rect(ML, y + 7, CW, 0.5, 'F');
+    y += 14;
+
+    const typeColors = { improvement: C.success, resource: C.warning, change: C.purple };
+    const statusColors = { open: C.muted, in_progress: C.warning, completed: C.success };
+
+    doc.autoTable({
+      startY: y,
+      margin: { left: ML, right: MR },
+      theme: 'plain',
+      headStyles: { fillColor: C.primary, textColor: C.white, fontSize: 8.5, fontStyle: 'bold', cellPadding: 3 },
+      bodyStyles: { fontSize: 8.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 } },
+      alternateRowStyles: { fillColor: C.accentBg },
+      columns: [
+        { header: 'Description', dataKey: 'description' },
+        { header: 'Type', dataKey: 'type' },
+        { header: 'Assigned To', dataKey: 'assigned_to' },
+        { header: 'Due Date', dataKey: 'due_date' },
+        { header: 'Status', dataKey: 'status' },
+      ],
+      body: outputs.map(o => ({
+        description: o.description,
+        type: o.type.charAt(0).toUpperCase() + o.type.slice(1),
+        assigned_to: o.assigned_to || '—',
+        due_date: o.due_date || '—',
+        status: o.status.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      })),
+      columnStyles: {
+        description: { cellWidth: 62 },
+        type: { cellWidth: 28 },
+        assigned_to: { cellWidth: 38 },
+        due_date: { cellWidth: 24 },
+        status: { cellWidth: 26 },
+      },
+      didDrawCell(data) {
+        if (data.section === 'body') {
+          if (data.column.dataKey === 'type') {
+            const color = typeColors[outputs[data.row.index]?.type] || C.muted;
+            doc.setTextColor(...color);
+            doc.setFontSize(8.5);
+            doc.setFont('helvetica', 'bold');
+            doc.text(data.cell.text, data.cell.x + 3, data.cell.y + 5.5);
+            data.cell.text = [];
+          }
+          if (data.column.dataKey === 'status') {
+            const color = statusColors[outputs[data.row.index]?.status] || C.muted;
+            doc.setTextColor(...color);
+            doc.setFontSize(8.5);
+            doc.setFont('helvetica', 'bold');
+            doc.text(data.cell.text, data.cell.x + 3, data.cell.y + 5.5);
+            data.cell.text = [];
+          }
+        }
+      },
+      didDrawPage() {
+        bopDrawContinuationHeader(doc, 'Management Review Report');
+      },
+    });
+  }
+
+  bopDrawFooters(doc);
+  return doc;
+}
+
 async function generateMgmtReport(reviewId) {
   const btn = document.getElementById('mgmt-generate-report-btn');
   btn.disabled = true;
   btn.textContent = 'Generating…';
   try {
-    await api(`/api/management-reviews/${reviewId}/generate-report`, { method: 'POST', body: {} });
+    const doc = await generateMgmtReviewPDF(reviewId);
+
+    // Upload PDF to server (creates/updates Document Control record)
+    const blob = doc.output('blob');
+    const form = new FormData();
+    form.append('pdf', blob, `management-review-${reviewId}.pdf`);
+    const resp = await fetch(`/api/management-reviews/${reviewId}/upload-report`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
+
+    // Trigger immediate download
+    doc.save(`management-review-${reviewId}.pdf`);
+
     document.getElementById('mgmt-download-report-btn').style.display = '';
-    alert('Report generated and saved to Document Control!');
+    showToast('Report generated and saved to Document Control!', 'success');
   } catch (e) {
     alert('Failed to generate report: ' + e.message);
   } finally {
@@ -8508,8 +8716,13 @@ async function generateMgmtReport(reviewId) {
   }
 }
 
-function downloadMgmtReport(reviewId) {
-  window.open(`/api/management-reviews/${reviewId}/report`, '_blank');
+async function downloadMgmtReport(reviewId) {
+  try {
+    const doc = await generateMgmtReviewPDF(reviewId);
+    doc.save(`management-review-${reviewId}.pdf`);
+  } catch (e) {
+    alert('Failed to download report: ' + e.message);
+  }
 }
 
 // --- Init ---
