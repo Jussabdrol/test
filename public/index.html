@@ -136,22 +136,8 @@
             <h2>&#128203; Management Reviews</h2>
             <button class="btn btn-primary btn-sm" onclick="openMgmtReviewModal()">&#43; New Review</button>
           </div>
-          <div class="card" style="padding:0;overflow:hidden">
-            <table class="data-table" id="mgmt-reviews-table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Review Date</th>
-                  <th>Chairperson</th>
-                  <th>Status</th>
-                  <th>Next Review</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="mgmt-reviews-tbody">
-                <tr><td colspan="6" class="empty-state">Loading…</td></tr>
-              </tbody>
-            </table>
+          <div id="mgmt-reviews-arch-list">
+            <div class="empty-state">Loading…</div>
           </div>
         </div>
 
@@ -205,8 +191,11 @@
             <div class="card" style="padding:20px;margin-top:12px">
               <h3 style="margin-top:0">Attendees</h3>
               <div id="mgmt-attendees-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
-              <div style="display:flex;gap:8px">
-                <input type="text" id="mgmt-new-attendee" class="form-input" placeholder="Add attendee name…" style="flex:1" onkeydown="if(event.key==='Enter'){addMgmtAttendee();event.preventDefault()}">
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <select id="mgmt-attendee-role-picker" class="form-input" style="flex:1;min-width:160px" onchange="addMgmtAttendeeFromRole(this)">
+                  <option value="">&#128100; Add from roles…</option>
+                </select>
+                <input type="text" id="mgmt-new-attendee" class="form-input" placeholder="Or type name manually…" style="flex:1;min-width:160px" onkeydown="if(event.key==='Enter'){addMgmtAttendee();event.preventDefault()}">
                 <button class="btn btn-secondary btn-sm" onclick="addMgmtAttendee()">&#43; Add</button>
               </div>
               <h3 style="margin-top:20px">Executive Summary</h3>
@@ -2363,8 +2352,10 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">Chairperson</label>
-            <input type="text" id="mgmt-chairperson" class="form-input" placeholder="Name of review chair">
+            <label class="form-label">Chairperson (Role)</label>
+            <select id="mgmt-chairperson" class="form-input">
+              <option value="">— Select Role —</option>
+            </select>
           </div>
           <div class="form-group">
             <label class="form-label">Next Review Date</label>
@@ -2413,8 +2404,10 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">Assigned To</label>
-            <input type="text" id="mgmt-output-assigned-to" class="form-input" placeholder="Person responsible">
+            <label class="form-label">Assigned To (Role)</label>
+            <select id="mgmt-output-assigned-to" class="form-input">
+              <option value="">— Select Role —</option>
+            </select>
           </div>
           <div class="form-group">
             <label class="form-label">Due Date</label>
