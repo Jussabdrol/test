@@ -2074,7 +2074,20 @@ app.delete('/api/documents/:id', requireOrgContext, async (req, res) => {
 
 app.get('/api/documents/:id/download', requireOrgContext, async (req, res) => {
   const doc = await db.prepare('SELECT * FROM documents WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  if (!doc || !doc.file_path) return res.status(404).json({ error: 'File not found' });
+  if (!doc) return res.status(404).json({ error: 'File not found' });
+
+  // Special case: management review reports are stored as HTML in the reviews table
+  if (doc.linked_ref_type === 'management_review' && doc.doc_type === 'report' && (!doc.file_path || doc.file_path === '')) {
+    const review = await db.prepare(
+      'SELECT report_html, title FROM management_reviews WHERE id = ? AND organization_id = ?'
+    ).get(doc.linked_ref_id, req.orgId);
+    if (!review || !review.report_html) return res.status(404).json({ error: 'Report not generated yet' });
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Disposition', `attachment; filename="management-review-${doc.linked_ref_id}.html"`);
+    return res.send(review.report_html);
+  }
+
+  if (!doc.file_path) return res.status(404).json({ error: 'File not found' });
   try {
     const signedUrl = await getSignedUrl(doc.file_path);
     res.redirect(signedUrl);
@@ -3175,6 +3188,339 @@ app.post('/api/admin/saml/test', requireAdmin, async (req, res) => {
     metadata_url: `${req.protocol}://${req.get('host')}/saml/metadata`,
     callback_url: `${req.protocol}://${req.get('host')}/saml/callback`
   });
+});
+
+// ============================================================
+// Management Reviews (ISO 9.3)
+// ============================================================
+
+function generateMgmtReviewHtml(review, inputs, outputs) {
+  const inputsByCategory = {};
+  for (const inp of inputs) inputsByCategory[inp.category] = inp.content || '';
+
+  const categories = [
+    'previous_actions', 'internal_external_issues', 'customer_feedback',
+    'process_performance', 'nonconformities', 'audit_results',
+    'supplier_performance', 'risk_opportunities', 'kpi_performance',
+    'resource_adequacy', 'improvement_opportunities',
+  ];
+  const categoryLabels = {
+    previous_actions: 'Status of previous management review actions',
+    internal_external_issues: 'Internal and external issues relevant to the management system',
+    customer_feedback: 'Customer feedback and complaints',
+    process_performance: 'Process performance and product/service conformity',
+    nonconformities: 'Nonconformities and corrective actions',
+    audit_results: 'Audit results',
+    supplier_performance: 'Supplier and external provider performance',
+    risk_opportunities: 'Risks and opportunities (risk register updates)',
+    kpi_performance: 'KPI and objective performance',
+    resource_adequacy: 'Adequacy of resources',
+    improvement_opportunities: 'Opportunities for improvement',
+  };
+
+  let attendeesHtml = '';
+  try {
+    const atts = JSON.parse(review.attendees || '[]');
+    attendeesHtml = atts.map(a => `<li>${a}</li>`).join('');
+  } catch {}
+
+  let outputsHtml = '';
+  if (outputs.length) {
+    outputsHtml = `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+      <thead><tr><th>Type</th><th>Description</th><th>Assigned To</th><th>Due Date</th><th>Status</th></tr></thead>
+      <tbody>${outputs.map(o => `<tr>
+        <td>${o.type}</td>
+        <td>${o.description || ''}</td>
+        <td>${o.assigned_to || ''}</td>
+        <td>${o.due_date || ''}</td>
+        <td>${o.status}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } else {
+    outputsHtml = '<p><em>No outputs recorded.</em></p>';
+  }
+
+  let inputsSections = categories.map(cat => `
+    <h3>${categoryLabels[cat]}</h3>
+    <div style="white-space:pre-wrap;background:#f9f9f9;padding:10px;border-radius:4px">${inputsByCategory[cat] || '<em>Not recorded</em>'}</div>
+  `).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Management Review Report – ${review.title || ''}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; color: #222; }
+    h1 { color: #1a56db; border-bottom: 2px solid #1a56db; padding-bottom: 8px; }
+    h2 { margin-top: 32px; color: #374151; }
+    h3 { margin-top: 20px; color: #555; font-size: 1em; }
+    table { border-collapse: collapse; width: 100%; }
+    th { background: #f3f4f6; }
+    .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin: 16px 0; }
+    .meta-item label { font-weight: bold; font-size: 0.85em; color: #666; }
+    .meta-item p { margin: 2px 0; }
+  </style>
+</head>
+<body>
+  <h1>Management Review Report</h1>
+  <div class="meta-grid">
+    <div class="meta-item"><label>Title</label><p>${review.title || ''}</p></div>
+    <div class="meta-item"><label>Review Date</label><p>${review.review_date || ''}</p></div>
+    <div class="meta-item"><label>Chairperson</label><p>${review.chairperson || ''}</p></div>
+    <div class="meta-item"><label>Status</label><p>${review.status}</p></div>
+    <div class="meta-item"><label>Next Review Date</label><p>${review.next_review_date || '—'}</p></div>
+    <div class="meta-item"><label>Generated</label><p>${new Date().toISOString().split('T')[0]}</p></div>
+  </div>
+  <h2>Attendees</h2>
+  <ul>${attendeesHtml || '<li><em>None recorded</em></li>'}</ul>
+  <h2>Summary</h2>
+  <div style="white-space:pre-wrap">${review.summary || '<em>No summary provided.</em>'}</div>
+  <h2>Review Inputs (ISO 9.3.2)</h2>
+  ${inputsSections}
+  <h2>Review Outputs (ISO 9.3.3)</h2>
+  ${outputsHtml}
+  <hr style="margin-top:40px">
+  <p style="font-size:0.8em;color:#888">Generated by Let The Frame Work · ${new Date().toISOString()}</p>
+</body>
+</html>`;
+}
+
+// List management reviews
+app.get('/api/management-reviews', requireOrgContext, async (req, res) => {
+  const rows = await db.prepare(
+    'SELECT * FROM management_reviews WHERE organization_id = ? ORDER BY review_date DESC, created_at DESC'
+  ).all(req.orgId);
+  res.json(rows);
+});
+
+// Get single review (with inputs and outputs)
+app.get('/api/management-reviews/:id', requireOrgContext, async (req, res) => {
+  const review = await db.prepare(
+    'SELECT * FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(req.params.id, req.orgId);
+  if (!review) return res.status(404).json({ error: 'Not found' });
+
+  const inputs = await db.prepare(
+    'SELECT * FROM management_review_inputs WHERE review_id = ? AND organization_id = ? ORDER BY category'
+  ).all(req.params.id, req.orgId);
+
+  const outputs = await db.prepare(
+    'SELECT * FROM management_review_outputs WHERE review_id = ? AND organization_id = ? ORDER BY created_at'
+  ).all(req.params.id, req.orgId);
+
+  res.json({ review, inputs, outputs });
+});
+
+// Create management review
+app.post('/api/management-reviews', requireOrgContext, async (req, res) => {
+  const { title, review_date, status, chairperson, attendees, next_review_date, summary } = req.body;
+  if (!title || !review_date) return res.status(400).json({ error: 'title and review_date are required' });
+  const result = await db.prepare(
+    `INSERT INTO management_reviews (organization_id, title, review_date, status, chairperson, attendees, next_review_date, summary)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(req.orgId, title, review_date, status || 'scheduled', chairperson || '', JSON.stringify(attendees || []), next_review_date || null, summary || '');
+  const created = await db.prepare('SELECT * FROM management_reviews WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json(created);
+});
+
+// Update management review
+app.put('/api/management-reviews/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare(
+    'SELECT * FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+
+  const fields = ['title', 'review_date', 'status', 'chairperson', 'next_review_date', 'summary'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (req.body.attendees !== undefined) { updates.push('attendees = ?'); params.push(JSON.stringify(req.body.attendees)); }
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.id, req.orgId);
+  await db.prepare(`UPDATE management_reviews SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params);
+  const updated = await db.prepare('SELECT * FROM management_reviews WHERE id = ?').get(req.params.id);
+  res.json(updated);
+});
+
+// Delete management review
+app.delete('/api/management-reviews/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare(
+    'SELECT * FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  await db.prepare('DELETE FROM management_reviews WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
+  res.json({ success: true });
+});
+
+// Upsert input for a category
+app.put('/api/management-reviews/:id/inputs/:category', requireOrgContext, async (req, res) => {
+  const { id, category } = req.params;
+  const review = await db.prepare(
+    'SELECT id FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(id, req.orgId);
+  if (!review) return res.status(404).json({ error: 'Review not found' });
+
+  const { content } = req.body;
+  const existing = await db.prepare(
+    'SELECT id FROM management_review_inputs WHERE review_id = ? AND category = ?'
+  ).get(id, category);
+
+  if (existing) {
+    await db.prepare(
+      "UPDATE management_review_inputs SET content = ?, updated_at = datetime('now') WHERE id = ?"
+    ).run(content || '', existing.id);
+  } else {
+    await db.prepare(
+      'INSERT INTO management_review_inputs (organization_id, review_id, category, content) VALUES (?, ?, ?, ?)'
+    ).run(req.orgId, id, category, content || '');
+  }
+  const row = await db.prepare(
+    'SELECT * FROM management_review_inputs WHERE review_id = ? AND category = ?'
+  ).get(id, category);
+  res.json(row);
+});
+
+// List outputs for a review
+app.get('/api/management-reviews/:id/outputs', requireOrgContext, async (req, res) => {
+  const review = await db.prepare(
+    'SELECT id FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(req.params.id, req.orgId);
+  if (!review) return res.status(404).json({ error: 'Review not found' });
+  const outputs = await db.prepare(
+    'SELECT * FROM management_review_outputs WHERE review_id = ? AND organization_id = ? ORDER BY created_at'
+  ).all(req.params.id, req.orgId);
+  res.json(outputs);
+});
+
+// Create output
+app.post('/api/management-reviews/:id/outputs', requireOrgContext, async (req, res) => {
+  const review = await db.prepare(
+    'SELECT id FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(req.params.id, req.orgId);
+  if (!review) return res.status(404).json({ error: 'Review not found' });
+
+  const { type, description, assigned_to, due_date, status } = req.body;
+  if (!description) return res.status(400).json({ error: 'description is required' });
+  const result = await db.prepare(
+    'INSERT INTO management_review_outputs (organization_id, review_id, type, description, assigned_to, due_date, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(req.orgId, req.params.id, type || 'improvement', description, assigned_to || '', due_date || null, status || 'open');
+  const created = await db.prepare('SELECT * FROM management_review_outputs WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json(created);
+});
+
+// Update output
+app.put('/api/management-reviews/:id/outputs/:outputId', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare(
+    'SELECT * FROM management_review_outputs WHERE id = ? AND review_id = ? AND organization_id = ?'
+  ).get(req.params.outputId, req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Output not found' });
+
+  const fields = ['type', 'description', 'assigned_to', 'due_date', 'status', 'linked_action_id'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.outputId, req.orgId);
+  await db.prepare(`UPDATE management_review_outputs SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params);
+  const updated = await db.prepare('SELECT * FROM management_review_outputs WHERE id = ?').get(req.params.outputId);
+  res.json(updated);
+});
+
+// Delete output
+app.delete('/api/management-reviews/:id/outputs/:outputId', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare(
+    'SELECT * FROM management_review_outputs WHERE id = ? AND review_id = ? AND organization_id = ?'
+  ).get(req.params.outputId, req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Output not found' });
+  await db.prepare('DELETE FROM management_review_outputs WHERE id = ? AND organization_id = ?').run(req.params.outputId, req.orgId);
+  res.json({ success: true });
+});
+
+// Push output to Actions module
+app.post('/api/management-reviews/:id/outputs/:outputId/push-to-actions', requireOrgContext, async (req, res) => {
+  const output = await db.prepare(
+    'SELECT * FROM management_review_outputs WHERE id = ? AND review_id = ? AND organization_id = ?'
+  ).get(req.params.outputId, req.params.id, req.orgId);
+  if (!output) return res.status(404).json({ error: 'Output not found' });
+
+  const review = await db.prepare('SELECT title FROM management_reviews WHERE id = ?').get(req.params.id);
+
+  const actionResult = await db.prepare(
+    `INSERT INTO actions (organization_id, title, description, assignee, priority, status, due_date)
+     VALUES (?, ?, ?, ?, ?, 'open', ?)`
+  ).run(
+    req.orgId,
+    output.description,
+    `Output from Management Review: ${review ? review.title : ''}`,
+    output.assigned_to || '',
+    'Medium',
+    output.due_date || null
+  );
+
+  await db.prepare(
+    "UPDATE management_review_outputs SET linked_action_id = ?, updated_at = datetime('now') WHERE id = ?"
+  ).run(actionResult.lastInsertRowid, output.id);
+
+  const updated = await db.prepare('SELECT * FROM management_review_outputs WHERE id = ?').get(output.id);
+  res.json({ success: true, action_id: actionResult.lastInsertRowid, output: updated });
+});
+
+// Generate report
+app.post('/api/management-reviews/:id/generate-report', requireOrgContext, async (req, res) => {
+  const review = await db.prepare(
+    'SELECT * FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(req.params.id, req.orgId);
+  if (!review) return res.status(404).json({ error: 'Review not found' });
+
+  const inputs = await db.prepare(
+    'SELECT * FROM management_review_inputs WHERE review_id = ? AND organization_id = ?'
+  ).all(req.params.id, req.orgId);
+  const outputs = await db.prepare(
+    'SELECT * FROM management_review_outputs WHERE review_id = ? AND organization_id = ?'
+  ).all(req.params.id, req.orgId);
+
+  const reportHtml = generateMgmtReviewHtml(review, inputs, outputs);
+
+  await db.prepare(
+    "UPDATE management_reviews SET report_html = ?, status = 'completed', updated_at = datetime('now') WHERE id = ?"
+  ).run(reportHtml, review.id);
+
+  // Create or update document record
+  let docId = review.report_doc_id;
+  if (!docId) {
+    const docResult = await db.prepare(
+      `INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, review_date, classification)
+       VALUES (?, ?, ?, 'report', '1.0', ?, 'approved', '', '', 0, 'text/html', 'management_review', 'management_review', ?, NULL, '')`
+    ).run(
+      req.orgId,
+      `Management Review Report – ${review.title}`,
+      `Auto-generated report for management review: ${review.title}`,
+      review.chairperson || '',
+      review.id
+    );
+    docId = docResult.lastInsertRowid;
+    await db.prepare("UPDATE management_reviews SET report_doc_id = ?, updated_at = datetime('now') WHERE id = ?").run(docId, review.id);
+  } else {
+    await db.prepare("UPDATE documents SET updated_at = datetime('now') WHERE id = ?").run(docId);
+  }
+
+  res.json({ success: true, doc_id: docId, report_html: reportHtml });
+});
+
+// Download management review report (served as HTML)
+app.get('/api/management-reviews/:id/report', requireOrgContext, async (req, res) => {
+  const review = await db.prepare(
+    'SELECT * FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(req.params.id, req.orgId);
+  if (!review || !review.report_html) return res.status(404).json({ error: 'Report not generated yet' });
+  res.setHeader('Content-Type', 'text/html');
+  res.setHeader('Content-Disposition', `attachment; filename="management-review-${review.id}.html"`);
+  res.send(review.report_html);
 });
 
 // Database migrations and seeding are handled in db.js

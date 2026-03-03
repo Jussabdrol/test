@@ -32,6 +32,7 @@
             <li><a href="#" class="nav-link active" data-view="mission-control">Mission Control</a></li>
             <li><a href="#" class="nav-link" data-view="architecture">Architecture</a></li>
             <li><a href="#" class="nav-link" data-view="document-control">Document Control</a></li>
+            <li><a href="#" class="nav-link" data-view="management-reviews">Management Reviews</a></li>
           </ul>
         </li>
         <li class="nav-module">
@@ -124,6 +125,94 @@
         </div>
         <div id="my-tasks-content">
           <div class="empty-state">Loading your tasks…</div>
+        </div>
+      </section>
+
+      <!-- Management Reviews View -->
+      <section id="view-management-reviews" class="view hidden">
+        <!-- List Panel -->
+        <div id="mgmt-reviews-list-panel">
+          <div class="view-header">
+            <h2>&#128203; Management Reviews</h2>
+            <button class="btn btn-primary btn-sm" onclick="openMgmtReviewModal()">&#43; New Review</button>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden">
+            <table class="data-table" id="mgmt-reviews-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Review Date</th>
+                  <th>Chairperson</th>
+                  <th>Status</th>
+                  <th>Next Review</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="mgmt-reviews-tbody">
+                <tr><td colspan="6" class="empty-state">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Detail Panel -->
+        <div id="mgmt-reviews-detail-panel" class="hidden">
+          <div class="view-header">
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="btn btn-secondary btn-sm" onclick="closeMgmtReviewDetail()">&#8592; Back</button>
+              <h2 id="mgmt-detail-title" style="margin:0">Management Review</h2>
+              <span id="mgmt-detail-status-badge" class="badge"></span>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary btn-sm" onclick="openMgmtReviewModal(currentMgmtReviewId)">&#9998; Edit</button>
+              <button class="btn btn-primary btn-sm" id="mgmt-generate-report-btn" onclick="generateMgmtReport(currentMgmtReviewId)">&#128196; Generate Report</button>
+              <button class="btn btn-secondary btn-sm" id="mgmt-download-report-btn" onclick="downloadMgmtReport(currentMgmtReviewId)" style="display:none">&#11015; Download Report</button>
+            </div>
+          </div>
+
+          <!-- Meta bar -->
+          <div class="mgmt-detail-meta card" id="mgmt-detail-meta">
+            <!-- filled by JS -->
+          </div>
+
+          <!-- Tabs -->
+          <div class="mgmt-tabs">
+            <button class="mgmt-tab active" data-tab="inputs" onclick="switchMgmtTab('inputs', this)">Review Inputs (ISO 9.3.2)</button>
+            <button class="mgmt-tab" data-tab="outputs" onclick="switchMgmtTab('outputs', this)">Review Outputs (ISO 9.3.3)</button>
+            <button class="mgmt-tab" data-tab="attendees" onclick="switchMgmtTab('attendees', this)">Attendees &amp; Summary</button>
+          </div>
+
+          <!-- Inputs tab -->
+          <div id="mgmt-tab-inputs" class="mgmt-tab-panel">
+            <div id="mgmt-inputs-accordion">
+              <!-- filled by JS -->
+            </div>
+          </div>
+
+          <!-- Outputs tab -->
+          <div id="mgmt-tab-outputs" class="mgmt-tab-panel hidden">
+            <div class="view-header" style="padding:12px 0 8px">
+              <span style="font-size:0.9em;color:var(--text-muted)">Actions/decisions from the review</span>
+              <button class="btn btn-primary btn-sm" onclick="openOutputModal(currentMgmtReviewId, null)">&#43; Add Output</button>
+            </div>
+            <div id="mgmt-outputs-list">
+              <!-- filled by JS -->
+            </div>
+          </div>
+
+          <!-- Attendees & Summary tab -->
+          <div id="mgmt-tab-attendees" class="mgmt-tab-panel hidden">
+            <div class="card" style="padding:20px;margin-top:12px">
+              <h3 style="margin-top:0">Attendees</h3>
+              <div id="mgmt-attendees-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+              <div style="display:flex;gap:8px">
+                <input type="text" id="mgmt-new-attendee" class="form-input" placeholder="Add attendee name…" style="flex:1" onkeydown="if(event.key==='Enter'){addMgmtAttendee();event.preventDefault()}">
+                <button class="btn btn-secondary btn-sm" onclick="addMgmtAttendee()">&#43; Add</button>
+              </div>
+              <h3 style="margin-top:20px">Executive Summary</h3>
+              <textarea id="mgmt-summary-field" class="form-input" rows="5" placeholder="Enter an executive summary of the review…" onblur="saveMgmtSummary()" style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -2243,6 +2332,101 @@
         <code id="api-key-display" style="display:block;padding:12px;background:var(--bg);border-radius:var(--radius-sm);word-break:break-all;font-size:13px"></code>
         <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="copyApiKey()">&#128203; Copy to Clipboard</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Management Review Modal -->
+  <div id="mgmt-review-modal" class="modal hidden">
+    <div class="modal-content" style="max-width:560px">
+      <div class="modal-header">
+        <h3 id="mgmt-review-modal-title">Schedule Management Review</h3>
+        <button class="modal-close" onclick="closeMgmtReviewModal()">&#10005;</button>
+      </div>
+      <form id="mgmt-review-form" onsubmit="saveMgmtReview(event)">
+        <div class="form-group">
+          <label class="form-label">Title <span class="required">*</span></label>
+          <input type="text" id="mgmt-title" class="form-input" placeholder="e.g. Q2 2025 Management Review" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Review Date <span class="required">*</span></label>
+            <input type="date" id="mgmt-review-date" class="form-input" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select id="mgmt-status" class="form-input">
+              <option value="scheduled">Scheduled</option>
+              <option value="in_progress">In Progress</option>
+              <option value="completed">Completed</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Chairperson</label>
+            <input type="text" id="mgmt-chairperson" class="form-input" placeholder="Name of review chair">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Next Review Date</label>
+            <input type="date" id="mgmt-next-review-date" class="form-input">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeMgmtReviewModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="mgmt-review-save-btn">Schedule Review</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Management Review Output Modal -->
+  <div id="mgmt-output-modal" class="modal hidden">
+    <div class="modal-content" style="max-width:500px">
+      <div class="modal-header">
+        <h3 id="mgmt-output-modal-title">Add Review Output</h3>
+        <button class="modal-close" onclick="closeMgmtOutputModal()">&#10005;</button>
+      </div>
+      <form id="mgmt-output-form" onsubmit="saveOutput(event)">
+        <input type="hidden" id="mgmt-output-id">
+        <input type="hidden" id="mgmt-output-review-id">
+        <div class="form-group">
+          <label class="form-label">Description <span class="required">*</span></label>
+          <textarea id="mgmt-output-description" class="form-input" rows="3" placeholder="Describe the decision or required action…" required></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Type</label>
+            <select id="mgmt-output-type" class="form-input">
+              <option value="improvement">Improvement</option>
+              <option value="resource">Resource Need</option>
+              <option value="change">Change to Management System</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select id="mgmt-output-status" class="form-input">
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="completed">Completed</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Assigned To</label>
+            <input type="text" id="mgmt-output-assigned-to" class="form-input" placeholder="Person responsible">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Due Date</label>
+            <input type="date" id="mgmt-output-due-date" class="form-input">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-danger btn-sm" id="mgmt-output-delete-btn" onclick="deleteOutput()" style="margin-right:auto;display:none">Delete</button>
+          <button type="button" class="btn btn-secondary" onclick="closeMgmtOutputModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="mgmt-output-save-btn">Save Output</button>
+        </div>
+      </form>
     </div>
   </div>
 
