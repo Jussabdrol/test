@@ -2614,223 +2614,209 @@ async function updateChecklistField(itemId, field, value) {
 // PDF Export for Audit Report
 // ── Shared BOP PDF design tokens ──────────────────────────────────────────────
 const BOP_PDF = {
-  primary:    [17,  24,  39],   // #111827
-  primaryMid: [55,  65,  81],   // #374151
-  accentBg:   [243, 244, 246],  // #f3f4f6
-  cardBg:     [248, 250, 252],  // #f8fafc
-  success:    [16,  185, 129],  // #10b981
-  successBg:  [209, 250, 229],  // #d1fae5
-  warning:    [245, 158, 11],   // #f59e0b
-  warningBg:  [254, 243, 199],  // #fef3c7
-  danger:     [239, 68,  68],   // #ef4444
-  dangerBg:   [254, 226, 226],  // #fee2e2
-  purple:     [139, 92,  246],  // #8b5cf6
-  purpleBg:   [237, 233, 254],  // #ede9fe
-  text:       [17,  24,  39],   // #111827
-  muted:      [107, 114, 128],  // #6b7280
-  border:     [229, 231, 235],  // #e5e7eb
+  primary:    [17,  24,  39],
+  primaryMid: [55,  65,  81],
+  accentBg:   [243, 244, 246],
+  success:    [16,  185, 129],
+  successBg:  [209, 250, 229],
+  warning:    [245, 158, 11],
+  warningBg:  [254, 243, 199],
+  danger:     [239, 68,  68],
+  dangerBg:   [254, 226, 226],
+  purple:     [139, 92,  246],
+  purpleBg:   [237, 233, 254],
+  text:       [17,  24,  39],
+  muted:      [107, 114, 128],
+  border:     [229, 231, 235],
   white:      [255, 255, 255],
 };
 
-// Draws the tall first-page header (primary dark bar + green left accent)
+// Renders 'Bop' in Dancing Script (the platform brand font) via canvas → PNG data URL
+function bopLogoUrl(hexColor, sizePx) {
+  const s = 3; // supersample for sharpness
+  const w = 90, h = 44;
+  const canvas = document.createElement('canvas');
+  canvas.width = w * s; canvas.height = h * s;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(s, s);
+  ctx.fillStyle = hexColor;
+  ctx.font = `700 ${sizePx}px 'Dancing Script', cursive`;
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Bop', 2, h / 2);
+  return canvas.toDataURL('image/png');
+}
+
+// Slim first-page header (26 mm tall)
 function bopDrawMainHeader(doc, reportType, line1, line2) {
   const C = BOP_PDF;
   doc.setFillColor(...C.primary);
-  doc.rect(0, 0, 210, 42, 'F');
-  // Green left accent strip
+  doc.rect(0, 0, 210, 26, 'F');
   doc.setFillColor(...C.success);
-  doc.rect(0, 0, 5, 42, 'F');
-  // 'Bop' wordmark
-  doc.setTextColor(...C.white);
-  doc.setFontSize(26);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Bop', 14, 18);
-  // Platform tag
-  doc.setFontSize(7.5);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(156, 163, 175);
-  doc.text('Business Orchestration Platform', 14, 26);
-  // Report type (right)
-  doc.setFontSize(13);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...C.white);
-  doc.text(reportType, 196, 16, { align: 'right' });
+  doc.rect(0, 0, 3, 26, 'F');
+  // Dancing Script 'Bop' logo
+  doc.addImage(bopLogoUrl('#ffffff', 34), 'PNG', 9, 3, 27, 13);
+  doc.setFontSize(6); doc.setFont('helvetica', 'normal');
+  doc.setTextColor(107, 114, 128);
+  doc.text('Business Orchestration Platform', 9, 22);
+  // Report type + title on right
+  doc.setFontSize(9.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.white);
+  doc.text(reportType, 201, 10, { align: 'right' });
   if (line1) {
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal');
     doc.setTextColor(209, 213, 219);
-    doc.text(String(line1).substring(0, 50), 196, 24, { align: 'right' });
+    doc.text(String(line1).substring(0, 58), 201, 17, { align: 'right' });
   }
   if (line2) {
-    doc.setFontSize(7.5);
-    doc.setTextColor(156, 163, 175);
-    doc.text(String(line2), 196, 31, { align: 'right' });
+    doc.setFontSize(6.5); doc.setTextColor(107, 114, 128);
+    doc.text(String(line2), 201, 23, { align: 'right' });
   }
-  doc.setFontSize(7);
-  doc.setTextColor(156, 163, 175);
-  doc.text(`Generated: ${new Date().toLocaleDateString()}`, 196, 38, { align: 'right' });
 }
 
-// Thin continuation header for subsequent pages
+// Thin continuation header (8 mm tall)
 function bopDrawContinuationHeader(doc, title) {
   const C = BOP_PDF;
   doc.setFillColor(...C.primary);
-  doc.rect(0, 0, 210, 11, 'F');
+  doc.rect(0, 0, 210, 8, 'F');
   doc.setFillColor(...C.success);
-  doc.rect(0, 0, 5, 11, 'F');
-  doc.setTextColor(...C.white);
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Bop', 14, 7.5);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(209, 213, 219);
-  doc.text('· ' + String(title).substring(0, 55), 24, 7.5);
+  doc.rect(0, 0, 3, 8, 'F');
+  doc.addImage(bopLogoUrl('#ffffff', 18), 'PNG', 8, 0.5, 13, 7);
+  doc.setFontSize(6.5); doc.setFont('helvetica', 'normal');
+  doc.setTextColor(156, 163, 175);
+  doc.text('· ' + String(title).substring(0, 66), 23, 5.5);
 }
 
-// Footer on every page
+// Footer on all pages
 function bopDrawFooters(doc) {
   const C = BOP_PDF;
   const n = doc.internal.getNumberOfPages();
+  const logoFooter = bopLogoUrl('#9ca3af', 18);
   for (let i = 1; i <= n; i++) {
     doc.setPage(i);
     doc.setDrawColor(...C.border);
-    doc.setLineWidth(0.3);
+    doc.setLineWidth(0.2);
     doc.line(10, 283, 200, 283);
-    doc.setFontSize(7);
-    doc.setTextColor(...C.muted);
-    doc.text('Bop · Business Orchestration Platform', 10, 288);
-    doc.text(`Page ${i} of ${n}`, 105, 288, { align: 'center' });
-    doc.text(new Date().toISOString().split('T')[0], 200, 288, { align: 'right' });
+    doc.addImage(logoFooter, 'PNG', 9, 284.5, 10, 4.5);
+    doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.muted);
+    doc.text('Business Orchestration Platform', 21, 288.5);
+    doc.text(`Page ${i} of ${n}`, 105, 288.5, { align: 'center' });
+    doc.text(new Date().toISOString().split('T')[0], 201, 288.5, { align: 'right' });
   }
 }
 
 async function exportAuditPDF(auditId) {
   const audit = await api(`/api/audits/${auditId}`);
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const C = BOP_PDF;
+  const ML = 14, CW = 182;
 
   let auditStandards = [];
   try { auditStandards = JSON.parse(audit.standards || '[]'); } catch(e) {}
   if (!auditStandards.length && audit.standard) auditStandards = [audit.standard];
 
-  const checklist   = audit.checklist || [];
-  const totalItems  = checklist.length;
-  const conforming  = checklist.filter(c => c.rating === 'conforming').length;
-  const observations= checklist.filter(c => c.rating === 'observation').length;
-  const minorNc     = checklist.filter(c => c.rating === 'minor_nc').length;
-  const majorNc     = checklist.filter(c => c.rating === 'major_nc').length;
+  const checklist    = audit.checklist || [];
+  const totalItems   = checklist.length;
+  const conforming   = checklist.filter(c => c.rating === 'conforming').length;
+  const observations = checklist.filter(c => c.rating === 'observation').length;
+  const minorNc      = checklist.filter(c => c.rating === 'minor_nc').length;
+  const majorNc      = checklist.filter(c => c.rating === 'major_nc').length;
 
-  // ── PAGE 1 HEADER ──────────────────────────────────────────────────────────
+  // ── Header ──────────────────────────────────────────────────────────────────
   bopDrawMainHeader(doc, 'Audit Report', audit.title, auditStandards.join(', '));
-  let yPos = 52;
+  let y = 33;
 
-  // ── AUDIT DETAILS CARD ─────────────────────────────────────────────────────
-  doc.setFillColor(...C.cardBg);
-  doc.setDrawColor(...C.border);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(14, yPos, 182, 34, 2, 2, 'FD');
-
-  // Left accent bar on card
-  doc.setFillColor(...C.primary);
-  doc.roundedRect(14, yPos, 2.5, 34, 1, 1, 'F');
-
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...C.primary);
-  doc.text('Audit Details', 21, yPos + 8);
-
-  const detailPairs = [
-    [`Standard${auditStandards.length > 1 ? 's' : ''}`, auditStandards.join(', ') || '—'],
+  // ── Metadata — flat 4-column grid, no card background ───────────────────────
+  const metaFields = [
+    ['Standard', auditStandards.join(', ') || '—'],
     ['Lead Auditor', audit.lead_auditor || 'Unassigned'],
     ['Auditee', audit.auditee || 'Unassigned'],
-    ['Status', (audit.status || '').replace(/_/g, ' ').toUpperCase()],
+    ['Status', (audit.status || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())],
     ['Planned Date', audit.planned_date || '—'],
     ['Completed Date', audit.completed_date || '—'],
   ];
-  let dy = yPos + 16;
-  for (let i = 0; i < detailPairs.length; i++) {
-    const xL = i % 2 === 0 ? 21 : 112;
-    if (i > 0 && i % 2 === 0) dy += 8;
-    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.muted);
-    doc.text(detailPairs[i][0].toUpperCase(), xL, dy);
+  doc.setDrawColor(...C.border); doc.setLineWidth(0.2);
+  doc.line(ML, y, ML + CW, y);
+  const mColW = CW / 4;
+  for (let i = 0; i < metaFields.length; i++) {
+    const col = i % 4, row = Math.floor(i / 4);
+    const fx = ML + col * mColW, fy = y + 6 + row * 14;
+    doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.muted);
+    doc.text(metaFields[i][0].toUpperCase(), fx, fy);
     doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
-    doc.text(String(detailPairs[i][1]).substring(0, 28), xL, dy + 5);
+    doc.text(String(metaFields[i][1]).substring(0, 24), fx, fy + 5.5);
   }
-  yPos += 42;
+  y += 6 + Math.ceil(metaFields.length / 4) * 14 + 2;
+  doc.setDrawColor(...C.border); doc.setLineWidth(0.2);
+  doc.line(ML, y, ML + CW, y);
+  y += 8;
 
-  // ── EXECUTIVE SUMMARY (STAT BOXES) ─────────────────────────────────────────
-  doc.setFillColor(...C.cardBg);
-  doc.setDrawColor(...C.border);
-  doc.roundedRect(14, yPos, 182, 35, 2, 2, 'FD');
-  doc.setFillColor(...C.primary);
-  doc.roundedRect(14, yPos, 2.5, 35, 1, 1, 'F');
-
-  doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.primary);
-  doc.text('Executive Summary', 21, yPos + 8);
-
-  const bw = 31, bh = 15, statY = yPos + 15;
-  const statBoxes = [
-    { n: totalItems,   label: 'TOTAL',    fill: C.accentBg,  col: C.primary  },
-    { n: conforming,   label: 'CONFORM',  fill: C.successBg, col: C.success  },
-    { n: observations, label: 'OBS',      fill: C.warningBg, col: C.warning  },
-    { n: minorNc,      label: 'MINOR NC', fill: C.dangerBg,  col: C.danger   },
-    { n: majorNc,      label: 'MAJOR NC', fill: C.purpleBg,  col: C.purple   },
+  // ── Stat scorecard ──────────────────────────────────────────────────────────
+  const statDefs = [
+    { n: totalItems,   label: 'Total',    bg: C.accentBg,  col: C.primaryMid },
+    { n: conforming,   label: 'Conform',  bg: C.successBg, col: C.success    },
+    { n: observations, label: 'Obs',      bg: C.warningBg, col: C.warning    },
+    { n: minorNc,      label: 'Minor NC', bg: C.dangerBg,  col: C.danger     },
+    { n: majorNc,      label: 'Major NC', bg: C.purpleBg,  col: C.purple     },
   ];
-  statBoxes.forEach(({ n, label, fill, col }, i) => {
-    const sx = 20 + i * (bw + 4);
-    doc.setFillColor(...fill);
-    doc.roundedRect(sx, statY, bw, bh, 2, 2, 'F');
-    doc.setFontSize(15); doc.setFont('helvetica', 'bold'); doc.setTextColor(...col);
-    doc.text(String(n), sx + bw / 2, statY + 9, { align: 'center' });
-    doc.setFontSize(6.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.muted);
-    doc.text(label, sx + bw / 2, statY + 13.5, { align: 'center' });
+  const bW = 32, bH = 18, bGap = 3.5;
+  const bX0 = ML + (CW - (statDefs.length * bW + (statDefs.length - 1) * bGap)) / 2;
+  statDefs.forEach(({ n, label, bg, col }, i) => {
+    const sx = bX0 + i * (bW + bGap);
+    doc.setFillColor(...bg);
+    doc.roundedRect(sx, y, bW, bH, 1.5, 1.5, 'F');
+    doc.setFillColor(...col);
+    doc.rect(sx, y, bW, 1.5, 'F'); // top accent line
+    doc.setFontSize(17); doc.setFont('helvetica', 'bold'); doc.setTextColor(...col);
+    doc.text(String(n), sx + bW / 2, y + 12, { align: 'center' });
+    doc.setFontSize(5.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.muted);
+    doc.text(label.toUpperCase(), sx + bW / 2, y + 16.5, { align: 'center' });
   });
-  yPos += 44;
+  y += bH + 10;
 
-  // ── FINDINGS TABLE ──────────────────────────────────────────────────────────
-  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.primary);
-  doc.text('Audit Findings', 14, yPos + 1);
-  doc.setFillColor(...C.success);
-  doc.rect(14, yPos + 3, 18, 0.5, 'F');
-  yPos += 8;
+  // ── Findings table ──────────────────────────────────────────────────────────
+  doc.setFillColor(...C.success); doc.rect(ML, y, 2, 7, 'F');
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+  doc.text('Audit Findings', ML + 6, y + 5);
+  doc.setDrawColor(...C.border); doc.setLineWidth(0.2);
+  doc.line(ML + 6, y + 7.5, ML + CW, y + 7.5);
+  y += 12;
 
   const ratingLabels = {
     not_assessed: 'Not Assessed', conforming: 'Conforming',
     observation: 'Observation',   minor_nc: 'Minor NC', major_nc: 'Major NC',
   };
   doc.autoTable({
-    startY: yPos,
-    margin: { left: 14, right: 14 },
+    startY: y,
+    margin: { left: ML, right: ML },
     head: [['Clause', 'Standard', 'Requirement', 'Rating', 'Finding']],
     body: checklist.map(item => [
       item.clause,
       item.standard || audit.standard,
-      (item.requirement || '').substring(0, 42) + ((item.requirement || '').length > 42 ? '…' : ''),
+      (item.requirement || '').substring(0, 44) + ((item.requirement || '').length > 44 ? '…' : ''),
       ratingLabels[item.rating] || item.rating,
-      (item.finding || '—').substring(0, 55) + ((item.finding || '').length > 55 ? '…' : ''),
+      (item.finding || '—').substring(0, 58) + ((item.finding || '').length > 58 ? '…' : ''),
     ]),
     theme: 'plain',
     styles: {
-      fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
-      textColor: C.text, lineColor: C.border, lineWidth: 0.25, overflow: 'linebreak',
+      fontSize: 7.5, cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 },
+      textColor: C.text, lineColor: C.border, lineWidth: 0.2, overflow: 'linebreak',
     },
-    headStyles: {
-      fillColor: C.primary, textColor: C.white, fontStyle: 'bold', fontSize: 8,
-    },
+    headStyles: { fillColor: C.primary, textColor: C.white, fontStyle: 'bold', fontSize: 7.5,
+      cellPadding: { top: 3, bottom: 3, left: 3, right: 3 } },
     columnStyles: {
-      0: { cellWidth: 18 }, 1: { cellWidth: 24 },
-      2: { cellWidth: 48 }, 3: { cellWidth: 26 }, 4: { cellWidth: 66 },
+      0: { cellWidth: 16 }, 1: { cellWidth: 22 },
+      2: { cellWidth: 52 }, 3: { cellWidth: 24 }, 4: { cellWidth: 68 },
     },
     alternateRowStyles: { fillColor: C.accentBg },
     didParseCell(data) {
       if (data.column.index === 3 && data.section === 'body') {
         const r = checklist[data.row.index]?.rating;
         data.cell.styles.fontStyle = 'bold';
-        if (r === 'conforming')  data.cell.styles.textColor = C.success;
+        if      (r === 'conforming')  data.cell.styles.textColor = C.success;
         else if (r === 'observation') data.cell.styles.textColor = C.warning;
         else if (r === 'minor_nc')    data.cell.styles.textColor = C.danger;
         else if (r === 'major_nc')    data.cell.styles.textColor = C.purple;
+        else                          data.cell.styles.textColor = C.muted;
       }
     },
     didDrawPage(data) {
@@ -2838,38 +2824,39 @@ async function exportAuditPDF(auditId) {
     },
   });
 
-  // ── NCR TABLE ──────────────────────────────────────────────────────────────
-  if (audit.non_conformities && audit.non_conformities.length > 0) {
-    yPos = doc.lastAutoTable.finalY + 10;
-    if (yPos > 252) { doc.addPage(); bopDrawContinuationHeader(doc, `Audit Report – ${audit.title}`); yPos = 18; }
+  // ── NCR table ───────────────────────────────────────────────────────────────
+  if (audit.non_conformities && audit.non_conformities.length) {
+    y = doc.lastAutoTable.finalY + 10;
+    if (y > 255) { doc.addPage(); bopDrawContinuationHeader(doc, `Audit Report – ${audit.title}`); y = 16; }
 
-    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.primary);
-    doc.text('Non-Conformity Reports (NCRs)', 14, yPos + 1);
-    doc.setFillColor(...C.danger);
-    doc.rect(14, yPos + 3, 22, 0.5, 'F');
-    yPos += 8;
+    doc.setFillColor(...C.danger); doc.rect(ML, y, 2, 7, 'F');
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text('Non-Conformity Reports', ML + 6, y + 5);
+    doc.setDrawColor(...C.border); doc.setLineWidth(0.2);
+    doc.line(ML + 6, y + 7.5, ML + CW, y + 7.5);
+    y += 12;
 
     doc.autoTable({
-      startY: yPos,
-      margin: { left: 14, right: 14 },
+      startY: y,
+      margin: { left: ML, right: ML },
       head: [['Clause', 'Severity', 'Description', 'Root Cause', 'Responsible', 'Status']],
       body: audit.non_conformities.map(nc => [
         nc.clause || '—',
         (nc.severity || 'minor').toUpperCase(),
         (nc.description || '—').substring(0, 55) + ((nc.description || '').length > 55 ? '…' : ''),
-        (nc.root_cause || '—').substring(0, 40) + ((nc.root_cause || '').length > 40 ? '…' : ''),
+        (nc.root_cause || '—').substring(0, 38) + ((nc.root_cause || '').length > 38 ? '…' : ''),
         nc.responsible || '—',
-        (nc.status || 'open').replace(/_/g, ' ').toUpperCase(),
+        (nc.status || 'open').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
       ]),
       theme: 'plain',
       styles: {
-        fontSize: 7.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
-        textColor: C.text, lineColor: C.border, lineWidth: 0.25, overflow: 'linebreak',
+        fontSize: 7, cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 },
+        textColor: C.text, lineColor: C.border, lineWidth: 0.2, overflow: 'linebreak',
       },
-      headStyles: { fillColor: C.danger, textColor: C.white, fontStyle: 'bold', fontSize: 7.5 },
+      headStyles: { fillColor: C.danger, textColor: C.white, fontStyle: 'bold', fontSize: 7 },
       columnStyles: {
-        0: { cellWidth: 14 }, 1: { cellWidth: 16 }, 2: { cellWidth: 55 },
-        3: { cellWidth: 45 }, 4: { cellWidth: 30 }, 5: { cellWidth: 22 },
+        0: { cellWidth: 13 }, 1: { cellWidth: 15 }, 2: { cellWidth: 55 },
+        3: { cellWidth: 44 }, 4: { cellWidth: 30 }, 5: { cellWidth: 25 },
       },
       alternateRowStyles: { fillColor: C.dangerBg },
       didParseCell(data) {
@@ -2886,7 +2873,6 @@ async function exportAuditPDF(auditId) {
   }
 
   bopDrawFooters(doc);
-
   const filename = `Audit_Report_${(audit.title || 'report').replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
   doc.save(filename);
 }
@@ -8501,183 +8487,166 @@ async function pushOutputToAction(outputId) {
 async function generateMgmtReviewPDF(reviewId) {
   const { jsPDF } = window.jspdf;
   const C = BOP_PDF;
-
-  // Fetch fresh data
-  const [data, refData] = await Promise.all([
-    api(`/api/management-reviews/${reviewId}`),
-    api(`/api/management-reviews/${reviewId}/reference-data`).catch(() => null),
-  ]);
+  const data = await api(`/api/management-reviews/${reviewId}`);
   const { review, inputs, outputs } = data;
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const PW = 210; const ML = 14; const MR = 14; const CW = PW - ML - MR;
+  const ML = 14, CW = 182;
 
-  // ── Cover Header ──
-  bopDrawMainHeader(doc, 'Management Review Report', review.title,
-    `Review Date: ${review.review_date || '—'}`);
+  // ── Header ──────────────────────────────────────────────────────────────────
+  bopDrawMainHeader(doc, 'Management Review',
+    review.title, `ISO 9001 Cl. 9.3  ·  ${review.review_date || '—'}`);
+  let y = 33;
 
-  // ── Meta card ──
-  let y = 50;
-  doc.setFillColor(...C.cardBg);
-  doc.setDrawColor(...C.border);
-  doc.roundedRect(ML, y, CW, 38, 2, 2, 'FD');
-  // Left accent bar
-  doc.setFillColor(...C.success);
-  doc.roundedRect(ML, y, 3, 38, 1, 1, 'F');
-
-  const col1 = ML + 8; const col2 = ML + CW / 2 + 4;
+  // ── Metadata — flat 4-column grid ───────────────────────────────────────────
   const metaFields = [
-    ['Status', (review.status || 'scheduled').replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())],
+    ['Status',      (review.status || 'scheduled').replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())],
     ['Chairperson', review.chairperson || '—'],
     ['Review Date', review.review_date || '—'],
     ['Next Review', review.next_review_date || '—'],
   ];
+  doc.setDrawColor(...C.border); doc.setLineWidth(0.2);
+  doc.line(ML, y, ML + CW, y);
+  const mColW = CW / 4;
   metaFields.forEach(([label, value], i) => {
-    const cx = i < 2 ? col1 : col2;
-    const row = i % 2;
-    const ry = y + 8 + row * 13;
-    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.muted);
-    doc.text(label.toUpperCase(), cx, ry);
-    doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
-    doc.text(String(value), cx, ry + 5.5);
+    const fx = ML + i * mColW;
+    doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.muted);
+    doc.text(label.toUpperCase(), fx, y + 6);
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text(String(value), fx, y + 12);
   });
-  y += 44;
+  y += 19;
+  doc.setDrawColor(...C.border); doc.setLineWidth(0.2);
+  doc.line(ML, y, ML + CW, y);
+  y += 8;
 
-  // ── Attendees ──
+  // ── Attendees as inline chips ────────────────────────────────────────────────
   const attendees = JSON.parse(review.attendees || '[]');
   if (attendees.length) {
-    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
-    doc.text('Attendees', ML, y + 5);
-    doc.setFillColor(...C.success); doc.rect(ML, y + 7, CW, 0.5, 'F');
-    y += 11;
-    doc.setFontSize(9.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.text);
-    const perRow = 3; const colW = CW / perRow;
-    attendees.forEach((a, i) => {
-      const col = i % perRow; const row = Math.floor(i / perRow);
-      doc.text(`• ${a}`, ML + col * colW, y + 5 + row * 6);
+    doc.setFillColor(...C.success); doc.rect(ML, y, 2, 6, 'F');
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text('Attendees', ML + 6, y + 4.5);
+    y += 10;
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+    let ax = ML, chipY = y;
+    const chipH = 6, chipPad = 3.5;
+    attendees.forEach(a => {
+      const tw = doc.getTextWidth(a) + chipPad * 2;
+      if (ax + tw > ML + CW) { ax = ML; chipY += chipH + 2; }
+      doc.setFillColor(...C.accentBg);
+      doc.setDrawColor(...C.border); doc.setLineWidth(0.2);
+      doc.roundedRect(ax, chipY, tw, chipH, 1, 1, 'FD');
+      doc.setTextColor(...C.primaryMid);
+      doc.text(a, ax + chipPad, chipY + 4.3);
+      ax += tw + 2;
     });
-    y += 6 + Math.ceil(attendees.length / perRow) * 6 + 4;
+    y = chipY + chipH + 8;
   }
 
-  // ── Summary ──
+  // ── Executive summary ────────────────────────────────────────────────────────
   if (review.summary && review.summary.trim()) {
-    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
-    doc.text('Executive Summary', ML, y + 5);
-    doc.setFillColor(...C.success); doc.rect(ML, y + 7, CW, 0.5, 'F');
-    y += 11;
-    doc.setFontSize(9.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(...C.primaryMid);
-    const summaryLines = doc.splitTextToSize(review.summary, CW);
-    const summaryH = summaryLines.length * 5.5 + 8;
-    doc.setFillColor(...C.accentBg);
-    doc.setDrawColor(...C.border);
-    doc.roundedRect(ML, y, CW, summaryH, 2, 2, 'FD');
-    doc.text(summaryLines, ML + 4, y + 7);
-    y += summaryH + 6;
+    doc.setFillColor(...C.success); doc.rect(ML, y, 2, 6, 'F');
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text('Executive Summary', ML + 6, y + 4.5);
+    y += 10;
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'italic'); doc.setTextColor(...C.primaryMid);
+    const sLines = doc.splitTextToSize(review.summary, CW - 4);
+    doc.text(sLines, ML + 2, y + 1);
+    y += sLines.length * 5 + 8;
   }
 
-  // ── Input Categories ──
+  // ── Input categories ─────────────────────────────────────────────────────────
+  doc.setFillColor(...C.purple); doc.rect(ML, y, 2, 6, 'F');
+  doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+  doc.text('Review Inputs  ·  ISO 9001 Cl. 9.3.2', ML + 6, y + 4.5);
+  doc.setDrawColor(...C.border); doc.setLineWidth(0.2);
+  doc.line(ML + 6, y + 7, ML + CW, y + 7);
+  y += 12;
+
   const inputMap = {};
   for (const inp of inputs) inputMap[inp.category] = inp.content || '';
 
-  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
-  doc.text('Review Inputs (ISO 9001 Cl. 9.3.2)', ML, y + 5);
-  doc.setFillColor(...C.success); doc.rect(ML, y + 7, CW, 0.5, 'F');
-  y += 14;
-
-  for (const cat of MGMT_REVIEW_CATEGORIES) {
+  const accentCycle = [C.purple, C.success, C.warning, C.danger];
+  for (let ci = 0; ci < MGMT_REVIEW_CATEGORIES.length; ci++) {
+    const cat = MGMT_REVIEW_CATEGORIES[ci];
     const content = inputMap[cat.key] || '';
-    const lines = doc.splitTextToSize(content || '(No data recorded)', CW - 8);
-    const blockH = lines.length * 5 + 14;
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+    const lines = doc.splitTextToSize(content || '(No data recorded)', CW - 6);
+    const blockH = lines.length * 4.5 + 11;
 
-    // Page break check
-    if (y + blockH > 270) {
+    if (y + blockH > 272) {
       doc.addPage();
-      bopDrawContinuationHeader(doc, 'Management Review Report');
-      y = 20;
+      bopDrawContinuationHeader(doc, 'Management Review · Inputs');
+      y = 16;
     }
 
-    // Category block
-    doc.setFillColor(...C.cardBg);
-    doc.setDrawColor(...C.border);
-    doc.roundedRect(ML, y, CW, blockH, 2, 2, 'FD');
-    doc.setFillColor(...C.purple);
-    doc.roundedRect(ML, y, 3, blockH, 1, 1, 'F');
+    // Thin left accent bar — colour cycles through accent palette
+    doc.setFillColor(...accentCycle[ci % accentCycle.length]);
+    doc.rect(ML, y, 1.5, blockH - 1, 'F');
 
-    doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
-    doc.text(cat.label, ML + 7, y + 6);
+    doc.setFontSize(6.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.muted);
+    doc.text(cat.label.toUpperCase(), ML + 5, y + 4.5);
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...(content ? C.text : C.muted));
+    doc.text(lines, ML + 5, y + 9.5);
 
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...(content ? C.primaryMid : C.muted));
-    doc.text(lines, ML + 7, y + 12);
-
-    y += blockH + 4;
+    doc.setDrawColor(...C.border); doc.setLineWidth(0.15);
+    doc.line(ML, y + blockH, ML + CW, y + blockH);
+    y += blockH + 3;
   }
 
-  // ── Outputs ──
+  // ── Outputs table ────────────────────────────────────────────────────────────
   if (outputs.length) {
-    if (y + 20 > 270) {
+    if (y + 25 > 272) {
       doc.addPage();
-      bopDrawContinuationHeader(doc, 'Management Review Report');
-      y = 20;
+      bopDrawContinuationHeader(doc, 'Management Review · Outputs');
+      y = 16;
     }
-    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
-    doc.text('Review Outputs & Actions (ISO 9001 Cl. 9.3.3)', ML, y + 5);
-    doc.setFillColor(...C.success); doc.rect(ML, y + 7, CW, 0.5, 'F');
-    y += 14;
-
-    const typeColors = { improvement: C.success, resource: C.warning, change: C.purple };
-    const statusColors = { open: C.muted, in_progress: C.warning, completed: C.success };
+    doc.setFillColor(...C.success); doc.rect(ML, y, 2, 6, 'F');
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.text);
+    doc.text('Review Outputs  ·  ISO 9001 Cl. 9.3.3', ML + 6, y + 4.5);
+    doc.setDrawColor(...C.border); doc.setLineWidth(0.2);
+    doc.line(ML + 6, y + 7, ML + CW, y + 7);
+    y += 12;
 
     doc.autoTable({
       startY: y,
-      margin: { left: ML, right: MR },
+      margin: { left: ML, right: ML },
       theme: 'plain',
-      headStyles: { fillColor: C.primary, textColor: C.white, fontSize: 8.5, fontStyle: 'bold', cellPadding: 3 },
-      bodyStyles: { fontSize: 8.5, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 } },
-      alternateRowStyles: { fillColor: C.accentBg },
-      columns: [
-        { header: 'Description', dataKey: 'description' },
-        { header: 'Type', dataKey: 'type' },
-        { header: 'Assigned To', dataKey: 'assigned_to' },
-        { header: 'Due Date', dataKey: 'due_date' },
-        { header: 'Status', dataKey: 'status' },
-      ],
-      body: outputs.map(o => ({
-        description: o.description,
-        type: o.type.charAt(0).toUpperCase() + o.type.slice(1),
-        assigned_to: o.assigned_to || '—',
-        due_date: o.due_date || '—',
-        status: o.status.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()),
-      })),
-      columnStyles: {
-        description: { cellWidth: 62 },
-        type: { cellWidth: 28 },
-        assigned_to: { cellWidth: 38 },
-        due_date: { cellWidth: 24 },
-        status: { cellWidth: 26 },
+      styles: {
+        fontSize: 7.5, cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 },
+        textColor: C.text, lineColor: C.border, lineWidth: 0.2,
       },
-      didDrawCell(data) {
+      headStyles: { fillColor: C.primary, textColor: C.white, fontStyle: 'bold', fontSize: 7.5 },
+      alternateRowStyles: { fillColor: C.accentBg },
+      head: [['Description', 'Type', 'Assigned To', 'Due Date', 'Status']],
+      body: outputs.map(o => [
+        o.description,
+        o.type.charAt(0).toUpperCase() + o.type.slice(1),
+        o.assigned_to || '—',
+        o.due_date || '—',
+        o.status.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      ]),
+      columnStyles: {
+        0: { cellWidth: 65 }, 1: { cellWidth: 26 },
+        2: { cellWidth: 38 }, 3: { cellWidth: 24 }, 4: { cellWidth: 29 },
+      },
+      didParseCell(data) {
         if (data.section === 'body') {
-          if (data.column.dataKey === 'type') {
-            const color = typeColors[outputs[data.row.index]?.type] || C.muted;
-            doc.setTextColor(...color);
-            doc.setFontSize(8.5);
-            doc.setFont('helvetica', 'bold');
-            doc.text(data.cell.text, data.cell.x + 3, data.cell.y + 5.5);
-            data.cell.text = [];
+          if (data.column.index === 1) {
+            const t = outputs[data.row.index]?.type;
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.textColor = t === 'improvement' ? C.success : t === 'resource' ? C.warning : C.purple;
           }
-          if (data.column.dataKey === 'status') {
-            const color = statusColors[outputs[data.row.index]?.status] || C.muted;
-            doc.setTextColor(...color);
-            doc.setFontSize(8.5);
-            doc.setFont('helvetica', 'bold');
-            doc.text(data.cell.text, data.cell.x + 3, data.cell.y + 5.5);
-            data.cell.text = [];
+          if (data.column.index === 4) {
+            const s = outputs[data.row.index]?.status;
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.textColor = s === 'completed' ? C.success : s === 'in_progress' ? C.warning : C.muted;
           }
         }
       },
       didDrawPage() {
-        bopDrawContinuationHeader(doc, 'Management Review Report');
+        bopDrawContinuationHeader(doc, 'Management Review · Outputs');
       },
     });
   }
