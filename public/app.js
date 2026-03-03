@@ -445,6 +445,7 @@ function switchView(view) {
   else if (view === 'architecture') loadArchitecture();
   else if (view === 'document-control') loadDocumentControl();
   else if (view === 'my-tasks') loadMyTasks();
+  else if (view === 'management-reviews') loadManagementReviews();
   // Admin views
   else if (view === 'admin-overview') loadAdminOverview();
   else if (view === 'admin-users') loadAdminUsers();
@@ -7782,6 +7783,436 @@ async function saveServiceConfig(service, e) {
   await api('/api/admin/settings', { method: 'PUT', body: settings });
   closeServiceModal();
   alert('Configuration saved!');
+}
+
+// ============================================================
+// Management Reviews (ISO 9.3)
+// ============================================================
+
+const MGMT_REVIEW_CATEGORIES = [
+  { key: 'previous_actions',           label: 'Status of previous management review actions' },
+  { key: 'internal_external_issues',   label: 'Internal and external issues (context of the organisation)' },
+  { key: 'customer_feedback',          label: 'Customer feedback and complaints' },
+  { key: 'process_performance',        label: 'Process performance and product / service conformity' },
+  { key: 'nonconformities',            label: 'Nonconformities and corrective actions' },
+  { key: 'audit_results',              label: 'Audit results' },
+  { key: 'supplier_performance',       label: 'Supplier and external provider performance' },
+  { key: 'risk_opportunities',         label: 'Risks and opportunities (risk register updates)' },
+  { key: 'kpi_performance',            label: 'KPI and objective performance' },
+  { key: 'resource_adequacy',          label: 'Adequacy of resources' },
+  { key: 'improvement_opportunities',  label: 'Opportunities for improvement' },
+];
+
+let currentMgmtReviewId = null;
+let mgmtReviewInputsCache = {};   // { category: content }
+let mgmtReviewAttendeesCache = [];
+
+async function loadManagementReviews() {
+  const reviews = await api('/api/management-reviews');
+  renderMgmtReviewList(reviews);
+  closeMgmtReviewDetail();
+}
+
+function renderMgmtReviewList(reviews) {
+  const tbody = document.getElementById('mgmt-reviews-tbody');
+  if (!reviews.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No management reviews yet. Schedule one to get started.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = reviews.map(r => {
+    const statusBadge = { scheduled: 'badge-info', in_progress: 'badge-warning', completed: 'badge-success' }[r.status] || 'badge-secondary';
+    return `<tr style="cursor:pointer" onclick="openManagementReview(${r.id})">
+      <td><strong>${esc(r.title)}</strong></td>
+      <td>${r.review_date || '—'}</td>
+      <td>${esc(r.chairperson || '—')}</td>
+      <td><span class="badge ${statusBadge}">${r.status.replace('_', ' ')}</span></td>
+      <td>${r.next_review_date || '—'}</td>
+      <td>
+        <button class="btn btn-secondary btn-xs" onclick="event.stopPropagation();openMgmtReviewModal(${r.id})">&#9998;</button>
+        <button class="btn btn-danger btn-xs" onclick="event.stopPropagation();deleteMgmtReview(${r.id})">&#10005;</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function openManagementReview(id) {
+  currentMgmtReviewId = id;
+  document.getElementById('mgmt-reviews-list-panel').classList.add('hidden');
+  document.getElementById('mgmt-reviews-detail-panel').classList.remove('hidden');
+  await loadMgmtReviewDetail(id);
+}
+
+function closeMgmtReviewDetail() {
+  currentMgmtReviewId = null;
+  document.getElementById('mgmt-reviews-list-panel').classList.remove('hidden');
+  document.getElementById('mgmt-reviews-detail-panel').classList.add('hidden');
+}
+
+async function loadMgmtReviewDetail(id) {
+  const data = await api(`/api/management-reviews/${id}`);
+  const { review, inputs, outputs } = data;
+
+  // Header
+  document.getElementById('mgmt-detail-title').textContent = review.title;
+  const statusClasses = { scheduled: 'badge-info', in_progress: 'badge-warning', completed: 'badge-success' };
+  const badge = document.getElementById('mgmt-detail-status-badge');
+  badge.className = `badge ${statusClasses[review.status] || 'badge-secondary'}`;
+  badge.textContent = review.status.replace('_', ' ');
+
+  // Meta bar
+  document.getElementById('mgmt-detail-meta').innerHTML = `
+    <div class="mgmt-meta-grid">
+      <div><label>Review Date</label><span>${review.review_date || '—'}</span></div>
+      <div><label>Chairperson</label><span>${esc(review.chairperson || '—')}</span></div>
+      <div><label>Next Review Date</label><span>${review.next_review_date || '—'}</span></div>
+      <div><label>Attendees</label><span>${(JSON.parse(review.attendees || '[]')).length} recorded</span></div>
+    </div>`;
+
+  // Cache inputs
+  mgmtReviewInputsCache = {};
+  for (const inp of inputs) mgmtReviewInputsCache[inp.category] = inp.content || '';
+
+  // Cache attendees
+  mgmtReviewAttendeesCache = JSON.parse(review.attendees || '[]');
+
+  // Report button
+  const dlBtn = document.getElementById('mgmt-download-report-btn');
+  if (review.report_html) {
+    dlBtn.style.display = '';
+  } else {
+    dlBtn.style.display = 'none';
+  }
+
+  // Render active tab
+  renderMgmtInputsAccordion();
+  renderMgmtOutputsList(outputs);
+  renderMgmtAttendeesTab(review);
+
+  // Switch to inputs tab by default
+  switchMgmtTab('inputs', document.querySelector('.mgmt-tab[data-tab="inputs"]'));
+}
+
+function switchMgmtTab(tab, btn) {
+  document.querySelectorAll('.mgmt-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.mgmt-tab-panel').forEach(p => p.classList.add('hidden'));
+  if (btn) btn.classList.add('active');
+  document.getElementById(`mgmt-tab-${tab}`).classList.remove('hidden');
+}
+
+function renderMgmtInputsAccordion() {
+  const container = document.getElementById('mgmt-inputs-accordion');
+  container.innerHTML = MGMT_REVIEW_CATEGORIES.map((cat, i) => {
+    const content = mgmtReviewInputsCache[cat.key] || '';
+    const hasContent = content.trim().length > 0;
+    return `<div class="mgmt-accordion-item">
+      <button class="mgmt-accordion-header" onclick="toggleMgmtAccordion(this)" type="button">
+        <span class="mgmt-accordion-label">${cat.label}</span>
+        <span class="mgmt-accordion-indicator ${hasContent ? 'has-content' : ''}">${hasContent ? '&#9679;' : '&#9675;'}</span>
+        <span class="mgmt-accordion-chevron">&#9660;</span>
+      </button>
+      <div class="mgmt-accordion-body ${i === 0 ? '' : 'hidden'}">
+        <textarea
+          class="form-input mgmt-input-textarea"
+          data-category="${cat.key}"
+          rows="5"
+          placeholder="Record findings, data, or notes for this input category…"
+          onblur="saveMgmtInput('${cat.key}', this)"
+        >${esc(content)}</textarea>
+      </div>
+    </div>`;
+  }).join('');
+  // Open first item
+  const firstHeader = container.querySelector('.mgmt-accordion-header');
+  if (firstHeader) firstHeader.classList.add('open');
+}
+
+function toggleMgmtAccordion(header) {
+  const body = header.nextElementSibling;
+  const isOpen = !body.classList.contains('hidden');
+  // Close all
+  header.closest('.mgmt-inputs-accordion, #mgmt-inputs-accordion').querySelectorAll('.mgmt-accordion-body').forEach(b => b.classList.add('hidden'));
+  header.closest('#mgmt-inputs-accordion').querySelectorAll('.mgmt-accordion-header').forEach(h => h.classList.remove('open'));
+  if (!isOpen) {
+    body.classList.remove('hidden');
+    header.classList.add('open');
+  }
+}
+
+async function saveMgmtInput(category, textarea) {
+  if (!currentMgmtReviewId) return;
+  const content = textarea.value;
+  if (content === (mgmtReviewInputsCache[category] || '')) return; // no change
+  try {
+    await api(`/api/management-reviews/${currentMgmtReviewId}/inputs/${category}`, {
+      method: 'PUT',
+      body: { content },
+    });
+    mgmtReviewInputsCache[category] = content;
+    // Update indicator dot
+    const indicator = textarea.closest('.mgmt-accordion-item').querySelector('.mgmt-accordion-indicator');
+    if (indicator) {
+      if (content.trim()) {
+        indicator.classList.add('has-content');
+        indicator.innerHTML = '&#9679;';
+      } else {
+        indicator.classList.remove('has-content');
+        indicator.innerHTML = '&#9675;';
+      }
+    }
+  } catch (e) {
+    console.error('Failed to save input:', e);
+  }
+}
+
+function renderMgmtOutputsList(outputs) {
+  const container = document.getElementById('mgmt-outputs-list');
+  if (!outputs.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:32px">No outputs recorded yet. Add decisions and required actions from the review.</div>';
+    return;
+  }
+  const typeLabels = { improvement: 'Improvement', resource: 'Resource Need', change: 'System Change' };
+  const statusClasses = { open: 'badge-secondary', in_progress: 'badge-warning', completed: 'badge-success' };
+  container.innerHTML = `<div class="card" style="padding:0;overflow:hidden">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th>Type</th>
+          <th>Assigned To</th>
+          <th>Due Date</th>
+          <th>Status</th>
+          <th>Action</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${outputs.map(o => `<tr>
+          <td>${esc(o.description)}</td>
+          <td><span class="badge badge-info">${typeLabels[o.type] || o.type}</span></td>
+          <td>${esc(o.assigned_to || '—')}</td>
+          <td>${o.due_date || '—'}</td>
+          <td><span class="badge ${statusClasses[o.status] || 'badge-secondary'}">${o.status.replace('_', ' ')}</span></td>
+          <td>${o.linked_action_id
+            ? `<span class="badge badge-success" title="Pushed to Actions #${o.linked_action_id}">&#10003; Action #${o.linked_action_id}</span>`
+            : `<button class="btn btn-secondary btn-xs" onclick="pushOutputToAction(${o.id})" title="Push to Actions module">&#8594; Push</button>`
+          }</td>
+          <td>
+            <button class="btn btn-secondary btn-xs" onclick="openOutputModal(${currentMgmtReviewId}, ${o.id})">&#9998;</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderMgmtAttendeesTab(review) {
+  const chips = document.getElementById('mgmt-attendees-chips');
+  const summaryField = document.getElementById('mgmt-summary-field');
+  summaryField.value = review.summary || '';
+  mgmtReviewAttendeesCache = JSON.parse(review.attendees || '[]');
+  renderAttendeesChips();
+}
+
+function renderAttendeesChips() {
+  const chips = document.getElementById('mgmt-attendees-chips');
+  if (!mgmtReviewAttendeesCache.length) {
+    chips.innerHTML = '<span style="color:var(--text-muted);font-size:0.9em">No attendees recorded yet</span>';
+    return;
+  }
+  chips.innerHTML = mgmtReviewAttendeesCache.map((a, i) =>
+    `<span class="mgmt-attendee-chip">${esc(a)}<button type="button" class="mgmt-attendee-remove" onclick="removeMgmtAttendee(${i})">&#10005;</button></span>`
+  ).join('');
+}
+
+async function addMgmtAttendee() {
+  const input = document.getElementById('mgmt-new-attendee');
+  const name = input.value.trim();
+  if (!name || !currentMgmtReviewId) return;
+  if (mgmtReviewAttendeesCache.includes(name)) { input.value = ''; return; }
+  mgmtReviewAttendeesCache.push(name);
+  input.value = '';
+  await api(`/api/management-reviews/${currentMgmtReviewId}`, {
+    method: 'PUT',
+    body: { attendees: mgmtReviewAttendeesCache },
+  });
+  renderAttendeesChips();
+}
+
+async function removeMgmtAttendee(index) {
+  if (!currentMgmtReviewId) return;
+  mgmtReviewAttendeesCache.splice(index, 1);
+  await api(`/api/management-reviews/${currentMgmtReviewId}`, {
+    method: 'PUT',
+    body: { attendees: mgmtReviewAttendeesCache },
+  });
+  renderAttendeesChips();
+}
+
+async function saveMgmtSummary() {
+  if (!currentMgmtReviewId) return;
+  const summary = document.getElementById('mgmt-summary-field').value;
+  await api(`/api/management-reviews/${currentMgmtReviewId}`, {
+    method: 'PUT',
+    body: { summary },
+  });
+}
+
+// --- Modal: Schedule / Edit Review ---
+let editingMgmtReviewId = null;
+
+async function openMgmtReviewModal(id = null) {
+  editingMgmtReviewId = id;
+  const title = document.getElementById('mgmt-review-modal-title');
+  const saveBtn = document.getElementById('mgmt-review-save-btn');
+  if (id) {
+    title.textContent = 'Edit Management Review';
+    saveBtn.textContent = 'Save Changes';
+    const data = await api(`/api/management-reviews/${id}`);
+    const r = data.review;
+    document.getElementById('mgmt-title').value = r.title;
+    document.getElementById('mgmt-review-date').value = r.review_date;
+    document.getElementById('mgmt-status').value = r.status;
+    document.getElementById('mgmt-chairperson').value = r.chairperson || '';
+    document.getElementById('mgmt-next-review-date').value = r.next_review_date || '';
+  } else {
+    title.textContent = 'Schedule Management Review';
+    saveBtn.textContent = 'Schedule Review';
+    document.getElementById('mgmt-review-form').reset();
+    document.getElementById('mgmt-review-date').value = new Date().toISOString().split('T')[0];
+  }
+  document.getElementById('mgmt-review-modal').classList.remove('hidden');
+}
+
+function closeMgmtReviewModal() {
+  document.getElementById('mgmt-review-modal').classList.add('hidden');
+  editingMgmtReviewId = null;
+}
+
+async function saveMgmtReview(e) {
+  e.preventDefault();
+  const body = {
+    title: document.getElementById('mgmt-title').value.trim(),
+    review_date: document.getElementById('mgmt-review-date').value,
+    status: document.getElementById('mgmt-status').value,
+    chairperson: document.getElementById('mgmt-chairperson').value.trim(),
+    next_review_date: document.getElementById('mgmt-next-review-date').value || null,
+  };
+  if (editingMgmtReviewId) {
+    await api(`/api/management-reviews/${editingMgmtReviewId}`, { method: 'PUT', body });
+  } else {
+    const created = await api('/api/management-reviews', { method: 'POST', body });
+    editingMgmtReviewId = created.id;
+  }
+  closeMgmtReviewModal();
+  if (currentMgmtReviewId) {
+    await loadMgmtReviewDetail(currentMgmtReviewId);
+  }
+  await loadManagementReviews();
+  if (editingMgmtReviewId && !currentMgmtReviewId) {
+    await openManagementReview(editingMgmtReviewId);
+  }
+}
+
+async function deleteMgmtReview(id) {
+  if (!confirm('Delete this management review and all its inputs/outputs? This cannot be undone.')) return;
+  await api(`/api/management-reviews/${id}`, { method: 'DELETE' });
+  closeMgmtReviewDetail();
+  await loadManagementReviews();
+}
+
+// --- Modal: Output ---
+let editingOutputId = null;
+
+function openOutputModal(reviewId, outputId = null) {
+  editingOutputId = outputId;
+  document.getElementById('mgmt-output-review-id').value = reviewId;
+  document.getElementById('mgmt-output-modal-title').textContent = outputId ? 'Edit Output' : 'Add Review Output';
+  document.getElementById('mgmt-output-save-btn').textContent = outputId ? 'Save Changes' : 'Add Output';
+
+  const deleteBtn = document.getElementById('mgmt-output-delete-btn');
+  deleteBtn.style.display = outputId ? '' : 'none';
+
+  if (outputId) {
+    // Find output in current rendered table (quick path) or reload
+    const rows = document.querySelectorAll('#mgmt-outputs-list tbody tr');
+    // We'll re-fetch to be safe
+    api(`/api/management-reviews/${reviewId}/outputs`).then(outputs => {
+      const o = outputs.find(x => x.id === outputId);
+      if (!o) return;
+      document.getElementById('mgmt-output-id').value = o.id;
+      document.getElementById('mgmt-output-description').value = o.description;
+      document.getElementById('mgmt-output-type').value = o.type;
+      document.getElementById('mgmt-output-status').value = o.status;
+      document.getElementById('mgmt-output-assigned-to').value = o.assigned_to || '';
+      document.getElementById('mgmt-output-due-date').value = o.due_date || '';
+    });
+  } else {
+    document.getElementById('mgmt-output-form').reset();
+    document.getElementById('mgmt-output-id').value = '';
+  }
+  document.getElementById('mgmt-output-modal').classList.remove('hidden');
+}
+
+function closeMgmtOutputModal() {
+  document.getElementById('mgmt-output-modal').classList.add('hidden');
+  editingOutputId = null;
+}
+
+async function saveOutput(e) {
+  e.preventDefault();
+  const reviewId = document.getElementById('mgmt-output-review-id').value;
+  const body = {
+    description: document.getElementById('mgmt-output-description').value.trim(),
+    type: document.getElementById('mgmt-output-type').value,
+    status: document.getElementById('mgmt-output-status').value,
+    assigned_to: document.getElementById('mgmt-output-assigned-to').value.trim(),
+    due_date: document.getElementById('mgmt-output-due-date').value || null,
+  };
+  if (editingOutputId) {
+    await api(`/api/management-reviews/${reviewId}/outputs/${editingOutputId}`, { method: 'PUT', body });
+  } else {
+    await api(`/api/management-reviews/${reviewId}/outputs`, { method: 'POST', body });
+  }
+  closeMgmtOutputModal();
+  // Refresh outputs list
+  const data = await api(`/api/management-reviews/${reviewId}`);
+  renderMgmtOutputsList(data.outputs);
+}
+
+async function deleteOutput() {
+  if (!editingOutputId || !currentMgmtReviewId) return;
+  if (!confirm('Delete this output?')) return;
+  await api(`/api/management-reviews/${currentMgmtReviewId}/outputs/${editingOutputId}`, { method: 'DELETE' });
+  closeMgmtOutputModal();
+  const data = await api(`/api/management-reviews/${currentMgmtReviewId}`);
+  renderMgmtOutputsList(data.outputs);
+}
+
+async function pushOutputToAction(outputId) {
+  if (!currentMgmtReviewId) return;
+  await api(`/api/management-reviews/${currentMgmtReviewId}/outputs/${outputId}/push-to-actions`, { method: 'POST', body: {} });
+  const data = await api(`/api/management-reviews/${currentMgmtReviewId}`);
+  renderMgmtOutputsList(data.outputs);
+}
+
+async function generateMgmtReport(reviewId) {
+  const btn = document.getElementById('mgmt-generate-report-btn');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  try {
+    const result = await api(`/api/management-reviews/${reviewId}/generate-report`, { method: 'POST', body: {} });
+    document.getElementById('mgmt-download-report-btn').style.display = '';
+    alert('Report generated and saved to Document Control!');
+  } catch (e) {
+    alert('Failed to generate report: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '&#128196; Generate Report';
+  }
+}
+
+function downloadMgmtReport(reviewId) {
+  window.open(`/api/management-reviews/${reviewId}/report`, '_blank');
 }
 
 // --- Init ---

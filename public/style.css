@@ -3109,3 +3109,153 @@ body {
   font-weight: 600;
   white-space: nowrap;
 }
+
+/* ============================================================
+   Management Reviews (ISO 9.3)
+   ============================================================ */
+
+/* Meta bar */
+.mgmt-detail-meta {
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+.mgmt-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px 24px;
+}
+.mgmt-meta-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mgmt-meta-grid label {
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mgmt-meta-grid span {
+  font-size: 0.95em;
+  color: var(--text);
+}
+
+/* Tabs */
+.mgmt-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 16px;
+}
+.mgmt-tab {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  padding: 10px 20px;
+  font-size: 0.9em;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.mgmt-tab:hover {
+  color: var(--text);
+}
+.mgmt-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+
+/* Accordion */
+.mgmt-accordion-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.mgmt-accordion-header {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: var(--card-bg);
+  border: none;
+  padding: 12px 16px;
+  cursor: pointer;
+  text-align: left;
+  gap: 10px;
+  transition: background 0.15s;
+}
+.mgmt-accordion-header:hover {
+  background: var(--bg);
+}
+.mgmt-accordion-header.open {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.mgmt-accordion-label {
+  flex: 1;
+  font-size: 0.9em;
+  font-weight: 500;
+  color: var(--text);
+}
+.mgmt-accordion-indicator {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.mgmt-accordion-indicator.has-content {
+  color: var(--success, #22c55e);
+}
+.mgmt-accordion-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.mgmt-accordion-header.open .mgmt-accordion-chevron {
+  transform: rotate(180deg);
+}
+.mgmt-accordion-body {
+  padding: 12px 16px;
+  background: var(--card-bg);
+}
+.mgmt-input-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 100px;
+  font-family: inherit;
+}
+
+/* Attendee chips */
+.mgmt-attendee-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px 4px 12px;
+  font-size: 0.85em;
+  color: var(--text);
+}
+.mgmt-attendee-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 0;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+}
+.mgmt-attendee-remove:hover {
+  color: var(--danger, #ef4444);
+}
+
+/* Tab panel base */
+.mgmt-tab-panel {
+  animation: fadeIn 0.15s ease;
+}
