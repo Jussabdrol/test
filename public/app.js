@@ -8607,7 +8607,7 @@ async function generateMgmtReviewPDF(reviewId) {
     doc.text(cat.label, ML + 7, y + 6);
 
     doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-    doc.setTextColor(content ? C.primaryMid : C.muted);
+    doc.setTextColor(...(content ? C.primaryMid : C.muted));
     doc.text(lines, ML + 7, y + 12);
 
     y += blockH + 4;
