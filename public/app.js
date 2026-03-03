@@ -6334,7 +6334,7 @@ async function loadMyTasks() {
 }
 
 function renderMyTasksContent(data) {
-  const { tasks = [], actions = [], ncrs = [], audits = [], treatments = [], assignedRoles = [] } = data;
+  const { tasks = [], actions = [], ncrs = [], audits = [], treatments = [], mgmtOutputs = [], assignedRoles = [] } = data;
   const today = new Date().toISOString().split('T')[0];
   const roleSet = new Set(assignedRoles);
 
@@ -6538,8 +6538,37 @@ function renderMyTasksContent(data) {
     ncrsBody += '</div>';
   }
 
+  // ── Management Review Outputs ──────────────────────────────────────────────
+  let mgmtOutputsBody = '';
+  const mgmtStatusMap = { open: 'badge-medium', in_progress: 'badge-high', completed: 'badge-low' };
+  const mgmtTypeLabels = { improvement: 'Improvement', resource: 'Resource Need', change: 'System Change' };
+  if (mgmtOutputs.length === 0) {
+    mgmtOutputsBody = emptyMsg('No open management review outputs assigned to you or your roles.');
+  } else {
+    mgmtOutputsBody = '<div class="my-tasks-list">';
+    for (const o of mgmtOutputs) {
+      const desc = o.description.length > 100 ? o.description.substring(0, 100) + '…' : o.description;
+      mgmtOutputsBody += `
+        <div class="${itemRowCls(o.due_date)}" onclick="switchView('management-reviews')">
+          <div class="my-tasks-item-main">
+            <div class="my-tasks-item-title">${esc(desc)}</div>
+            <div class="my-tasks-item-sub">
+              ${o.review_title ? `<span class="my-tasks-cat">&#128203; ${esc(o.review_title)}</span>` : ''}
+              ${o.type ? `<span class="my-tasks-cat">${mgmtTypeLabels[o.type] || o.type}</span>` : ''}
+              ${roleTag(o.assigned_to)}
+            </div>
+          </div>
+          <div class="my-tasks-item-meta">
+            ${statusBadge(o.status, mgmtStatusMap)}
+            ${dueDateLabel(o.due_date)}
+          </div>
+        </div>`;
+    }
+    mgmtOutputsBody += '</div>';
+  }
+
   // ── All-done state ─────────────────────────────────────────────────────────
-  const totalCount = tasks.length + actions.length + ncrs.length + audits.length + treatments.length;
+  const totalCount = tasks.length + actions.length + ncrs.length + audits.length + treatments.length + mgmtOutputs.length;
   if (totalCount === 0) {
     return `${headerHtml}
       <div class="my-tasks-all-done">
@@ -6553,7 +6582,8 @@ function renderMyTasksContent(data) {
     + section('&#9889;', 'Follow-up Actions', actions.length, actionsBody)
     + section('&#9998;', 'Audits', audits.length, auditsBody)
     + section('&#128737;', 'Risk Treatments', treatments.length, treatmentsBody)
-    + section('&#9888;', 'Non-Conformities', ncrs.length, ncrsBody);
+    + section('&#9888;', 'Non-Conformities', ncrs.length, ncrsBody)
+    + section('&#128203;', 'Management Review Actions', mgmtOutputs.length, mgmtOutputsBody);
 }
 
 // --- Helpers ---
@@ -7804,8 +7834,253 @@ const MGMT_REVIEW_CATEGORIES = [
 ];
 
 let currentMgmtReviewId = null;
-let mgmtReviewInputsCache = {};   // { category: content }
+let mgmtReviewInputsCache = {};
 let mgmtReviewAttendeesCache = [];
+let mgmtReviewRefData = null;       // cached reference data from other modules
+let mgmtRoleOptions = [];           // cached role list for pickers
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+async function populateMgmtRoles() {
+  if (!mgmtRoleOptions.length) {
+    mgmtRoleOptions = await api('/api/architecture?arch_type=role').catch(() => []);
+  }
+  const options = '<option value="">— Select Role —</option>'
+    + mgmtRoleOptions.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+
+  const outputSel = document.getElementById('mgmt-output-assigned-to');
+  if (outputSel) outputSel.innerHTML = options;
+
+  const chairSel = document.getElementById('mgmt-chairperson');
+  if (chairSel) chairSel.innerHTML = options;
+
+  const attendeePicker = document.getElementById('mgmt-attendee-role-picker');
+  if (attendeePicker) {
+    attendeePicker.innerHTML = '<option value="">&#128100; Add from roles…</option>'
+      + mgmtRoleOptions.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+  }
+}
+
+// Builds a reference-data HTML block for each input category from live module data
+function buildRefPanel(categoryKey) {
+  if (!mgmtReviewRefData) return '';
+  const { prevOutputs = [], openActions = [], openNcrs = [], recentAudits = [],
+          kpis = [], openRisks = [], mission = null, archItems = [] } = mgmtReviewRefData;
+
+  function row(icon, text) { return `<div class="mgmt-ref-row">${icon} ${text}</div>`; }
+  function badge(cls, t) { return `<span class="badge ${cls}" style="font-size:10px">${t}</span>`; }
+
+  let rows = [];
+
+  if (categoryKey === 'previous_actions') {
+    if (!prevOutputs.length) rows.push(row('&#10003;', '<em>No open outputs from previous reviews.</em>'));
+    else rows = prevOutputs.map(o =>
+      row('&#128203;', `${esc(o.review_title)} (${o.review_date || '?'}) — ${esc(o.description)} ${badge('badge-medium', o.status)}`));
+    rows.push(row('&#9889;', `<strong>${openActions.length}</strong> open action${openActions.length !== 1 ? 's' : ''} in the Actions module`));
+  }
+
+  else if (categoryKey === 'internal_external_issues') {
+    if (mission) {
+      if (mission.content) rows.push(row('&#127919;', `<strong>Mission:</strong> ${esc(mission.content.substring(0, 200))}${mission.content.length > 200 ? '…' : ''}`));
+      if (mission.vision) rows.push(row('&#128218;', `<strong>Vision:</strong> ${esc(mission.vision.substring(0, 200))}${mission.vision.length > 200 ? '…' : ''}`));
+      if (mission.legal_entities) {
+        try {
+          const le = JSON.parse(mission.legal_entities);
+          if (le.length) rows.push(row('&#127981;', `<strong>Legal entities:</strong> ${le.map(l => esc(l.name || l)).join(', ')}`));
+        } catch {}
+      }
+    }
+    if (!rows.length) rows.push(row('&#8505;', '<em>No context data found. Fill in Mission Control.</em>'));
+  }
+
+  else if (categoryKey === 'customer_feedback') {
+    const cust = openNcrs.filter(n => n.severity === 'major' || (n.clause && n.clause.toLowerCase().includes('customer')));
+    if (!cust.length && openNcrs.length) rows.push(row('&#128203;', `${openNcrs.length} open NCR${openNcrs.length !== 1 ? 's' : ''} (none specifically tagged customer-facing)`));
+    else if (!openNcrs.length) rows.push(row('&#10003;', '<em>No open non-conformities.</em>'));
+    else cust.slice(0, 8).forEach(n => rows.push(row('&#9888;', `${badge('badge-critical', n.severity)} ${esc(n.clause || '')} — ${esc(n.description.substring(0, 120))}${n.description.length > 120 ? '…' : ''}`)));
+  }
+
+  else if (categoryKey === 'process_performance') {
+    const taskKpis = kpis.filter(k => k.module === 'tasks' || k.module === 'general' || k.module === 'custom');
+    if (!taskKpis.length && !openActions.length) rows.push(row('&#8505;', '<em>No KPI data recorded yet.</em>'));
+    taskKpis.slice(0, 6).forEach(k => {
+      const val = k.latest_value != null ? `${k.latest_value}${k.unit ? ' ' + k.unit : ''}` : 'No data';
+      const target = k.target_value != null ? `target: ${k.target_value}${k.unit ? ' ' + k.unit : ''}` : '';
+      rows.push(row('&#128200;', `${esc(k.name)}: <strong>${val}</strong>${target ? ` (${target})` : ''} — ${k.latest_period || ''}`));
+    });
+    rows.push(row('&#9889;', `<strong>${openActions.length}</strong> open follow-up action${openActions.length !== 1 ? 's' : ''}`));
+  }
+
+  else if (categoryKey === 'nonconformities') {
+    if (!openNcrs.length) rows.push(row('&#10003;', '<em>No open non-conformities.</em>'));
+    else openNcrs.slice(0, 10).forEach(n => rows.push(row(
+      n.severity === 'major' ? '&#128308;' : '&#128992;',
+      `${badge(n.severity === 'major' ? 'badge-critical' : 'badge-medium', n.severity || 'minor')} ${esc(n.clause || '')} — ${esc(n.description.substring(0, 100))}… (${esc(n.status)})`
+    )));
+    if (openNcrs.length > 10) rows.push(row('&#8230;', `…and ${openNcrs.length - 10} more`));
+  }
+
+  else if (categoryKey === 'audit_results') {
+    if (!recentAudits.length) rows.push(row('&#9998;', '<em>No audits recorded yet.</em>'));
+    else recentAudits.slice(0, 8).forEach(a => {
+      const stBadge = { planned: 'badge-medium', in_progress: 'badge-high', completed: 'badge-low', cancelled: 'badge-inactive' }[a.status] || 'badge-secondary';
+      rows.push(row('&#9998;', `${esc(a.title)} — ${badge(stBadge, a.status)} ${a.open_ncr_count > 0 ? badge('badge-critical', a.open_ncr_count + ' open NCR' + (a.open_ncr_count !== 1 ? 's' : '')) : ''} ${a.planned_date || ''}`));
+    });
+  }
+
+  else if (categoryKey === 'supplier_performance') {
+    const suppliers = archItems.filter(i => i.arch_type === 'role' && i.description && i.description.toLowerCase().includes('supplier'));
+    const allRoles = archItems.filter(i => i.arch_type === 'role');
+    if (suppliers.length) suppliers.forEach(s => rows.push(row('&#128230;', `${esc(s.name)}${s.owner ? ' · Owner: ' + esc(s.owner) : ''}`)));
+    else rows.push(row('&#128230;', `<em>${allRoles.length} role${allRoles.length !== 1 ? 's' : ''} in Architecture. Tag supplier roles with "supplier" in description for auto-detection.</em>`));
+    rows.push(row('&#9889;', `${openActions.length} open action${openActions.length !== 1 ? 's' : ''} across all assignees`));
+  }
+
+  else if (categoryKey === 'risk_opportunities') {
+    if (!openRisks.length) rows.push(row('&#10003;', '<em>No active risks in the risk register.</em>'));
+    else {
+      const critical = openRisks.filter(r => r.inherent_score >= 15);
+      const high = openRisks.filter(r => r.inherent_score >= 9 && r.inherent_score < 15);
+      if (critical.length) rows.push(row('&#128308;', `<strong>${critical.length} critical risk${critical.length !== 1 ? 's' : ''}</strong> (score ≥ 15)`));
+      if (high.length) rows.push(row('&#128992;', `<strong>${high.length} high risk${high.length !== 1 ? 's' : ''}</strong> (score 9–14)`));
+      openRisks.slice(0, 8).forEach(r => rows.push(row('&#9888;', `${esc(r.title)} — score: <strong>${r.inherent_score}</strong> (L:${r.likelihood}×I:${r.impact}) ${esc(r.category || '')}`)));
+    }
+  }
+
+  else if (categoryKey === 'kpi_performance') {
+    if (!kpis.length) rows.push(row('&#128200;', '<em>No KPIs configured. Set them up in Mission Control.</em>'));
+    else kpis.forEach(k => {
+      const val = k.latest_value != null ? k.latest_value : null;
+      const target = k.target_value != null ? k.target_value : null;
+      let statusIcon = '&#128200;';
+      if (val != null && target != null) statusIcon = val >= target ? '&#128994;' : '&#128308;';
+      const valStr = val != null ? `${val}${k.unit ? ' ' + k.unit : ''}` : 'No data';
+      const tgtStr = target != null ? ` / target: ${target}${k.unit ? ' ' + k.unit : ''}` : '';
+      rows.push(row(statusIcon, `${esc(k.name)}: <strong>${valStr}</strong>${tgtStr}${k.latest_period ? ' (' + k.latest_period + ')' : ''}`));
+    });
+  }
+
+  else if (categoryKey === 'resource_adequacy') {
+    const assets = archItems.filter(i => i.arch_type === 'asset');
+    const facilities = archItems.filter(i => i.arch_type === 'facility');
+    const roles = archItems.filter(i => i.arch_type === 'role');
+    if (roles.length) rows.push(row('&#128100;', `<strong>${roles.length}</strong> role${roles.length !== 1 ? 's' : ''} defined in Architecture`));
+    if (assets.length) rows.push(row('&#128230;', `<strong>${assets.length}</strong> asset${assets.length !== 1 ? 's' : ''} in Architecture`));
+    if (facilities.length) rows.push(row('&#127970;', `<strong>${facilities.length}</strong> facilit${facilities.length !== 1 ? 'ies' : 'y'} in Architecture`));
+    if (!rows.length) rows.push(row('&#8505;', '<em>No architecture items found.</em>'));
+  }
+
+  else if (categoryKey === 'improvement_opportunities') {
+    const improvements = prevOutputs.filter(o => o.type === 'improvement');
+    const openImprove = openActions.filter(a => a.priority === 'High' || a.priority === 'Critical');
+    if (improvements.length) {
+      rows.push(row('&#128161;', `<strong>${improvements.length}</strong> improvement output${improvements.length !== 1 ? 's' : ''} from previous reviews still open:`));
+      improvements.slice(0, 5).forEach(o => rows.push(row('&#8594;', `${esc(o.description.substring(0, 100))}…`)));
+    }
+    if (openImprove.length) rows.push(row('&#9889;', `<strong>${openImprove.length}</strong> high/critical priority action${openImprove.length !== 1 ? 's' : ''} in the Actions module`));
+    if (!rows.length) rows.push(row('&#10003;', '<em>No open improvement items found.</em>'));
+  }
+
+  if (!rows.length) return '';
+  return rows.join('');
+}
+
+// Auto-fill textarea from module reference data
+function autoFillMgmtInput(categoryKey) {
+  if (!mgmtReviewRefData) return;
+  const textarea = document.querySelector(`textarea[data-category="${categoryKey}"]`);
+  if (!textarea) return;
+  if (textarea.value.trim() && !confirm('This category already has notes. Replace them with auto-filled data?')) return;
+
+  const { prevOutputs = [], openActions = [], openNcrs = [], recentAudits = [],
+          kpis = [], openRisks = [], mission = null, archItems = [] } = mgmtReviewRefData;
+
+  let text = '';
+
+  if (categoryKey === 'previous_actions') {
+    if (prevOutputs.length) {
+      text += `Open outputs from previous reviews (${prevOutputs.length}):\n`;
+      prevOutputs.forEach(o => { text += `• [${o.status}] ${o.description} (${o.review_title}, ${o.review_date || ''})\n`; });
+    }
+    if (openActions.length) text += `\nOpen actions in system: ${openActions.length}`;
+  }
+  else if (categoryKey === 'internal_external_issues') {
+    if (mission) {
+      if (mission.content) text += `Mission: ${mission.content}\n`;
+      if (mission.vision) text += `Vision: ${mission.vision}\n`;
+    }
+  }
+  else if (categoryKey === 'customer_feedback') {
+    if (openNcrs.length) {
+      text += `Open non-conformities (${openNcrs.length}):\n`;
+      openNcrs.slice(0, 10).forEach(n => { text += `• [${n.severity || 'minor'}] ${n.clause || ''} — ${n.description.substring(0, 120)}\n`; });
+    } else { text = 'No open non-conformities at time of review.'; }
+  }
+  else if (categoryKey === 'process_performance') {
+    const kpiData = kpis.filter(k => k.latest_value != null);
+    if (kpiData.length) {
+      text += `KPI performance:\n`;
+      kpiData.forEach(k => { text += `• ${k.name}: ${k.latest_value}${k.unit ? ' ' + k.unit : ''}${k.target_value != null ? ' / target: ' + k.target_value : ''}\n`; });
+    }
+    text += `\nOpen follow-up actions: ${openActions.length}`;
+  }
+  else if (categoryKey === 'nonconformities') {
+    if (!openNcrs.length) { text = 'No open non-conformities at time of review.'; }
+    else {
+      text += `Open non-conformities (${openNcrs.length}):\n`;
+      openNcrs.forEach(n => { text += `• [${n.severity || 'minor'}] ${n.clause || ''} — ${n.description.substring(0, 150)} (responsible: ${n.responsible || 'unassigned'})\n`; });
+    }
+  }
+  else if (categoryKey === 'audit_results') {
+    if (!recentAudits.length) { text = 'No audits recorded.'; }
+    else {
+      text += `Recent audits (${recentAudits.length}):\n`;
+      recentAudits.forEach(a => { text += `• ${a.title} — ${a.status}${a.open_ncr_count > 0 ? `, ${a.open_ncr_count} open NCR(s)` : ''} (${a.planned_date || 'no date'})\n`; });
+    }
+  }
+  else if (categoryKey === 'risk_opportunities') {
+    if (!openRisks.length) { text = 'No active risks in register.'; }
+    else {
+      text += `Active risks (${openRisks.length}):\n`;
+      openRisks.forEach(r => { text += `• ${r.title} — score: ${r.inherent_score} (L:${r.likelihood}×I:${r.impact}) [${r.category || 'general'}]\n`; });
+    }
+  }
+  else if (categoryKey === 'kpi_performance') {
+    if (!kpis.length) { text = 'No KPIs configured.'; }
+    else {
+      text += `KPI performance:\n`;
+      kpis.forEach(k => {
+        const val = k.latest_value != null ? `${k.latest_value}${k.unit ? ' ' + k.unit : ''}` : 'no data';
+        const tgt = k.target_value != null ? ` (target: ${k.target_value}${k.unit ? ' ' + k.unit : ''})` : '';
+        const period = k.latest_period ? ` — ${k.latest_period}` : '';
+        text += `• ${k.name}: ${val}${tgt}${period}\n`;
+      });
+    }
+  }
+  else if (categoryKey === 'resource_adequacy') {
+    const roles = archItems.filter(i => i.arch_type === 'role');
+    const assets = archItems.filter(i => i.arch_type === 'asset');
+    const facilities = archItems.filter(i => i.arch_type === 'facility');
+    text += `Organisation architecture:\n• Roles defined: ${roles.length}\n• Assets: ${assets.length}\n• Facilities: ${facilities.length}\n`;
+  }
+  else if (categoryKey === 'improvement_opportunities') {
+    const improvements = prevOutputs.filter(o => o.type === 'improvement');
+    if (improvements.length) {
+      text += `Open improvement outputs from previous reviews:\n`;
+      improvements.forEach(o => { text += `• ${o.description} (${o.review_title})\n`; });
+    }
+    const highPri = openActions.filter(a => a.priority === 'High' || a.priority === 'Critical');
+    if (highPri.length) { text += `\nHigh-priority open actions: ${highPri.length}`; }
+    if (!text) text = 'No improvement items identified.';
+  }
+
+  if (text.trim()) {
+    textarea.value = text.trim();
+    saveMgmtInput(categoryKey, textarea);
+  }
+}
+
+// ── List view ────────────────────────────────────────────────────────────────
 
 async function loadManagementReviews() {
   const reviews = await api('/api/management-reviews');
@@ -7814,26 +8089,49 @@ async function loadManagementReviews() {
 }
 
 function renderMgmtReviewList(reviews) {
-  const tbody = document.getElementById('mgmt-reviews-tbody');
+  const container = document.getElementById('mgmt-reviews-arch-list');
   if (!reviews.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No management reviews yet. Schedule one to get started.</td></tr>';
+    container.innerHTML = '<div class="empty-state">No management reviews yet. Schedule one to get started.</div>';
     return;
   }
-  tbody.innerHTML = reviews.map(r => {
-    const statusBadge = { scheduled: 'badge-info', in_progress: 'badge-warning', completed: 'badge-success' }[r.status] || 'badge-secondary';
-    return `<tr style="cursor:pointer" onclick="openManagementReview(${r.id})">
-      <td><strong>${esc(r.title)}</strong></td>
-      <td>${r.review_date || '—'}</td>
-      <td>${esc(r.chairperson || '—')}</td>
-      <td><span class="badge ${statusBadge}">${r.status.replace('_', ' ')}</span></td>
-      <td>${r.next_review_date || '—'}</td>
-      <td>
-        <button class="btn btn-secondary btn-xs" onclick="event.stopPropagation();openMgmtReviewModal(${r.id})">&#9998;</button>
-        <button class="btn btn-danger btn-xs" onclick="event.stopPropagation();deleteMgmtReview(${r.id})">&#10005;</button>
-      </td>
-    </tr>`;
-  }).join('');
+  const stBadgeMap = { scheduled: 'badge-info', in_progress: 'badge-warning', completed: 'badge-success' };
+  const cols = '2fr 130px 1fr 120px 130px 44px';
+  let html = `<div class="arch-table">
+    <div class="arch-table-head" style="grid-template-columns:${cols}">
+      <div class="arch-col-name">Title</div>
+      <div class="arch-col-detail">Review Date</div>
+      <div class="arch-col-detail">Chairperson</div>
+      <div class="arch-col-detail">Status</div>
+      <div class="arch-col-detail">Next Review</div>
+      <div class="arch-col-actions"></div>
+    </div>`;
+  for (const r of reviews) {
+    const atCount = (() => { try { return JSON.parse(r.attendees || '[]').length; } catch { return 0; } })();
+    html += `<div class="arch-table-row-wrap">
+      <div class="arch-table-row" style="grid-template-columns:${cols};cursor:pointer" onclick="openManagementReview(${r.id})">
+        <div class="arch-col-name">
+          <span class="arch-name" style="color:var(--primary)">${esc(r.title)}</span>
+          ${atCount ? `<span class="arch-desc">&#128100; ${atCount} attendee${atCount !== 1 ? 's' : ''}</span>` : ''}
+        </div>
+        <div class="arch-col-detail"><span style="font-size:13px">${r.review_date || '—'}</span></div>
+        <div class="arch-col-detail"><span style="font-size:13px">${esc(r.chairperson || '—')}</span></div>
+        <div class="arch-col-detail"><span class="badge ${stBadgeMap[r.status] || 'badge-secondary'}">${r.status.replace('_', ' ')}</span></div>
+        <div class="arch-col-detail"><span style="font-size:13px">${r.next_review_date || '—'}</span></div>
+        <div class="arch-col-actions" onclick="event.stopPropagation()">
+          ${actionMenu([
+            { label: '&#9998; Edit', onclick: `openMgmtReviewModal(${r.id})` },
+            'sep',
+            { label: '&#128465; Delete', onclick: `deleteMgmtReview(${r.id})`, cls: 'danger' },
+          ])}
+        </div>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  container.innerHTML = html;
 }
+
+// ── Detail view ──────────────────────────────────────────────────────────────
 
 async function openManagementReview(id) {
   currentMgmtReviewId = id;
@@ -7844,12 +8142,18 @@ async function openManagementReview(id) {
 
 function closeMgmtReviewDetail() {
   currentMgmtReviewId = null;
+  mgmtReviewRefData = null;
   document.getElementById('mgmt-reviews-list-panel').classList.remove('hidden');
   document.getElementById('mgmt-reviews-detail-panel').classList.add('hidden');
 }
 
 async function loadMgmtReviewDetail(id) {
-  const data = await api(`/api/management-reviews/${id}`);
+  // Fetch review data and reference data in parallel
+  const [data, refData] = await Promise.all([
+    api(`/api/management-reviews/${id}`),
+    api(`/api/management-reviews/${id}/reference-data`).catch(() => null),
+  ]);
+  mgmtReviewRefData = refData;
   const { review, inputs, outputs } = data;
 
   // Header
@@ -7868,27 +8172,19 @@ async function loadMgmtReviewDetail(id) {
       <div><label>Attendees</label><span>${(JSON.parse(review.attendees || '[]')).length} recorded</span></div>
     </div>`;
 
-  // Cache inputs
+  // Cache
   mgmtReviewInputsCache = {};
   for (const inp of inputs) mgmtReviewInputsCache[inp.category] = inp.content || '';
-
-  // Cache attendees
   mgmtReviewAttendeesCache = JSON.parse(review.attendees || '[]');
 
   // Report button
-  const dlBtn = document.getElementById('mgmt-download-report-btn');
-  if (review.report_html) {
-    dlBtn.style.display = '';
-  } else {
-    dlBtn.style.display = 'none';
-  }
+  document.getElementById('mgmt-download-report-btn').style.display = review.report_html ? '' : 'none';
 
-  // Render active tab
   renderMgmtInputsAccordion();
   renderMgmtOutputsList(outputs);
   renderMgmtAttendeesTab(review);
+  populateMgmtRoles();
 
-  // Switch to inputs tab by default
   switchMgmtTab('inputs', document.querySelector('.mgmt-tab[data-tab="inputs"]'));
 }
 
@@ -7899,18 +8195,28 @@ function switchMgmtTab(tab, btn) {
   document.getElementById(`mgmt-tab-${tab}`).classList.remove('hidden');
 }
 
+// ── Inputs accordion ─────────────────────────────────────────────────────────
+
 function renderMgmtInputsAccordion() {
   const container = document.getElementById('mgmt-inputs-accordion');
   container.innerHTML = MGMT_REVIEW_CATEGORIES.map((cat, i) => {
     const content = mgmtReviewInputsCache[cat.key] || '';
     const hasContent = content.trim().length > 0;
+    const refHtml = buildRefPanel(cat.key);
     return `<div class="mgmt-accordion-item">
-      <button class="mgmt-accordion-header" onclick="toggleMgmtAccordion(this)" type="button">
+      <button class="mgmt-accordion-header ${i === 0 ? 'open' : ''}" onclick="toggleMgmtAccordion(this)" type="button">
         <span class="mgmt-accordion-label">${cat.label}</span>
         <span class="mgmt-accordion-indicator ${hasContent ? 'has-content' : ''}">${hasContent ? '&#9679;' : '&#9675;'}</span>
         <span class="mgmt-accordion-chevron">&#9660;</span>
       </button>
       <div class="mgmt-accordion-body ${i === 0 ? '' : 'hidden'}">
+        ${refHtml ? `<div class="mgmt-ref-panel">
+          <div class="mgmt-ref-header">
+            <span class="mgmt-ref-label">&#128270; Module data</span>
+            <button type="button" class="mgmt-ref-autofill" onclick="autoFillMgmtInput('${cat.key}')">&#9654; Auto-fill from data</button>
+          </div>
+          <div class="mgmt-ref-content">${refHtml}</div>
+        </div>` : ''}
         <textarea
           class="form-input mgmt-input-textarea"
           data-category="${cat.key}"
@@ -7921,17 +8227,13 @@ function renderMgmtInputsAccordion() {
       </div>
     </div>`;
   }).join('');
-  // Open first item
-  const firstHeader = container.querySelector('.mgmt-accordion-header');
-  if (firstHeader) firstHeader.classList.add('open');
 }
 
 function toggleMgmtAccordion(header) {
   const body = header.nextElementSibling;
   const isOpen = !body.classList.contains('hidden');
-  // Close all
-  header.closest('.mgmt-inputs-accordion, #mgmt-inputs-accordion').querySelectorAll('.mgmt-accordion-body').forEach(b => b.classList.add('hidden'));
-  header.closest('#mgmt-inputs-accordion').querySelectorAll('.mgmt-accordion-header').forEach(h => h.classList.remove('open'));
+  document.getElementById('mgmt-inputs-accordion').querySelectorAll('.mgmt-accordion-body').forEach(b => b.classList.add('hidden'));
+  document.getElementById('mgmt-inputs-accordion').querySelectorAll('.mgmt-accordion-header').forEach(h => h.classList.remove('open'));
   if (!isOpen) {
     body.classList.remove('hidden');
     header.classList.add('open');
@@ -7941,28 +8243,24 @@ function toggleMgmtAccordion(header) {
 async function saveMgmtInput(category, textarea) {
   if (!currentMgmtReviewId) return;
   const content = textarea.value;
-  if (content === (mgmtReviewInputsCache[category] || '')) return; // no change
+  if (content === (mgmtReviewInputsCache[category] || '')) return;
   try {
     await api(`/api/management-reviews/${currentMgmtReviewId}/inputs/${category}`, {
       method: 'PUT',
       body: { content },
     });
     mgmtReviewInputsCache[category] = content;
-    // Update indicator dot
     const indicator = textarea.closest('.mgmt-accordion-item').querySelector('.mgmt-accordion-indicator');
     if (indicator) {
-      if (content.trim()) {
-        indicator.classList.add('has-content');
-        indicator.innerHTML = '&#9679;';
-      } else {
-        indicator.classList.remove('has-content');
-        indicator.innerHTML = '&#9675;';
-      }
+      indicator.classList.toggle('has-content', !!content.trim());
+      indicator.innerHTML = content.trim() ? '&#9679;' : '&#9675;';
     }
   } catch (e) {
     console.error('Failed to save input:', e);
   }
 }
+
+// ── Outputs ───────────────────────────────────────────────────────────────────
 
 function renderMgmtOutputsList(outputs) {
   const container = document.getElementById('mgmt-outputs-list');
@@ -7972,43 +8270,34 @@ function renderMgmtOutputsList(outputs) {
   }
   const typeLabels = { improvement: 'Improvement', resource: 'Resource Need', change: 'System Change' };
   const statusClasses = { open: 'badge-secondary', in_progress: 'badge-warning', completed: 'badge-success' };
-  container.innerHTML = `<div class="card" style="padding:0;overflow:hidden">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Description</th>
-          <th>Type</th>
-          <th>Assigned To</th>
-          <th>Due Date</th>
-          <th>Status</th>
-          <th>Action</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        ${outputs.map(o => `<tr>
-          <td>${esc(o.description)}</td>
-          <td><span class="badge badge-info">${typeLabels[o.type] || o.type}</span></td>
-          <td>${esc(o.assigned_to || '—')}</td>
-          <td>${o.due_date || '—'}</td>
-          <td><span class="badge ${statusClasses[o.status] || 'badge-secondary'}">${o.status.replace('_', ' ')}</span></td>
-          <td>${o.linked_action_id
-            ? `<span class="badge badge-success" title="Pushed to Actions #${o.linked_action_id}">&#10003; Action #${o.linked_action_id}</span>`
-            : `<button class="btn btn-secondary btn-xs" onclick="pushOutputToAction(${o.id})" title="Push to Actions module">&#8594; Push</button>`
-          }</td>
-          <td>
-            <button class="btn btn-secondary btn-xs" onclick="openOutputModal(${currentMgmtReviewId}, ${o.id})">&#9998;</button>
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
+  container.innerHTML = `<div class="arch-table" style="margin-top:8px">
+    <div class="arch-table-head" style="grid-template-columns:2.5fr 130px 1fr 110px 120px 110px 44px">
+      <div>Description</div><div>Type</div><div>Assigned To</div>
+      <div>Due Date</div><div>Status</div><div>Action</div><div></div>
+    </div>
+    ${outputs.map(o => `<div class="arch-table-row-wrap">
+      <div class="arch-table-row" style="grid-template-columns:2.5fr 130px 1fr 110px 120px 110px 44px">
+        <div style="font-size:13px;min-width:0">${esc(o.description)}</div>
+        <div><span class="badge badge-info" style="font-size:11px">${typeLabels[o.type] || o.type}</span></div>
+        <div style="font-size:12px">${esc(o.assigned_to || '—')}</div>
+        <div style="font-size:12px">${o.due_date || '—'}</div>
+        <div><span class="badge ${statusClasses[o.status] || 'badge-secondary'}">${o.status.replace('_', ' ')}</span></div>
+        <div>${o.linked_action_id
+          ? `<span class="badge badge-success" style="font-size:11px" title="Pushed to Actions">&#10003; #${o.linked_action_id}</span>`
+          : `<button class="btn btn-secondary btn-xs" onclick="pushOutputToAction(${o.id})">&#8594; Push to Actions</button>`
+        }</div>
+        <div class="arch-col-actions">
+          ${actionMenu([{ label: '&#9998; Edit', onclick: `openOutputModal(${currentMgmtReviewId},${o.id})` }, 'sep', { label: '&#128465; Delete', onclick: `deleteOutputById(${o.id})`, cls: 'danger' }])}
+        </div>
+      </div>
+    </div>`).join('')}
   </div>`;
 }
 
+// ── Attendees & Summary ───────────────────────────────────────────────────────
+
 function renderMgmtAttendeesTab(review) {
-  const chips = document.getElementById('mgmt-attendees-chips');
-  const summaryField = document.getElementById('mgmt-summary-field');
-  summaryField.value = review.summary || '';
+  document.getElementById('mgmt-summary-field').value = review.summary || '';
   mgmtReviewAttendeesCache = JSON.parse(review.attendees || '[]');
   renderAttendeesChips();
 }
@@ -8028,54 +8317,61 @@ async function addMgmtAttendee() {
   const input = document.getElementById('mgmt-new-attendee');
   const name = input.value.trim();
   if (!name || !currentMgmtReviewId) return;
-  if (mgmtReviewAttendeesCache.includes(name)) { input.value = ''; return; }
-  mgmtReviewAttendeesCache.push(name);
+  if (!mgmtReviewAttendeesCache.includes(name)) {
+    mgmtReviewAttendeesCache.push(name);
+    await api(`/api/management-reviews/${currentMgmtReviewId}`, { method: 'PUT', body: { attendees: mgmtReviewAttendeesCache } });
+    renderAttendeesChips();
+  }
   input.value = '';
-  await api(`/api/management-reviews/${currentMgmtReviewId}`, {
-    method: 'PUT',
-    body: { attendees: mgmtReviewAttendeesCache },
-  });
-  renderAttendeesChips();
+}
+
+async function addMgmtAttendeeFromRole(select) {
+  const name = select.value;
+  select.value = '';
+  if (!name || !currentMgmtReviewId) return;
+  if (!mgmtReviewAttendeesCache.includes(name)) {
+    mgmtReviewAttendeesCache.push(name);
+    await api(`/api/management-reviews/${currentMgmtReviewId}`, { method: 'PUT', body: { attendees: mgmtReviewAttendeesCache } });
+    renderAttendeesChips();
+  }
 }
 
 async function removeMgmtAttendee(index) {
   if (!currentMgmtReviewId) return;
   mgmtReviewAttendeesCache.splice(index, 1);
-  await api(`/api/management-reviews/${currentMgmtReviewId}`, {
-    method: 'PUT',
-    body: { attendees: mgmtReviewAttendeesCache },
-  });
+  await api(`/api/management-reviews/${currentMgmtReviewId}`, { method: 'PUT', body: { attendees: mgmtReviewAttendeesCache } });
   renderAttendeesChips();
 }
 
 async function saveMgmtSummary() {
   if (!currentMgmtReviewId) return;
   const summary = document.getElementById('mgmt-summary-field').value;
-  await api(`/api/management-reviews/${currentMgmtReviewId}`, {
-    method: 'PUT',
-    body: { summary },
-  });
+  await api(`/api/management-reviews/${currentMgmtReviewId}`, { method: 'PUT', body: { summary } });
 }
 
-// --- Modal: Schedule / Edit Review ---
+// ── Modal: Schedule / Edit Review ────────────────────────────────────────────
+
 let editingMgmtReviewId = null;
 
 async function openMgmtReviewModal(id = null) {
   editingMgmtReviewId = id;
-  const title = document.getElementById('mgmt-review-modal-title');
+  await populateMgmtRoles();
+  const titleEl = document.getElementById('mgmt-review-modal-title');
   const saveBtn = document.getElementById('mgmt-review-save-btn');
   if (id) {
-    title.textContent = 'Edit Management Review';
+    titleEl.textContent = 'Edit Management Review';
     saveBtn.textContent = 'Save Changes';
     const data = await api(`/api/management-reviews/${id}`);
     const r = data.review;
     document.getElementById('mgmt-title').value = r.title;
     document.getElementById('mgmt-review-date').value = r.review_date;
     document.getElementById('mgmt-status').value = r.status;
-    document.getElementById('mgmt-chairperson').value = r.chairperson || '';
+    // Set chairperson select value
+    const chairSel = document.getElementById('mgmt-chairperson');
+    chairSel.value = r.chairperson || '';
     document.getElementById('mgmt-next-review-date').value = r.next_review_date || '';
   } else {
-    title.textContent = 'Schedule Management Review';
+    titleEl.textContent = 'Schedule Management Review';
     saveBtn.textContent = 'Schedule Review';
     document.getElementById('mgmt-review-form').reset();
     document.getElementById('mgmt-review-date').value = new Date().toISOString().split('T')[0];
@@ -8094,7 +8390,7 @@ async function saveMgmtReview(e) {
     title: document.getElementById('mgmt-title').value.trim(),
     review_date: document.getElementById('mgmt-review-date').value,
     status: document.getElementById('mgmt-status').value,
-    chairperson: document.getElementById('mgmt-chairperson').value.trim(),
+    chairperson: document.getElementById('mgmt-chairperson').value,
     next_review_date: document.getElementById('mgmt-next-review-date').value || null,
   };
   if (editingMgmtReviewId) {
@@ -8104,13 +8400,9 @@ async function saveMgmtReview(e) {
     editingMgmtReviewId = created.id;
   }
   closeMgmtReviewModal();
-  if (currentMgmtReviewId) {
-    await loadMgmtReviewDetail(currentMgmtReviewId);
-  }
+  if (currentMgmtReviewId) await loadMgmtReviewDetail(currentMgmtReviewId);
   await loadManagementReviews();
-  if (editingMgmtReviewId && !currentMgmtReviewId) {
-    await openManagementReview(editingMgmtReviewId);
-  }
+  if (editingMgmtReviewId && !currentMgmtReviewId) await openManagementReview(editingMgmtReviewId);
 }
 
 async function deleteMgmtReview(id) {
@@ -8120,32 +8412,30 @@ async function deleteMgmtReview(id) {
   await loadManagementReviews();
 }
 
-// --- Modal: Output ---
+// ── Modal: Output ─────────────────────────────────────────────────────────────
+
 let editingOutputId = null;
 
-function openOutputModal(reviewId, outputId = null) {
+async function openOutputModal(reviewId, outputId = null) {
   editingOutputId = outputId;
   document.getElementById('mgmt-output-review-id').value = reviewId;
   document.getElementById('mgmt-output-modal-title').textContent = outputId ? 'Edit Output' : 'Add Review Output';
   document.getElementById('mgmt-output-save-btn').textContent = outputId ? 'Save Changes' : 'Add Output';
+  document.getElementById('mgmt-output-delete-btn').style.display = outputId ? '' : 'none';
 
-  const deleteBtn = document.getElementById('mgmt-output-delete-btn');
-  deleteBtn.style.display = outputId ? '' : 'none';
+  await populateMgmtRoles();
 
   if (outputId) {
-    // Find output in current rendered table (quick path) or reload
-    const rows = document.querySelectorAll('#mgmt-outputs-list tbody tr');
-    // We'll re-fetch to be safe
-    api(`/api/management-reviews/${reviewId}/outputs`).then(outputs => {
-      const o = outputs.find(x => x.id === outputId);
-      if (!o) return;
+    const outputs = await api(`/api/management-reviews/${reviewId}/outputs`);
+    const o = outputs.find(x => x.id === outputId);
+    if (o) {
       document.getElementById('mgmt-output-id').value = o.id;
       document.getElementById('mgmt-output-description').value = o.description;
       document.getElementById('mgmt-output-type').value = o.type;
       document.getElementById('mgmt-output-status').value = o.status;
       document.getElementById('mgmt-output-assigned-to').value = o.assigned_to || '';
       document.getElementById('mgmt-output-due-date').value = o.due_date || '';
-    });
+    }
   } else {
     document.getElementById('mgmt-output-form').reset();
     document.getElementById('mgmt-output-id').value = '';
@@ -8165,7 +8455,7 @@ async function saveOutput(e) {
     description: document.getElementById('mgmt-output-description').value.trim(),
     type: document.getElementById('mgmt-output-type').value,
     status: document.getElementById('mgmt-output-status').value,
-    assigned_to: document.getElementById('mgmt-output-assigned-to').value.trim(),
+    assigned_to: document.getElementById('mgmt-output-assigned-to').value,
     due_date: document.getElementById('mgmt-output-due-date').value || null,
   };
   if (editingOutputId) {
@@ -8174,7 +8464,6 @@ async function saveOutput(e) {
     await api(`/api/management-reviews/${reviewId}/outputs`, { method: 'POST', body });
   }
   closeMgmtOutputModal();
-  // Refresh outputs list
   const data = await api(`/api/management-reviews/${reviewId}`);
   renderMgmtOutputsList(data.outputs);
 }
@@ -8184,6 +8473,14 @@ async function deleteOutput() {
   if (!confirm('Delete this output?')) return;
   await api(`/api/management-reviews/${currentMgmtReviewId}/outputs/${editingOutputId}`, { method: 'DELETE' });
   closeMgmtOutputModal();
+  const data = await api(`/api/management-reviews/${currentMgmtReviewId}`);
+  renderMgmtOutputsList(data.outputs);
+}
+
+async function deleteOutputById(outputId) {
+  if (!currentMgmtReviewId) return;
+  if (!confirm('Delete this output?')) return;
+  await api(`/api/management-reviews/${currentMgmtReviewId}/outputs/${outputId}`, { method: 'DELETE' });
   const data = await api(`/api/management-reviews/${currentMgmtReviewId}`);
   renderMgmtOutputsList(data.outputs);
 }
@@ -8200,7 +8497,7 @@ async function generateMgmtReport(reviewId) {
   btn.disabled = true;
   btn.textContent = 'Generating…';
   try {
-    const result = await api(`/api/management-reviews/${reviewId}/generate-report`, { method: 'POST', body: {} });
+    await api(`/api/management-reviews/${reviewId}/generate-report`, { method: 'POST', body: {} });
     document.getElementById('mgmt-download-report-btn').style.display = '';
     alert('Report generated and saved to Document Control!');
   } catch (e) {

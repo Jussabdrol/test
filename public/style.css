@@ -3259,3 +3259,58 @@ body {
 .mgmt-tab-panel {
   animation: fadeIn 0.15s ease;
 }
+
+/* Reference data panel inside each accordion section */
+.mgmt-ref-panel {
+  background: #f8faff;
+  border: 1px solid #dce4f5;
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.mgmt-ref-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: #eef2fb;
+  border-bottom: 1px solid #dce4f5;
+}
+.mgmt-ref-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #4060b0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mgmt-ref-autofill {
+  background: none;
+  border: 1px solid #4060b0;
+  border-radius: 4px;
+  color: #4060b0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.mgmt-ref-autofill:hover {
+  background: #4060b0;
+  color: #fff;
+}
+.mgmt-ref-content {
+  padding: 8px 12px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.mgmt-ref-row {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.6;
+  padding: 2px 0;
+  border-bottom: 1px solid #eef2fb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mgmt-ref-row:last-child { border-bottom: none; }

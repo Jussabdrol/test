@@ -1988,8 +1988,17 @@ app.get('/api/my-tasks', requireOrgContext, async (req, res) => {
      ORDER BY rt.due_date ASC NULLS LAST, rt.created_at DESC`
   ).all(req.orgId, ...matches);
 
+  // --- Management Review Outputs (open/in-progress, assigned to user or their roles) ---
+  const mgmtOutputs = await db.prepare(
+    `SELECT o.*, mr.title AS review_title, mr.review_date
+     FROM management_review_outputs o
+     JOIN management_reviews mr ON o.review_id = mr.id
+     WHERE o.organization_id = ? AND o.assigned_to IN (${ph}) AND o.status IN ('open','in_progress')
+     ORDER BY o.due_date ASC NULLS LAST, o.created_at DESC`
+  ).all(req.orgId, ...matches);
+
   res.json({
-    tasks, actions, ncrs, audits, treatments,
+    tasks, actions, ncrs, audits, treatments, mgmtOutputs,
     assignedRoles,
     user: { name: user.name, email: user.email }
   });
@@ -3510,6 +3519,67 @@ app.post('/api/management-reviews/:id/generate-report', requireOrgContext, async
   }
 
   res.json({ success: true, doc_id: docId, report_html: reportHtml });
+});
+
+// Reference data for auto-populating management review input categories
+app.get('/api/management-reviews/:id/reference-data', requireOrgContext, async (req, res) => {
+  const review = await db.prepare(
+    'SELECT id, review_date FROM management_reviews WHERE id = ? AND organization_id = ?'
+  ).get(req.params.id, req.orgId);
+  if (!review) return res.status(404).json({ error: 'Review not found' });
+
+  // Previous review outputs still open (from all OTHER reviews in the org)
+  const prevOutputs = await db.prepare(
+    `SELECT o.*, mr.title AS review_title, mr.review_date
+     FROM management_review_outputs o
+     JOIN management_reviews mr ON o.review_id = mr.id
+     WHERE o.organization_id = ? AND o.review_id != ? AND o.status IN ('open','in_progress')
+     ORDER BY mr.review_date DESC, o.created_at DESC LIMIT 20`
+  ).all(req.orgId, req.params.id);
+
+  const openActions = await db.prepare(
+    `SELECT id, title, assignee, priority, status, due_date
+     FROM actions WHERE organization_id = ? AND status NOT IN ('resolved','closed')
+     ORDER BY due_date ASC NULLS LAST LIMIT 30`
+  ).all(req.orgId);
+
+  const openNcrs = await db.prepare(
+    `SELECT n.id, n.clause, n.description, n.severity, n.responsible, n.status, n.due_date,
+            a.title AS audit_title
+     FROM non_conformities n JOIN audits a ON n.audit_id = a.id
+     WHERE n.organization_id = ? AND n.status NOT IN ('closed','verified')
+     ORDER BY n.due_date ASC NULLS LAST LIMIT 25`
+  ).all(req.orgId);
+
+  const recentAudits = await db.prepare(
+    `SELECT id, title, standard, status, lead_auditor, planned_date, completed_date,
+            (SELECT COUNT(*) FROM non_conformities nc WHERE nc.audit_id = audits.id AND nc.status NOT IN ('closed','verified')) AS open_ncr_count
+     FROM audits WHERE organization_id = ? ORDER BY planned_date DESC NULLS LAST LIMIT 10`
+  ).all(req.orgId);
+
+  const kpis = await db.prepare(
+    `SELECT k.id, k.name, k.description, k.target_value, k.unit, k.frequency,
+            (SELECT value FROM org_kpi_values WHERE kpi_id = k.id ORDER BY recorded_at DESC LIMIT 1) AS latest_value,
+            (SELECT period FROM org_kpi_values WHERE kpi_id = k.id ORDER BY recorded_at DESC LIMIT 1) AS latest_period
+     FROM org_kpis k WHERE k.organization_id = ? ORDER BY k.name`
+  ).all(req.orgId);
+
+  const openRisks = await db.prepare(
+    `SELECT id, title, category, likelihood, impact, inherent_score, risk_owner, status
+     FROM risks WHERE organization_id = ? AND status NOT IN ('accepted','closed')
+     ORDER BY inherent_score DESC LIMIT 20`
+  ).all(req.orgId);
+
+  const mission = await db.prepare(
+    'SELECT content, vision, values_text, legal_entities FROM org_mission WHERE organization_id = ? LIMIT 1'
+  ).get(req.orgId);
+
+  const archItems = await db.prepare(
+    `SELECT id, name, arch_type, owner, status, description, metadata
+     FROM org_architecture WHERE organization_id = ? AND status = 'active'`
+  ).all(req.orgId);
+
+  res.json({ prevOutputs, openActions, openNcrs, recentAudits, kpis, openRisks, mission, archItems });
 });
 
 // Download management review report (served as HTML)
