@@ -8229,8 +8229,8 @@ async function populateMgmtRoles() {
 // Builds a reference-data HTML block for each input category from live module data
 function buildRefPanel(categoryKey) {
   if (!mgmtReviewRefData) return '';
-  const { prevOutputs = [], openActions = [], openNcrs = [], recentAudits = [],
-          kpis = [], openRisks = [], mission = null, archItems = [] } = mgmtReviewRefData;
+  const { prevOutputs = [], openActions = [], openNcrs = [], allNcrs = [], recentAudits = [],
+          kpis = [], openRisks = [], riskTreatments = [], suppliers = [], mission = null, archItems = [] } = mgmtReviewRefData;
 
   function row(icon, text) { return `<div class="mgmt-ref-row">${icon} ${text}</div>`; }
   function badge(cls, t) { return `<span class="badge ${cls}" style="font-size:10px">${t}</span>`; }
@@ -8277,12 +8277,20 @@ function buildRefPanel(categoryKey) {
   }
 
   else if (categoryKey === 'nonconformities') {
-    if (!openNcrs.length) rows.push(row('&#10003;', '<em>No open non-conformities.</em>'));
-    else openNcrs.slice(0, 10).forEach(n => rows.push(row(
-      n.severity === 'major' ? '&#128308;' : '&#128992;',
-      `${badge(n.severity === 'major' ? 'badge-critical' : 'badge-medium', n.severity || 'minor')} ${esc(n.clause || '')} — ${esc(n.description.substring(0, 100))}… (${esc(n.status)})`
-    )));
-    if (openNcrs.length > 10) rows.push(row('&#8230;', `…and ${openNcrs.length - 10} more`));
+    if (!allNcrs.length) rows.push(row('&#10003;', '<em>No non-conformities on record.</em>'));
+    else {
+      const byStatus = {};
+      allNcrs.forEach(n => { byStatus[n.status] = (byStatus[n.status] || 0) + 1; });
+      rows.push(row('&#128203;', `<strong>${allNcrs.length}</strong> non-conformit${allNcrs.length !== 1 ? 'ies' : 'y'} total — ` +
+        Object.entries(byStatus).map(([s, c]) => `${c} ${s}`).join(', ')));
+      allNcrs.slice(0, 12).forEach(n => {
+        const icon = n.status === 'closed' || n.status === 'verified' ? '&#10003;' : (n.severity === 'major' ? '&#128308;' : '&#128992;');
+        const severityBadge = badge(n.severity === 'major' ? 'badge-critical' : 'badge-medium', n.severity || 'minor');
+        const statusBadge = badge(n.status === 'closed' || n.status === 'verified' ? 'badge-low' : 'badge-medium', n.status);
+        rows.push(row(icon, `${severityBadge} ${statusBadge} ${esc(n.clause || '')} — ${esc(n.description.substring(0, 100))}${n.description.length > 100 ? '…' : ''}`));
+      });
+      if (allNcrs.length > 12) rows.push(row('&#8230;', `…and ${allNcrs.length - 12} more`));
+    }
   }
 
   else if (categoryKey === 'audit_results') {
@@ -8294,11 +8302,20 @@ function buildRefPanel(categoryKey) {
   }
 
   else if (categoryKey === 'supplier_performance') {
-    const suppliers = archItems.filter(i => i.arch_type === 'role' && i.description && i.description.toLowerCase().includes('supplier'));
-    const allRoles = archItems.filter(i => i.arch_type === 'role');
-    if (suppliers.length) suppliers.forEach(s => rows.push(row('&#128230;', `${esc(s.name)}${s.owner ? ' · Owner: ' + esc(s.owner) : ''}`)));
-    else rows.push(row('&#128230;', `<em>${allRoles.length} role${allRoles.length !== 1 ? 's' : ''} in Architecture. Tag supplier roles with "supplier" in description for auto-detection.</em>`));
-    rows.push(row('&#9889;', `${openActions.length} open action${openActions.length !== 1 ? 's' : ''} across all assignees`));
+    if (!suppliers.length) {
+      rows.push(row('&#128230;', '<em>No suppliers registered. Add them in Architecture → Suppliers.</em>'));
+    } else {
+      const high = suppliers.filter(s => s.criticality === 'high');
+      const expired = suppliers.filter(s => s.contract_status === 'expired');
+      const noDpa = suppliers.filter(s => s.dpa_in_place === 'no');
+      rows.push(row('&#128230;', `<strong>${suppliers.length}</strong> supplier${suppliers.length !== 1 ? 's' : ''} registered — ${high.length} high criticality${expired.length ? ', ' + expired.length + ' expired contract' + (expired.length !== 1 ? 's' : '') : ''}${noDpa.length ? ', ' + noDpa.length + ' without DPA' : ''}`));
+      suppliers.slice(0, 10).forEach(s => {
+        const critBadge = badge(s.criticality === 'high' ? 'badge-critical' : s.criticality === 'medium' ? 'badge-medium' : 'badge-low', s.criticality);
+        const contractBadge = s.contract_status === 'expired' ? badge('badge-critical', 'expired') : badge('badge-low', s.contract_status);
+        rows.push(row('&#128204;', `${critBadge} ${contractBadge} <strong>${esc(s.name)}</strong> (${esc(s.category || 'other')})`));
+      });
+      if (suppliers.length > 10) rows.push(row('&#8230;', `…and ${suppliers.length - 10} more`));
+    }
   }
 
   else if (categoryKey === 'risk_opportunities') {
@@ -8309,6 +8326,15 @@ function buildRefPanel(categoryKey) {
       if (critical.length) rows.push(row('&#128308;', `<strong>${critical.length} critical risk${critical.length !== 1 ? 's' : ''}</strong> (score ≥ 15)`));
       if (high.length) rows.push(row('&#128992;', `<strong>${high.length} high risk${high.length !== 1 ? 's' : ''}</strong> (score 9–14)`));
       openRisks.slice(0, 8).forEach(r => rows.push(row('&#9888;', `${esc(r.title)} — score: <strong>${r.inherent_score}</strong> (L:${r.likelihood}×I:${r.impact}) ${esc(r.category || '')}`)));
+    }
+    if (riskTreatments.length) {
+      const openTreat = riskTreatments.filter(t => t.status === 'planned' || t.status === 'in_progress');
+      const doneTreat = riskTreatments.filter(t => t.status === 'completed');
+      rows.push(row('&#128736;', `<strong>${riskTreatments.length}</strong> treatment action${riskTreatments.length !== 1 ? 's' : ''} — ${openTreat.length} open, ${doneTreat.length} completed`));
+      openTreat.slice(0, 6).forEach(t => {
+        const stBadge = badge(t.status === 'in_progress' ? 'badge-medium' : 'badge-info', t.status);
+        rows.push(row('&#8618;', `${stBadge} ${esc(t.description.substring(0, 90))}${t.description.length > 90 ? '…' : ''}${t.responsible ? ' · ' + esc(t.responsible) : ''}`));
+      });
     }
   }
 
@@ -8326,13 +8352,18 @@ function buildRefPanel(categoryKey) {
   }
 
   else if (categoryKey === 'resource_adequacy') {
-    const assets = archItems.filter(i => i.arch_type === 'asset');
-    const facilities = archItems.filter(i => i.arch_type === 'facility');
-    const roles = archItems.filter(i => i.arch_type === 'role');
-    if (roles.length) rows.push(row('&#128100;', `<strong>${roles.length}</strong> role${roles.length !== 1 ? 's' : ''} defined in Architecture`));
-    if (assets.length) rows.push(row('&#128230;', `<strong>${assets.length}</strong> asset${assets.length !== 1 ? 's' : ''} in Architecture`));
-    if (facilities.length) rows.push(row('&#127970;', `<strong>${facilities.length}</strong> facilit${facilities.length !== 1 ? 'ies' : 'y'} in Architecture`));
-    if (!rows.length) rows.push(row('&#8505;', '<em>No architecture items found.</em>'));
+    const typeIcons = { role: '&#128100;', process: '&#9881;', system: '&#128187;', asset: '&#128230;', facility: '&#127970;', supplier: '&#128204;' };
+    const typeLabels = { role: 'Roles', process: 'Processes', system: 'Systems / Data', asset: 'Assets', facility: 'Facilities', supplier: 'Suppliers (Architecture)' };
+    if (!archItems.length) {
+      rows.push(row('&#8505;', '<em>No architecture items found.</em>'));
+    } else {
+      rows.push(row('&#127970;', `<strong>${archItems.length}</strong> total active architecture item${archItems.length !== 1 ? 's' : ''}`));
+      const byType = {};
+      archItems.forEach(i => { byType[i.arch_type] = (byType[i.arch_type] || 0) + 1; });
+      Object.entries(byType).forEach(([type, count]) => {
+        rows.push(row(typeIcons[type] || '&#8226;', `<strong>${count}</strong> ${typeLabels[type] || type}`));
+      });
+    }
   }
 
   else if (categoryKey === 'improvement_opportunities') {
@@ -8357,8 +8388,8 @@ function autoFillMgmtInput(categoryKey) {
   if (!textarea) return;
   if (textarea.value.trim() && !confirm('This category already has notes. Replace them with auto-filled data?')) return;
 
-  const { prevOutputs = [], openActions = [], openNcrs = [], recentAudits = [],
-          kpis = [], openRisks = [], mission = null, archItems = [] } = mgmtReviewRefData;
+  const { prevOutputs = [], openActions = [], openNcrs = [], allNcrs = [], recentAudits = [],
+          kpis = [], openRisks = [], riskTreatments = [], suppliers = [], mission = null, archItems = [] } = mgmtReviewRefData;
 
   let text = '';
 
@@ -8390,10 +8421,12 @@ function autoFillMgmtInput(categoryKey) {
     text += `\nOpen follow-up actions: ${openActions.length}`;
   }
   else if (categoryKey === 'nonconformities') {
-    if (!openNcrs.length) { text = 'No open non-conformities at time of review.'; }
+    if (!allNcrs.length) { text = 'No non-conformities on record at time of review.'; }
     else {
-      text += `Open non-conformities (${openNcrs.length}):\n`;
-      openNcrs.forEach(n => { text += `• [${n.severity || 'minor'}] ${n.clause || ''} — ${n.description.substring(0, 150)} (responsible: ${n.responsible || 'unassigned'})\n`; });
+      const byStatus = {};
+      allNcrs.forEach(n => { byStatus[n.status] = (byStatus[n.status] || 0) + 1; });
+      text += `Non-conformities (${allNcrs.length} total — ${Object.entries(byStatus).map(([s, c]) => `${c} ${s}`).join(', ')}):\n`;
+      allNcrs.forEach(n => { text += `• [${n.severity || 'minor'}] [${n.status}] ${n.clause || ''} — ${n.description.substring(0, 150)} (responsible: ${n.responsible || 'unassigned'})\n`; });
     }
   }
   else if (categoryKey === 'audit_results') {
@@ -8403,11 +8436,33 @@ function autoFillMgmtInput(categoryKey) {
       recentAudits.forEach(a => { text += `• ${a.title} — ${a.status}${a.open_ncr_count > 0 ? `, ${a.open_ncr_count} open NCR(s)` : ''} (${a.planned_date || 'no date'})\n`; });
     }
   }
+  else if (categoryKey === 'supplier_performance') {
+    if (!suppliers.length) { text = 'No suppliers registered. Add suppliers in Architecture → Suppliers.'; }
+    else {
+      const high = suppliers.filter(s => s.criticality === 'high');
+      const expired = suppliers.filter(s => s.contract_status === 'expired');
+      const noDpa = suppliers.filter(s => s.dpa_in_place === 'no');
+      const openRemediation = suppliers.filter(s => s.remediation_status === 'open' || s.remediation_status === 'in_progress');
+      text += `Supplier register (${suppliers.length} active):\n`;
+      if (high.length) text += `• High criticality: ${high.length}\n`;
+      if (expired.length) text += `• Expired contracts: ${expired.length}\n`;
+      if (noDpa.length) text += `• Without DPA: ${noDpa.length}\n`;
+      if (openRemediation.length) text += `• Open remediation items: ${openRemediation.length}\n`;
+      text += `\nSuppliers:\n`;
+      suppliers.forEach(s => { text += `• [${s.criticality}] ${s.name} (${s.category || 'other'}) — contract: ${s.contract_status}, DPA: ${s.dpa_in_place}\n`; });
+    }
+  }
   else if (categoryKey === 'risk_opportunities') {
     if (!openRisks.length) { text = 'No active risks in register.'; }
     else {
       text += `Active risks (${openRisks.length}):\n`;
-      openRisks.forEach(r => { text += `• ${r.title} — score: ${r.inherent_score} (L:${r.likelihood}×I:${r.impact}) [${r.category || 'general'}]\n`; });
+      openRisks.forEach(r => { text += `• [${r.status}] ${r.title} — score: ${r.inherent_score} (L:${r.likelihood}×I:${r.impact}) [${r.category || 'general'}]\n`; });
+    }
+    if (riskTreatments.length) {
+      const openTreat = riskTreatments.filter(t => t.status === 'planned' || t.status === 'in_progress');
+      const doneTreat = riskTreatments.filter(t => t.status === 'completed');
+      text += `\nTreatment actions (${riskTreatments.length} total — ${openTreat.length} open, ${doneTreat.length} completed):\n`;
+      riskTreatments.forEach(t => { text += `• [${t.status}] ${t.description.substring(0, 120)} (${t.risk_title})${t.responsible ? ' — ' + t.responsible : ''}\n`; });
     }
   }
   else if (categoryKey === 'kpi_performance') {
@@ -8423,10 +8478,14 @@ function autoFillMgmtInput(categoryKey) {
     }
   }
   else if (categoryKey === 'resource_adequacy') {
-    const roles = archItems.filter(i => i.arch_type === 'role');
-    const assets = archItems.filter(i => i.arch_type === 'asset');
-    const facilities = archItems.filter(i => i.arch_type === 'facility');
-    text += `Organisation architecture:\n• Roles defined: ${roles.length}\n• Assets: ${assets.length}\n• Facilities: ${facilities.length}\n`;
+    const typeLabels = { role: 'Roles', process: 'Processes', system: 'Systems / Data', asset: 'Assets', facility: 'Facilities', supplier: 'Suppliers (Architecture)' };
+    if (!archItems.length) { text = 'No architecture items recorded.'; }
+    else {
+      const byType = {};
+      archItems.forEach(i => { byType[i.arch_type] = (byType[i.arch_type] || 0) + 1; });
+      text += `Organisation architecture (${archItems.length} total active items):\n`;
+      Object.entries(byType).forEach(([type, count]) => { text += `• ${typeLabels[type] || type}: ${count}\n`; });
+    }
   }
   else if (categoryKey === 'improvement_opportunities') {
     const improvements = prevOutputs.filter(o => o.type === 'improvement');
