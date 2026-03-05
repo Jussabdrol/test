@@ -1434,6 +1434,80 @@ body {
 .arch-link-type { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-right: 6px; }
 .arch-link-item { font-size: 12px; background: var(--card-bg); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); }
 
+/* Process KPI & Objectives expand panel */
+.proc-kpi-panel { display: none; border-top: 1px solid var(--border); background: #f9fafb; }
+.proc-kpi-panel.open { display: block; }
+.proc-kpi-panel-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.proc-kpi-col { padding: 16px 20px; }
+.proc-kpi-col + .proc-kpi-col { border-left: 1px solid var(--border); }
+.proc-kpi-col-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: .05em; margin-bottom: 12px; }
+.proc-kpi-empty { font-size: 12px; color: var(--text-muted); font-style: italic; margin-bottom: 8px; }
+.proc-kpi-add-btn { margin-top: 8px; }
+
+/* KPI card within process panel */
+.proc-kpi-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.proc-kpi-card-header { display: flex; justify-content: space-between; align-items: start; }
+.proc-kpi-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.proc-kpi-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.proc-kpi-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; text-transform: capitalize; }
+.proc-kpi-target { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.proc-kpi-no-data { font-size: 11px; color: var(--text-muted); font-style: italic; }
+.proc-kpi-spark { height: 32px; }
+.proc-kpi-history { margin-top: 4px; }
+.proc-kpi-history-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.proc-kpi-history-table td { border-bottom: 1px solid #f0f0f0; }
+.proc-kpi-history-table tr:last-child td { border-bottom: none; }
+.proc-kpi-del-val { color: var(--text-muted); cursor: pointer; font-size: 10px; }
+.proc-kpi-del-val:hover { color: var(--danger); }
+
+/* Objective rows */
+.proc-obj-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+}
+.proc-obj-row:last-child { border-bottom: none; }
+.proc-obj-icon { font-size: 14px; flex-shrink: 0; }
+.proc-obj-text { flex: 1; min-width: 0; font-weight: 500; }
+.proc-obj-due { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+
+/* Inline add/edit forms inside the process panel */
+.proc-inline-form { margin-top: 6px; }
+.proc-inline-form-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+}
+.proc-inline-form-inner input,
+.proc-inline-form-inner select { font-size: 13px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
+
+/* Mission Control — Process KPI groups */
+.proc-mc-group { margin-bottom: 24px; }
+.proc-mc-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0 8px;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 12px;
+}
+.proc-mc-group-name { font-size: 14px; font-weight: 700; color: var(--text); }
+.proc-mc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+
 .empty-state { text-align: center; padding: 50px; color: var(--text-muted); font-size: 14px; }
 
 /* Org context banner (MSP / superadmin viewing an org) */

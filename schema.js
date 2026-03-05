@@ -203,6 +203,7 @@ const POSTGRES_SCHEMA_SQL = `
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     module TEXT DEFAULT 'custom',
+    process_id INTEGER DEFAULT NULL REFERENCES org_architecture(id) ON DELETE CASCADE,
     target_value REAL DEFAULT NULL,
     unit TEXT DEFAULT '',
     frequency TEXT DEFAULT 'monthly',
@@ -492,6 +493,10 @@ const POSTGRES_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_suppliers_org_id ON suppliers (organization_id);
   CREATE INDEX IF NOT EXISTS idx_suppliers_criticality ON suppliers (criticality);
   CREATE INDEX IF NOT EXISTS idx_suppliers_contract_status ON suppliers (contract_status);
+
+  -- Migrations: add process_id to org_kpis to link KPIs to architecture processes
+  ALTER TABLE org_kpis ADD COLUMN IF NOT EXISTS process_id INTEGER DEFAULT NULL REFERENCES org_architecture(id) ON DELETE CASCADE;
+  CREATE INDEX IF NOT EXISTS idx_org_kpis_process_id ON org_kpis (process_id);
 `;
 
 // Default threat feeds to seed per organization
