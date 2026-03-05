@@ -2358,7 +2358,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
            status || 'active', expiry_date || null, notes || '', supabaseUid);
 
     const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
-    await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_created', 'user', result.lastInsertRowid, name);
+    await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_created', 'user', result.lastInsertRowid, name, '', req.orgId);
 
     const newUser = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(newUser);
@@ -2410,7 +2410,7 @@ app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
     await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
     const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
     await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_updated', 'user', user.id, user.name,
-      JSON.stringify(Object.keys(req.body).filter(k => k !== 'password')));
+      JSON.stringify(Object.keys(req.body).filter(k => k !== 'password')), req.orgId);
     const updated = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
     res.json(updated);
   } catch (e) {
@@ -2441,7 +2441,7 @@ app.put('/api/admin/users/:id/password', requireAdmin, async (req, res) => {
   }
 
   const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
-  await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_password_reset', 'user', user.id, user.name);
+  await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_password_reset', 'user', user.id, user.name, '', req.orgId);
   res.json({ success: true });
 });
 
@@ -2462,7 +2462,7 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 
   await db.prepare('DELETE FROM users WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
-  await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_deleted', 'user', user.id, user.name);
+  await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_deleted', 'user', user.id, user.name, '', req.orgId);
   res.json({ success: true });
 });
 
@@ -2512,7 +2512,7 @@ app.put('/api/admin/settings', requireAdmin, async (req, res) => {
     await upsert.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value), req.orgId);
   }
 
-  await logAuditAction(null, 'System', 'settings_updated', 'settings', null, null, JSON.stringify(Object.keys(settings)));
+  await logAuditAction(null, 'System', 'settings_updated', 'settings', null, null, JSON.stringify(Object.keys(settings)), req.orgId);
   res.json({ success: true });
 });
 
@@ -2535,7 +2535,7 @@ app.post('/api/admin/api-keys', requireAdmin, async (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(req.orgId, name, keyHash, keyPrefix, JSON.stringify(permissions || ['read']), expires_at || null);
 
-  await logAuditAction(null, 'System', 'api_key_created', 'api_key', result.lastInsertRowid, name);
+  await logAuditAction(null, 'System', 'api_key_created', 'api_key', result.lastInsertRowid, name, '', req.orgId);
 
   // Return the full key only once (won't be stored/retrievable later)
   res.status(201).json({
@@ -2553,7 +2553,7 @@ app.delete('/api/admin/api-keys/:id', requireAdmin, async (req, res) => {
   if (!key) return res.status(404).json({ error: 'API key not found' });
 
   await db.prepare("UPDATE api_keys SET status = 'revoked' WHERE id = ? AND organization_id = ?").run(req.params.id, req.orgId);
-  await logAuditAction(null, 'System', 'api_key_revoked', 'api_key', key.id, key.name);
+  await logAuditAction(null, 'System', 'api_key_revoked', 'api_key', key.id, key.name, '', req.orgId);
   res.json({ success: true });
 });
 
@@ -2571,7 +2571,7 @@ app.post('/api/admin/webhooks', requireAdmin, async (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(req.orgId, name, url, JSON.stringify(events || []), secret || '', status || 'active');
 
-  await logAuditAction(null, 'System', 'webhook_created', 'webhook', result.lastInsertRowid, name);
+  await logAuditAction(null, 'System', 'webhook_created', 'webhook', result.lastInsertRowid, name, '', req.orgId);
   res.status(201).json(await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(result.lastInsertRowid));
 });
 
@@ -2585,7 +2585,7 @@ app.put('/api/admin/webhooks/:id', requireAdmin, async (req, res) => {
   `).run(name || webhook.name, url || webhook.url, JSON.stringify(events || JSON.parse(webhook.events)),
          secret !== undefined ? secret : webhook.secret, status || webhook.status, req.params.id, req.orgId);
 
-  await logAuditAction(null, 'System', 'webhook_updated', 'webhook', webhook.id, webhook.name);
+  await logAuditAction(null, 'System', 'webhook_updated', 'webhook', webhook.id, webhook.name, '', req.orgId);
   res.json(await db.prepare('SELECT * FROM webhooks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
@@ -2594,7 +2594,7 @@ app.delete('/api/admin/webhooks/:id', requireAdmin, async (req, res) => {
   if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
 
   await db.prepare('DELETE FROM webhooks WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
-  await logAuditAction(null, 'System', 'webhook_deleted', 'webhook', webhook.id, webhook.name);
+  await logAuditAction(null, 'System', 'webhook_deleted', 'webhook', webhook.id, webhook.name, '', req.orgId);
   res.json({ success: true });
 });
 
@@ -2637,7 +2637,7 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
   // Cross-links
   data.crossLinks = await db.prepare('SELECT * FROM cross_links WHERE organization_id = ?').all(req.orgId);
 
-  await logAuditAction(null, 'System', 'data_exported', 'system', null, null, `Format: ${format}, Includes: ${includes.join(',')}`);
+  await logAuditAction(null, 'System', 'data_exported', 'system', null, null, `Format: ${format}, Includes: ${includes.join(',')}`, req.orgId);
 
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Content-Disposition', `attachment; filename="ltfw-export-${new Date().toISOString().split('T')[0]}.json"`);
@@ -2688,7 +2688,7 @@ app.post('/api/admin/backups', requireAdmin, async (req, res) => {
     INSERT INTO backups (organization_id, filename, size, type, status) VALUES (?, ?, ?, ?, 'completed')
   `).run(req.orgId, filename, size, req.body.type || 'manual');
 
-  await logAuditAction(null, 'System', 'backup_created', 'backup', result.lastInsertRowid, filename);
+  await logAuditAction(null, 'System', 'backup_created', 'backup', result.lastInsertRowid, filename, '', req.orgId);
   res.status(201).json(await db.prepare('SELECT * FROM backups WHERE id = ?').get(result.lastInsertRowid));
 });
 
@@ -2714,7 +2714,7 @@ app.delete('/api/admin/backups/:id', requireAdmin, async (req, res) => {
 
   await deleteFromSupabase(`backups/${backup.filename}`);
   await db.prepare('DELETE FROM backups WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
-  await logAuditAction(null, 'System', 'backup_deleted', 'backup', backup.id, backup.filename);
+  await logAuditAction(null, 'System', 'backup_deleted', 'backup', backup.id, backup.filename, '', req.orgId);
   res.json({ success: true });
 });
 
@@ -2737,7 +2737,7 @@ app.post('/api/admin/cleanup', requireAdmin, async (req, res) => {
     result.affected = r.changes;
   }
 
-  await logAuditAction(null, 'System', 'data_cleanup', 'system', null, null, `Type: ${type}, Affected: ${result.affected}`);
+  await logAuditAction(null, 'System', 'data_cleanup', 'system', null, null, `Type: ${type}, Affected: ${result.affected}`, req.orgId);
   res.json(result);
 });
 
@@ -2851,7 +2851,7 @@ app.post('/api/admin/import', requireAdmin, async (req, res) => {
       result.imported.audits = count;
     }
 
-    await logAuditAction(null, 'System', 'data_imported', 'system', null, null, JSON.stringify(result.imported));
+    await logAuditAction(null, 'System', 'data_imported', 'system', null, null, JSON.stringify(result.imported), req.orgId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2982,7 +2982,7 @@ app.put('/api/admin/saml/config', requireAdmin, async (req, res) => {
     allowed_domains || ''
   );
 
-  await logAuditAction(null, 'System', 'saml_config_updated', 'saml', 1, null, `Enabled: ${enabled}`);
+  await logAuditAction(null, 'System', 'saml_config_updated', 'saml', 1, null, `Enabled: ${enabled}`, req.orgId);
   res.json({ success: true });
 });
 
@@ -3101,7 +3101,7 @@ app.post('/saml/callback', express.urlencoded({ extended: true }), async (req, r
       `).run(name, email, config.default_role || 'user', JSON.stringify(['org', 'risk', 'ops', 'audit']));
 
       user = await db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
-      await logAuditAction(user.id, user.name, 'user_provisioned_saml', 'user', user.id, user.name);
+      await logAuditAction(user.id, user.name, 'user_provisioned_saml', 'user', user.id, user.name, '', config.organization_id);
     } else if (!user) {
       return res.status(403).send('User not found and auto-provisioning is disabled');
     } else {
@@ -3118,7 +3118,7 @@ app.post('/saml/callback', express.urlencoded({ extended: true }), async (req, r
       VALUES (?, ?, ?, ?)
     `).run(sessionId, user.id, email, expiresAt);
 
-    await logAuditAction(user.id, user.name, 'saml_login', 'user', user.id, user.name);
+    await logAuditAction(user.id, user.name, 'saml_login', 'user', user.id, user.name, '', config.organization_id);
 
     // Redirect to app with session token
     res.send(`
@@ -3149,7 +3149,8 @@ app.get('/saml/logout', async (req, res) => {
     const session = await db.prepare('SELECT * FROM saml_sessions WHERE id = ?').get(sessionId);
     if (session) {
       await db.prepare('DELETE FROM saml_sessions WHERE id = ?').run(sessionId);
-      await logAuditAction(session.user_id, 'User', 'saml_logout', 'user', session.user_id, session.name_id);
+      const sessionUser = await db.prepare('SELECT organization_id FROM users WHERE id = ?').get(session.user_id);
+      await logAuditAction(session.user_id, 'User', 'saml_logout', 'user', session.user_id, session.name_id, '', sessionUser?.organization_id || null);
     }
   }
   res.redirect('/');
