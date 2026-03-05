@@ -5212,13 +5212,35 @@ async function saveKpiValue(e) {
 
 // --- Organizational Planning: Architecture ---
 let currentArchTab = 'role';
-const archTypeLabels = { role: 'Roles & Responsibilities', process: 'Processes', system: 'Systems / Data', asset: 'Assets', facility: 'Facilities' };
+const archTypeLabels = { role: 'Roles & Responsibilities', process: 'Processes', system: 'Systems / Data', asset: 'Assets', facility: 'Facilities', supplier: 'Suppliers' };
 
 function switchArchTab(type) {
   currentArchTab = type;
   document.querySelectorAll('.arch-tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`.arch-tab[onclick="switchArchTab('${type}')"]`).classList.add('active');
-  loadArchitecture();
+
+  // Toggle the Add button label / visibility
+  const addBtn = document.querySelector('#view-architecture .view-header button.btn-primary');
+  if (addBtn) {
+    if (type === 'supplier') {
+      addBtn.textContent = '+ Add Supplier';
+      addBtn.setAttribute('onclick', 'openSupplierModal()');
+    } else {
+      addBtn.textContent = '+ Add Item';
+      addBtn.setAttribute('onclick', 'openArchModal()');
+    }
+  }
+
+  if (type === 'supplier') {
+    // Hide the org-chart / map sections when on suppliers
+    const oc = document.getElementById('org-chart-section');
+    const fm = document.getElementById('facilities-map-section');
+    if (oc) oc.style.display = 'none';
+    if (fm) fm.style.display = 'none';
+    loadSuppliers();
+  } else {
+    loadArchitecture();
+  }
 }
 
 let orgChartZoom = 1;
@@ -5299,6 +5321,362 @@ async function loadArchitecture() {
     const list = document.getElementById('arch-list');
     if (list) list.innerHTML = `<div class="empty-state" style="color:var(--danger)">Failed to load ${archTypeLabels[tabAtStart] || 'architecture'}: ${esc(err.message)}</div>`;
   }
+}
+
+// ── Suppliers ─────────────────────────────────────────────────────────────────
+
+const SUPPLIER_COLUMNS = [
+  { key: 'name',                 label: 'Supplier',         always: true,  def: true  },
+  { key: 'category',             label: 'Category',         always: false, def: true  },
+  { key: 'criticality',          label: 'Criticality',      always: false, def: true  },
+  { key: 'services_provided',    label: 'Services',         always: false, def: true  },
+  { key: 'contract_status',      label: 'Contract',         always: false, def: true  },
+  { key: 'dpa_in_place',         label: 'DPA',              always: false, def: true  },
+  { key: 'remediation_status',   label: 'Remediation',      always: false, def: true  },
+  { key: 'next_review_date',     label: 'Next Review',      always: false, def: true  },
+  { key: 'data_classification',  label: 'Data Class.',      always: false, def: false },
+  { key: 'contract_expiry_date', label: 'Contract Expiry',  always: false, def: false },
+  { key: 'dpa_review_date',      label: 'DPA Review',       always: false, def: false },
+  { key: 'gaps_identified',      label: 'Gaps',             always: false, def: false },
+  { key: 'quality_rating',       label: 'Quality',          always: false, def: false },
+  { key: 'infosec_rating',       label: 'InfoSec',          always: false, def: false },
+  { key: 'env_rating',           label: 'Environment',      always: false, def: false },
+  { key: 'status',               label: 'Status',           always: false, def: false },
+];
+
+function getSupplierVisibleCols() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('bop_supplier_cols') || 'null');
+    if (saved) return saved;
+  } catch(e) {}
+  return SUPPLIER_COLUMNS.filter(c => c.def).map(c => c.key);
+}
+
+function setSupplierVisibleCols(keys) {
+  localStorage.setItem('bop_supplier_cols', JSON.stringify(keys));
+}
+
+function renderSupplierColumnSelector(suppliers) {
+  const visible = getSupplierVisibleCols();
+  const opts = SUPPLIER_COLUMNS.filter(c => !c.always).map(c => `
+    <label class="sup-col-option">
+      <input type="checkbox" value="${c.key}" ${visible.includes(c.key) ? 'checked' : ''}
+        onchange="toggleSupplierColumn('${c.key}',this.checked,${JSON.stringify(suppliers).replace(/"/g,'&quot;')})">
+      ${c.label}
+    </label>`).join('');
+  return `<div class="sup-col-selector-wrap">
+    <button type="button" class="btn btn-secondary btn-sm sup-col-toggle" onclick="this.nextElementSibling.classList.toggle('hidden')">
+      &#9881; Columns
+    </button>
+    <div class="sup-col-dropdown hidden">${opts}</div>
+  </div>`;
+}
+
+function toggleSupplierColumn(key, checked, suppliers) {
+  const visible = getSupplierVisibleCols();
+  const next = checked ? [...visible, key] : visible.filter(k => k !== key);
+  setSupplierVisibleCols(next);
+  renderSuppliersTable(suppliers);
+}
+
+async function loadSuppliers() {
+  const list = document.getElementById('arch-list');
+  list.innerHTML = '<div class="empty-state">Loading suppliers…</div>';
+  try {
+    const suppliers = await api('/api/suppliers');
+    renderSuppliersTable(suppliers);
+  } catch(err) {
+    list.innerHTML = `<div class="empty-state" style="color:var(--danger)">Failed to load suppliers: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderSuppliersTable(suppliers) {
+  const list = document.getElementById('arch-list');
+  const visible = getSupplierVisibleCols();
+  const cols = SUPPLIER_COLUMNS.filter(c => c.always || visible.includes(c.key));
+
+  // Stats
+  const total   = suppliers.length;
+  const high    = suppliers.filter(s => s.criticality === 'high').length;
+  const expired = suppliers.filter(s => s.contract_status === 'expired').length;
+  const noDpa   = suppliers.filter(s => s.dpa_in_place === 'no').length;
+  const dueReview = suppliers.filter(s => s.next_review_date && s.next_review_date <= new Date().toISOString().split('T')[0]).length;
+
+  // Category badge map
+  const catLabel = { data_processor:'Data Processor', saas:'SaaS', msp:'MSP', cloud:'Cloud',
+    hardware:'Hardware', professional_services:'Prof. Services', other:'Other' };
+  const critBadge = { high:'badge-high', medium:'badge-medium', low:'badge-low' };
+  const contractBadge = { current:'badge-success', expired:'badge-danger', under_renegotiation:'badge-warning', pending:'badge-info' };
+  const dpaBadge = { yes:'badge-success', no:'badge-danger', na:'badge-secondary' };
+  const remBadge = { open:'badge-secondary', in_progress:'badge-warning', closed:'badge-success' };
+  const perfBadge = { excellent:'badge-success', good:'badge-low', acceptable:'badge-warning', poor:'badge-danger' };
+
+  // Grid template: name column is wider, others equal
+  const gridCols = cols.map(c => c.key === 'name' ? '2fr' : c.key === 'services_provided' || c.key === 'gaps_identified' ? '1.5fr' : '1fr').join(' ') + ' 44px';
+
+  let html = `
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card"><div class="stat-value">${total}</div><div class="stat-label">Total</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--danger)">${high}</div><div class="stat-label">High Criticality</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--warning)">${expired}</div><div class="stat-label">Expired Contracts</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--warning)">${noDpa}</div><div class="stat-label">No DPA</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--info)">${dueReview}</div><div class="stat-label">Review Overdue</div></div>
+    </div>
+    <div class="sup-toolbar">
+      ${renderSupplierColumnSelector(suppliers)}
+    </div>`;
+
+  if (!suppliers.length) {
+    html += '<div class="empty-state" style="margin-top:24px">No suppliers registered yet. Click <strong>+ Add Supplier</strong> to get started.</div>';
+    list.innerHTML = html;
+    return;
+  }
+
+  html += `<div class="arch-table sup-table">
+    <div class="arch-table-head" style="grid-template-columns:${gridCols}">
+      ${cols.map(c => `<div>${c.label}</div>`).join('')}
+      <div></div>
+    </div>`;
+
+  for (const s of suppliers) {
+    let meta = {};
+    try { meta = JSON.parse(s.metadata || '{}'); } catch(e) {}
+
+    const cells = cols.map(c => {
+      const v = c.key.startsWith('quality_rating') ? meta.quality_rating
+              : c.key === 'infosec_rating' ? meta.infosec_rating
+              : c.key === 'env_rating' ? meta.env_rating
+              : s[c.key];
+      if (c.key === 'name') {
+        return `<div class="arch-col-name" style="cursor:pointer" onclick="openSupplierModal(${s.id})">
+          <span class="arch-name" style="color:var(--primary)">${esc(s.name)}</span>
+          ${s.services_provided ? `<span class="arch-desc">${esc(s.services_provided.substring(0,60))}${s.services_provided.length>60?'…':''}</span>` : ''}
+        </div>`;
+      }
+      if (c.key === 'criticality') return `<div class="arch-col-detail"><span class="badge ${critBadge[v]||'badge-secondary'}">${v||'—'}</span></div>`;
+      if (c.key === 'category') return `<div class="arch-col-detail" style="font-size:12px">${catLabel[v]||v||'—'}</div>`;
+      if (c.key === 'contract_status') return `<div class="arch-col-detail"><span class="badge ${contractBadge[v]||'badge-secondary'}" style="font-size:11px">${(v||'').replace('_',' ')||'—'}</span></div>`;
+      if (c.key === 'dpa_in_place') return `<div class="arch-col-detail"><span class="badge ${dpaBadge[v]||'badge-secondary'}">${v==='na'?'N/A':v||'—'}</span></div>`;
+      if (c.key === 'remediation_status') return `<div class="arch-col-detail"><span class="badge ${remBadge[v]||'badge-secondary'}" style="font-size:11px">${(v||'').replace('_',' ')||'—'}</span></div>`;
+      if (c.key === 'quality_rating' || c.key === 'infosec_rating' || c.key === 'env_rating') {
+        const rv = c.key === 'quality_rating' ? meta.quality_rating : c.key === 'infosec_rating' ? meta.infosec_rating : meta.env_rating;
+        return `<div class="arch-col-detail">${rv ? `<span class="badge ${perfBadge[rv]||'badge-secondary'}" style="font-size:11px">${rv}</span>` : '<span style="color:var(--text-muted);font-size:11px">—</span>'}</div>`;
+      }
+      if (c.key === 'status') return `<div class="arch-col-detail"><span class="badge ${v==='active'?'badge-low':v==='inactive'?'badge-secondary':'badge-danger'}">${v||'—'}</span></div>`;
+      if (c.key === 'next_review_date' || c.key === 'contract_expiry_date' || c.key === 'dpa_review_date') {
+        const today = new Date().toISOString().split('T')[0];
+        const overdue = v && v < today;
+        return `<div class="arch-col-detail" style="font-size:12px;${overdue?'color:var(--danger);font-weight:600':''}${v&&!overdue?'color:var(--warning)':''}">${v||'—'}</div>`;
+      }
+      if (c.key === 'services_provided' || c.key === 'gaps_identified' || c.key === 'data_classification') {
+        return `<div class="arch-col-detail" style="font-size:12px">${v?esc(v.substring(0,50))+(v.length>50?'…':''):'<span style="color:var(--text-muted)">—</span>'}</div>`;
+      }
+      return `<div class="arch-col-detail" style="font-size:12px">${v?esc(String(v)):'<span style="color:var(--text-muted)">—</span>'}</div>`;
+    }).join('');
+
+    html += `<div class="arch-table-row-wrap">
+      <div class="arch-table-row" style="grid-template-columns:${gridCols}">
+        ${cells}
+        <div class="arch-col-actions">
+          ${actionMenu([
+            { label: '&#9998; Edit', onclick: `openSupplierModal(${s.id})` },
+            'sep',
+            { label: '&#128465; Delete', onclick: `deleteSupplier(${s.id})`, cls: 'danger' },
+          ])}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  html += '</div>';
+  list.innerHTML = html;
+}
+
+// ── Supplier modal ─────────────────────────────────────────────────────────────
+
+let _supplierArchLinkCache = []; // arch items for link picker
+
+async function openSupplierModal(id) {
+  document.getElementById('supplier-form').reset();
+  document.getElementById('supplier-id').value = '';
+  document.getElementById('supplier-modal-title').textContent = 'New Supplier';
+  _supplierArchLinkCache = [];
+  switchSupplierModalTab('general', document.querySelector('.supplier-modal-tab[data-stab="general"]'));
+
+  // Pre-load arch items for link picker
+  try {
+    const archTypes = ['role','process','system','asset','facility'];
+    const all = await Promise.all(archTypes.map(t => api(`/api/architecture?arch_type=${t}`)));
+    archTypes.forEach((t, i) => {
+      all[i].forEach(a => _supplierArchLinkCache.push({ id: a.id, type: t, name: a.name }));
+    });
+  } catch(e) {}
+
+  const picker = document.getElementById('sup-arch-link-picker');
+  if (picker) {
+    const grouped = {};
+    for (const a of _supplierArchLinkCache) {
+      if (!grouped[a.type]) grouped[a.type] = [];
+      grouped[a.type].push(a);
+    }
+    picker.innerHTML = '<option value="">&#128279; Link to architecture item…</option>'
+      + Object.entries(grouped).map(([type, items]) =>
+          `<optgroup label="${archTypeLabels[type]||type}">`
+          + items.map(a => `<option value="${type}:${a.id}:${esc(a.name)}">${esc(a.name)}</option>`).join('')
+          + '</optgroup>'
+        ).join('');
+  }
+
+  if (id) {
+    const s = await api(`/api/suppliers/${id}`);
+    document.getElementById('supplier-modal-title').textContent = esc(s.name);
+    document.getElementById('supplier-id').value = s.id;
+    // General
+    document.getElementById('sup-name').value = s.name || '';
+    document.getElementById('sup-status').value = s.status || 'active';
+    document.getElementById('sup-category').value = s.category || 'other';
+    document.getElementById('sup-criticality').value = s.criticality || 'medium';
+    document.getElementById('sup-services').value = s.services_provided || '';
+    document.getElementById('sup-notes').value = s.notes || '';
+    // Contracts & GDPR
+    document.getElementById('sup-contract-status').value = s.contract_status || 'current';
+    document.getElementById('sup-contract-expiry').value = s.contract_expiry_date || '';
+    document.getElementById('sup-dpa').value = s.dpa_in_place || 'no';
+    document.getElementById('sup-dpa-review').value = s.dpa_review_date || '';
+    document.getElementById('sup-data-classification').value = s.data_classification || '';
+    // Review
+    document.getElementById('sup-remediation').value = s.remediation_status || 'open';
+    document.getElementById('sup-next-review').value = s.next_review_date || '';
+    document.getElementById('sup-gaps').value = s.gaps_identified || '';
+    // Metadata fields
+    let meta = {};
+    try { meta = JSON.parse(s.metadata || '{}'); } catch(e) {}
+    const setM = (id, key) => { const el = document.getElementById(id); if (el) el.value = meta[key] || ''; };
+    setM('sup-country', 'country'); setM('sup-website', 'website');
+    setM('sup-contact-name', 'contact_name'); setM('sup-contact-email', 'contact_email');
+    setM('sup-data-subjects', 'data_subjects'); setM('sup-legal-basis', 'legal_basis');
+    setM('sup-third-country', 'third_country_transfers'); setM('sup-transfer-mechanism', 'transfer_mechanism');
+    setM('sup-breach-contact', 'breach_contact');
+    setM('sup-quality-rating', 'quality_rating'); setM('sup-quality-score', 'quality_score');
+    setM('sup-quality-date', 'quality_date'); setM('sup-quality-cert', 'quality_cert');
+    setM('sup-delivery-pct', 'delivery_pct'); setM('sup-quality-notes', 'quality_notes');
+    setM('sup-infosec-rating', 'infosec_rating'); setM('sup-infosec-score', 'infosec_score');
+    setM('sup-infosec-date', 'infosec_date'); setM('sup-infosec-cert', 'infosec_cert');
+    setM('sup-sec-questionnaire', 'sec_questionnaire'); setM('sup-pentest-date', 'pentest_date');
+    setM('sup-infosec-findings', 'infosec_findings');
+    setM('sup-env-rating', 'env_rating'); setM('sup-env-score', 'env_score');
+    setM('sup-env-date', 'env_date'); setM('sup-env-cert', 'env_cert');
+    setM('sup-carbon', 'carbon'); setM('sup-env-notes', 'env_notes');
+    // Render saved arch links
+    renderSupplierLinks(meta.arch_links || []);
+  } else {
+    renderSupplierLinks([]);
+  }
+
+  document.getElementById('supplier-modal').classList.remove('hidden');
+}
+
+function closeSupplierModal() {
+  document.getElementById('supplier-modal').classList.add('hidden');
+}
+
+function switchSupplierModalTab(tab, btn) {
+  document.querySelectorAll('.supplier-modal-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.supplier-modal-panel').forEach(p => p.classList.add('hidden'));
+  if (btn) btn.classList.add('active');
+  const panel = document.getElementById(`stab-${tab}`);
+  if (panel) panel.classList.remove('hidden');
+}
+
+let _supplierLinks = []; // [{ type, id, name }]
+
+function renderSupplierLinks(links) {
+  _supplierLinks = links || [];
+  const el = document.getElementById('sup-arch-links-list');
+  if (!el) return;
+  if (!_supplierLinks.length) { el.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">No linked items</span>'; return; }
+  const typeIcons = { role:'&#128100;', process:'&#9881;', system:'&#128187;', asset:'&#128230;', facility:'&#127970;' };
+  el.innerHTML = _supplierLinks.map((l, i) => `
+    <span class="sup-link-chip">
+      ${typeIcons[l.type]||'&#128279;'} ${esc(l.name)}
+      <button type="button" onclick="removeSupplierLink(${i})" style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:0 0 0 4px;font-size:12px">&times;</button>
+    </span>`).join('');
+}
+
+function addSupplierArchLink(sel) {
+  const val = sel.value; if (!val) return;
+  const [type, id, name] = val.split(':');
+  if (!_supplierLinks.find(l => l.type === type && String(l.id) === id)) {
+    _supplierLinks.push({ type, id: parseInt(id), name });
+    renderSupplierLinks(_supplierLinks);
+  }
+  sel.value = '';
+}
+
+function removeSupplierLink(idx) {
+  _supplierLinks.splice(idx, 1);
+  renderSupplierLinks(_supplierLinks);
+}
+
+async function saveSupplier(e) {
+  e.preventDefault();
+  const id = document.getElementById('supplier-id').value;
+  const getV = (elId) => { const el = document.getElementById(elId); return el ? el.value : ''; };
+
+  const metadata = {
+    country: getV('sup-country'), website: getV('sup-website'),
+    contact_name: getV('sup-contact-name'), contact_email: getV('sup-contact-email'),
+    data_subjects: getV('sup-data-subjects'), legal_basis: getV('sup-legal-basis'),
+    third_country_transfers: getV('sup-third-country'), transfer_mechanism: getV('sup-transfer-mechanism'),
+    breach_contact: getV('sup-breach-contact'),
+    quality_rating: getV('sup-quality-rating'), quality_score: getV('sup-quality-score'),
+    quality_date: getV('sup-quality-date'), quality_cert: getV('sup-quality-cert'),
+    delivery_pct: getV('sup-delivery-pct'), quality_notes: getV('sup-quality-notes'),
+    infosec_rating: getV('sup-infosec-rating'), infosec_score: getV('sup-infosec-score'),
+    infosec_date: getV('sup-infosec-date'), infosec_cert: getV('sup-infosec-cert'),
+    sec_questionnaire: getV('sup-sec-questionnaire'), pentest_date: getV('sup-pentest-date'),
+    infosec_findings: getV('sup-infosec-findings'),
+    env_rating: getV('sup-env-rating'), env_score: getV('sup-env-score'),
+    env_date: getV('sup-env-date'), env_cert: getV('sup-env-cert'),
+    carbon: getV('sup-carbon'), env_notes: getV('sup-env-notes'),
+    arch_links: _supplierLinks,
+  };
+
+  const body = {
+    name: getV('sup-name'),
+    category: getV('sup-category'),
+    criticality: getV('sup-criticality'),
+    services_provided: getV('sup-services'),
+    data_classification: getV('sup-data-classification'),
+    contract_status: getV('sup-contract-status'),
+    contract_expiry_date: getV('sup-contract-expiry') || null,
+    dpa_in_place: getV('sup-dpa'),
+    dpa_review_date: getV('sup-dpa-review') || null,
+    gaps_identified: getV('sup-gaps'),
+    remediation_status: getV('sup-remediation'),
+    next_review_date: getV('sup-next-review') || null,
+    status: getV('sup-status'),
+    notes: getV('sup-notes'),
+    metadata: JSON.stringify(metadata),
+  };
+
+  try {
+    if (id) {
+      await api(`/api/suppliers/${id}`, { method: 'PUT', body });
+    } else {
+      await api('/api/suppliers', { method: 'POST', body });
+    }
+    closeSupplierModal();
+    loadSuppliers();
+  } catch(err) {
+    alert('Failed to save supplier: ' + err.message);
+  }
+}
+
+async function deleteSupplier(id) {
+  if (!confirm('Delete this supplier? This cannot be undone.')) return;
+  await api(`/api/suppliers/${id}`, { method: 'DELETE' });
+  loadSuppliers();
 }
 
 // --- Organization Chart ---

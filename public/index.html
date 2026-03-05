@@ -532,6 +532,7 @@
           <button class="arch-tab" onclick="switchArchTab('system')">Systems / Data</button>
           <button class="arch-tab" onclick="switchArchTab('asset')">Assets</button>
           <button class="arch-tab" onclick="switchArchTab('facility')">Facilities</button>
+          <button class="arch-tab" onclick="switchArchTab('supplier')">Suppliers</button>
         </div>
         <!-- Organization Chart Section (only visible for Roles tab) -->
         <div id="org-chart-section" class="org-chart-section" style="display:none">
@@ -2000,6 +2001,334 @@
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeArchModal()">Cancel</button>
           <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Supplier Modal -->
+  <div id="supplier-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeSupplierModal()"></div>
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h3 id="supplier-modal-title">New Supplier</h3>
+        <button class="modal-close" onclick="closeSupplierModal()">&times;</button>
+      </div>
+      <form id="supplier-form" onsubmit="saveSupplier(event)">
+        <input type="hidden" id="supplier-id">
+
+        <!-- Tabs -->
+        <div class="supplier-modal-tabs">
+          <button type="button" class="supplier-modal-tab active" data-stab="general" onclick="switchSupplierModalTab('general',this)">General</button>
+          <button type="button" class="supplier-modal-tab" data-stab="contracts" onclick="switchSupplierModalTab('contracts',this)">Contracts &amp; GDPR</button>
+          <button type="button" class="supplier-modal-tab" data-stab="performance" onclick="switchSupplierModalTab('performance',this)">Performance</button>
+          <button type="button" class="supplier-modal-tab" data-stab="review" onclick="switchSupplierModalTab('review',this)">Review &amp; Risk</button>
+        </div>
+
+        <!-- General Tab -->
+        <div class="supplier-modal-panel" id="stab-general">
+          <div class="form-row">
+            <div class="form-group" style="flex:2">
+              <label>Supplier Name <span class="required">*</span></label>
+              <input type="text" id="sup-name" required placeholder="Legal entity name">
+            </div>
+            <div class="form-group">
+              <label>Status</label>
+              <select id="sup-status">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="offboarded">Offboarded</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Category</label>
+              <select id="sup-category">
+                <option value="data_processor">Data Processor</option>
+                <option value="saas">SaaS</option>
+                <option value="msp">MSP</option>
+                <option value="cloud">Cloud</option>
+                <option value="hardware">Hardware</option>
+                <option value="professional_services">Professional Services</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Criticality</label>
+              <select id="sup-criticality">
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Services Provided</label>
+            <textarea id="sup-services" rows="3" placeholder="Brief description of the service or product supplied"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Country</label>
+              <input type="text" id="sup-country" placeholder="e.g. Netherlands">
+            </div>
+            <div class="form-group">
+              <label>Website</label>
+              <input type="text" id="sup-website" placeholder="https://...">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Contact Name</label>
+              <input type="text" id="sup-contact-name" placeholder="Primary contact">
+            </div>
+            <div class="form-group">
+              <label>Contact Email</label>
+              <input type="email" id="sup-contact-email" placeholder="contact@supplier.com">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Notes</label>
+            <textarea id="sup-notes" rows="2" placeholder="Internal notes"></textarea>
+          </div>
+        </div>
+
+        <!-- Contracts & GDPR Tab -->
+        <div class="supplier-modal-panel hidden" id="stab-contracts">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Contract Status</label>
+              <select id="sup-contract-status">
+                <option value="current">Current</option>
+                <option value="expired">Expired</option>
+                <option value="under_renegotiation">Under Renegotiation</option>
+                <option value="pending">Pending</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Contract Expiry Date</label>
+              <input type="date" id="sup-contract-expiry">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>DPA in Place</label>
+              <select id="sup-dpa">
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+                <option value="na">Not Applicable</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Phase 2 Analysis Date</label>
+              <input type="date" id="sup-dpa-review">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Data Classification</label>
+            <input type="text" id="sup-data-classification" placeholder="e.g. Personal Data, Confidential Business, Public">
+          </div>
+          <div class="form-group">
+            <label>Data Subject Categories</label>
+            <input type="text" id="sup-data-subjects" placeholder="e.g. employees, customers, job applicants">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Legal Basis (GDPR Art. 6)</label>
+              <select id="sup-legal-basis">
+                <option value="">— Select —</option>
+                <option value="consent">Consent (Art. 6.1.a)</option>
+                <option value="contract">Contract (Art. 6.1.b)</option>
+                <option value="legal_obligation">Legal Obligation (Art. 6.1.c)</option>
+                <option value="vital_interests">Vital Interests (Art. 6.1.d)</option>
+                <option value="public_task">Public Task (Art. 6.1.e)</option>
+                <option value="legitimate_interests">Legitimate Interests (Art. 6.1.f)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Third Country Transfers</label>
+              <select id="sup-third-country">
+                <option value="no">No</option>
+                <option value="yes_adequacy">Yes — Adequacy Decision</option>
+                <option value="yes_scc">Yes — Standard Contractual Clauses</option>
+                <option value="yes_bcr">Yes — Binding Corporate Rules</option>
+                <option value="yes_other">Yes — Other Safeguard</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Data Transfer Mechanism Details</label>
+            <textarea id="sup-transfer-mechanism" rows="2" placeholder="Describe the transfer mechanism or adequacy decision"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Breach Notification Contact</label>
+            <input type="text" id="sup-breach-contact" placeholder="Name / email for data breach notifications">
+          </div>
+        </div>
+
+        <!-- Performance Tab -->
+        <div class="supplier-modal-panel hidden" id="stab-performance">
+          <!-- Quality -->
+          <div class="sup-perf-section">
+            <div class="sup-perf-title">&#9989; Quality Performance</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Quality Rating</label>
+                <select id="sup-quality-rating">
+                  <option value="">— Not assessed —</option>
+                  <option value="excellent">Excellent</option>
+                  <option value="good">Good</option>
+                  <option value="acceptable">Acceptable</option>
+                  <option value="poor">Poor</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Score (0–100)</label>
+                <input type="number" id="sup-quality-score" min="0" max="100" placeholder="e.g. 85">
+              </div>
+              <div class="form-group">
+                <label>Last Review Date</label>
+                <input type="date" id="sup-quality-date">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Quality Certification</label>
+                <input type="text" id="sup-quality-cert" placeholder="e.g. ISO 9001:2015">
+              </div>
+              <div class="form-group">
+                <label>Delivery Performance (%)</label>
+                <input type="number" id="sup-delivery-pct" min="0" max="100" placeholder="e.g. 98">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Quality Notes / Findings</label>
+              <textarea id="sup-quality-notes" rows="2" placeholder="Key findings, incidents, or observations"></textarea>
+            </div>
+          </div>
+
+          <!-- Information Security -->
+          <div class="sup-perf-section">
+            <div class="sup-perf-title">&#128274; Information Security</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>InfoSec Rating</label>
+                <select id="sup-infosec-rating">
+                  <option value="">— Not assessed —</option>
+                  <option value="excellent">Excellent</option>
+                  <option value="good">Good</option>
+                  <option value="acceptable">Acceptable</option>
+                  <option value="poor">Poor</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Score (0–100)</label>
+                <input type="number" id="sup-infosec-score" min="0" max="100" placeholder="e.g. 72">
+              </div>
+              <div class="form-group">
+                <label>Last Assessment Date</label>
+                <input type="date" id="sup-infosec-date">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Certification</label>
+                <input type="text" id="sup-infosec-cert" placeholder="e.g. ISO 27001, SOC 2 Type II">
+              </div>
+              <div class="form-group">
+                <label>Security Questionnaire</label>
+                <select id="sup-sec-questionnaire">
+                  <option value="">— Not sent —</option>
+                  <option value="sent">Sent</option>
+                  <option value="completed">Completed</option>
+                  <option value="overdue">Overdue</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Pen Test Date</label>
+                <input type="date" id="sup-pentest-date">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>InfoSec Findings / Risk Level</label>
+              <textarea id="sup-infosec-findings" rows="2" placeholder="Key findings, vulnerabilities, or risk observations"></textarea>
+            </div>
+          </div>
+
+          <!-- Environmental -->
+          <div class="sup-perf-section">
+            <div class="sup-perf-title">&#127807; Environmental Impact</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Environmental Rating</label>
+                <select id="sup-env-rating">
+                  <option value="">— Not assessed —</option>
+                  <option value="excellent">Excellent</option>
+                  <option value="good">Good</option>
+                  <option value="acceptable">Acceptable</option>
+                  <option value="poor">Poor</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Score (0–100)</label>
+                <input type="number" id="sup-env-score" min="0" max="100" placeholder="e.g. 60">
+              </div>
+              <div class="form-group">
+                <label>Last Assessment Date</label>
+                <input type="date" id="sup-env-date">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Certification</label>
+                <input type="text" id="sup-env-cert" placeholder="e.g. ISO 14001, EcoVadis">
+              </div>
+              <div class="form-group">
+                <label>Carbon Footprint Info</label>
+                <input type="text" id="sup-carbon" placeholder="e.g. Carbon neutral, Net zero by 2030">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Environmental Notes</label>
+              <textarea id="sup-env-notes" rows="2" placeholder="Environmental initiatives, policies, or concerns"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Review & Risk Tab -->
+        <div class="supplier-modal-panel hidden" id="stab-review">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Remediation Status</label>
+              <select id="sup-remediation">
+                <option value="open">Open</option>
+                <option value="in_progress">In Progress</option>
+                <option value="closed">Closed</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Next Review Date</label>
+              <input type="date" id="sup-next-review">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Gaps Identified</label>
+            <textarea id="sup-gaps" rows="4" placeholder="Summary of gaps by severity (e.g. Critical: missing DPA; High: no ISO 27001 cert)"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Linked Architecture Items</label>
+            <div id="sup-arch-links-container">
+              <div id="sup-arch-links-list" class="sup-links-list"></div>
+              <select id="sup-arch-link-picker" onchange="addSupplierArchLink(this)" style="margin-top:6px">
+                <option value="">&#128279; Link to architecture item…</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeSupplierModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Supplier</button>
         </div>
       </form>
     </div>
