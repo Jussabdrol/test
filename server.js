@@ -3611,6 +3611,14 @@ app.get('/api/management-reviews/:id/reference-data', requireOrgContext, async (
      ORDER BY n.due_date ASC NULLS LAST LIMIT 25`
   ).all(req.orgId);
 
+  const allNcrs = await db.prepare(
+    `SELECT n.id, n.clause, n.description, n.severity, n.responsible, n.status, n.due_date,
+            a.title AS audit_title
+     FROM non_conformities n JOIN audits a ON n.audit_id = a.id
+     WHERE n.organization_id = ?
+     ORDER BY n.due_date ASC NULLS LAST LIMIT 50`
+  ).all(req.orgId);
+
   const recentAudits = await db.prepare(
     `SELECT id, title, standard, status, lead_auditor, planned_date, completed_date,
             (SELECT COUNT(*) FROM non_conformities nc WHERE nc.audit_id = audits.id AND nc.status NOT IN ('closed','verified')) AS open_ncr_count
@@ -3630,6 +3638,21 @@ app.get('/api/management-reviews/:id/reference-data', requireOrgContext, async (
      ORDER BY inherent_score DESC LIMIT 20`
   ).all(req.orgId);
 
+  const riskTreatments = await db.prepare(
+    `SELECT rt.id, rt.description, rt.treatment_type, rt.status, rt.responsible, rt.due_date,
+            r.title AS risk_title, r.inherent_score
+     FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id
+     WHERE r.organization_id = ? AND r.status NOT IN ('accepted','closed')
+     ORDER BY r.inherent_score DESC, rt.created_at ASC LIMIT 40`
+  ).all(req.orgId);
+
+  const suppliers = await db.prepare(
+    `SELECT id, name, category, criticality, contract_status, dpa_in_place,
+            remediation_status, next_review_date, status
+     FROM suppliers WHERE organization_id = ? AND status != 'offboarded'
+     ORDER BY criticality DESC, name ASC LIMIT 50`
+  ).all(req.orgId);
+
   const mission = await db.prepare(
     'SELECT content, vision, values_text, legal_entities FROM org_mission WHERE organization_id = ? LIMIT 1'
   ).get(req.orgId);
@@ -3639,7 +3662,7 @@ app.get('/api/management-reviews/:id/reference-data', requireOrgContext, async (
      FROM org_architecture WHERE organization_id = ? AND status = 'active'`
   ).all(req.orgId);
 
-  res.json({ prevOutputs, openActions, openNcrs, recentAudits, kpis, openRisks, mission, archItems });
+  res.json({ prevOutputs, openActions, openNcrs, allNcrs, recentAudits, kpis, openRisks, riskTreatments, suppliers, mission, archItems });
 });
 
 // Download management review report (served as HTML)
