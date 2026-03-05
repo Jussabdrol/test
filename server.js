@@ -1796,9 +1796,25 @@ app.put('/api/mission', requireOrgContext, async (req, res) => {
 
 // KPIs
 app.get('/api/kpis', requireOrgContext, async (req, res) => {
-  const kpis = await db.prepare('SELECT * FROM org_kpis WHERE organization_id = ? ORDER BY module, name').all(req.orgId);
+  const kpis = await db.prepare(
+    `SELECT k.*, a.name AS process_name
+     FROM org_kpis k
+     LEFT JOIN org_architecture a ON k.process_id = a.id
+     WHERE k.organization_id = ? ORDER BY a.name NULLS LAST, k.name`
+  ).all(req.orgId);
   for (const k of kpis) {
-    k.values = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? ORDER BY period DESC LIMIT 12').all(k.id);
+    k.values = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? ORDER BY period DESC LIMIT 24').all(k.id);
+  }
+  res.json(kpis);
+});
+
+// KPIs for a specific process
+app.get('/api/architecture/:id/kpis', requireOrgContext, async (req, res) => {
+  const kpis = await db.prepare(
+    'SELECT * FROM org_kpis WHERE organization_id = ? AND process_id = ? ORDER BY name'
+  ).all(req.orgId, req.params.id);
+  for (const k of kpis) {
+    k.values = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? ORDER BY period DESC LIMIT 24').all(k.id);
   }
   res.json(kpis);
 });
@@ -1843,16 +1859,16 @@ app.get('/api/kpis/auto', requireOrgContext, async (req, res) => {
 });
 
 app.post('/api/kpis', requireOrgContext, async (req, res) => {
-  const { name, description, module, target_value, unit, frequency } = req.body;
+  const { name, description, module, process_id, target_value, unit, frequency } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
-  const result = await db.prepare('INSERT INTO org_kpis (organization_id, name, description, module, target_value, unit, frequency) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-    req.orgId, name, description || '', module || 'custom', target_value || null, unit || '', frequency || 'monthly'
-  );
+  const result = await db.prepare(
+    'INSERT INTO org_kpis (organization_id, name, description, module, process_id, target_value, unit, frequency) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(req.orgId, name, description || '', module || 'custom', process_id || null, target_value || null, unit || '', frequency || 'monthly');
   res.status(201).json(await db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(result.lastInsertRowid));
 });
 
 app.put('/api/kpis/:id', requireOrgContext, async (req, res) => {
-  const fields = ['name', 'description', 'module', 'target_value', 'unit', 'frequency'];
+  const fields = ['name', 'description', 'module', 'process_id', 'target_value', 'unit', 'frequency'];
   const updates = [];
   const params = [];
   for (const f of fields) {
@@ -1872,13 +1888,20 @@ app.delete('/api/kpis/:id', requireOrgContext, async (req, res) => {
 app.post('/api/kpis/:id/values', requireOrgContext, async (req, res) => {
   const { value, period } = req.body;
   if (value === undefined || !period) return res.status(400).json({ error: 'value and period are required' });
-  // Upsert
+  // Upsert by period
   const existing = await db.prepare('SELECT * FROM org_kpi_values WHERE kpi_id = ? AND period = ? AND organization_id = ?').get(req.params.id, period, req.orgId);
   if (existing) {
     await db.prepare("UPDATE org_kpi_values SET value = ?, recorded_at = datetime('now') WHERE id = ? AND organization_id = ?").run(value, existing.id, req.orgId);
   } else {
     await db.prepare('INSERT INTO org_kpi_values (organization_id, kpi_id, value, period) VALUES (?, ?, ?, ?)').run(req.orgId, req.params.id, value, period);
   }
+  res.json({ success: true });
+});
+
+app.delete('/api/kpis/:id/values/:valueId', requireOrgContext, async (req, res) => {
+  await db.prepare(
+    'DELETE FROM org_kpi_values WHERE id = ? AND kpi_id = ? AND organization_id = ?'
+  ).run(req.params.valueId, req.params.id, req.orgId);
   res.json({ success: true });
 });
 

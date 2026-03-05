@@ -5066,48 +5066,64 @@ async function loadMissionControl() {
       </div>
     </div>`;
 
-  // Custom KPIs
+  // Process KPIs (grouped by process)
   const kpis = await api('/api/kpis');
-  const customList = document.getElementById('custom-kpi-list');
-  if (kpis.length === 0) {
-    customList.innerHTML = '<div class="empty-state" style="padding:20px">No custom KPIs yet. Create one to track organizational metrics.</div>';
+  const processKpiList = document.getElementById('custom-kpi-list');
+  const processKpis = kpis.filter(k => k.process_id);
+
+  if (processKpis.length === 0) {
+    processKpiList.innerHTML = '<div class="empty-state" style="padding:20px">No process KPIs defined yet. Open a process in Architecture and add KPIs from there.</div>';
     return;
   }
-  customList.innerHTML = kpis.map(k => {
-    const vals = k.values || [];
-    const latest = vals.length > 0 ? vals[0].value : null;
-    const prev = vals.length > 1 ? vals[1].value : null;
-    const trend = (latest !== null && prev !== null) ? latest - prev : null;
-    const trendHtml = trend !== null ? `<span class="kpi-trend ${trend > 0 ? 'up' : trend < 0 ? 'down' : 'flat'}">${trend > 0 ? '+' : ''}${Number(trend.toFixed(2))}${k.unit}</span>` : '';
-    const targetHtml = k.target_value !== null ? `<div style="font-size:12px;color:var(--text-muted)">Target: ${k.target_value}${k.unit}</div>` : '';
-    // Mini sparkline using bars
-    const sparkVals = vals.slice(0, 6).reverse();
-    const max = sparkVals.length > 0 ? Math.max(...sparkVals.map(v => v.value), 1) : 1;
-    const sparkHtml = sparkVals.length > 0 ? `<div class="kpi-spark">${sparkVals.map(v => {
-      const h = Math.max(4, (v.value / max) * 28);
-      return `<div class="kpi-spark-bar" style="height:${h}px" title="${v.period}: ${v.value}${k.unit}"></div>`;
-    }).join('')}</div>` : '';
-    return `<div class="kpi-card-custom">
-      <div class="kpi-card-custom-header">
-        <div style="cursor:pointer" onclick="openKpiModal(${k.id})">
-          <div class="kpi-header" style="color:var(--primary)">${esc(k.name)}</div>
-          ${k.description ? `<div style="font-size:12px;color:var(--text-muted)">${esc(k.description)}</div>` : ''}
+
+  // Group by process
+  const byProcess = {};
+  for (const k of processKpis) {
+    const pid = k.process_id;
+    if (!byProcess[pid]) byProcess[pid] = { name: k.process_name || `Process ${pid}`, id: pid, kpis: [] };
+    byProcess[pid].kpis.push(k);
+  }
+
+  processKpiList.innerHTML = Object.values(byProcess).map(proc => {
+    const cards = proc.kpis.map(k => {
+      const vals = k.values || [];
+      const latestEntry = vals.length > 0 ? vals[0] : null;
+      const latest = latestEntry ? latestEntry.value : null;
+      const prev = vals.length > 1 ? vals[1].value : null;
+      const trend = (latest !== null && prev !== null) ? latest - prev : null;
+      const trendHtml = trend !== null ? `<span class="kpi-trend ${trend > 0 ? 'up' : trend < 0 ? 'down' : 'flat'}">${trend > 0 ? '+' : ''}${Number(trend.toFixed(2))}${k.unit || ''}</span>` : '';
+      const targetHtml = k.target_value !== null ? `<div style="font-size:12px;color:var(--text-muted)">Target: ${k.target_value}${k.unit || ''}</div>` : '';
+      const sparkVals = vals.slice(0, 8).reverse();
+      const maxV = sparkVals.length > 0 ? Math.max(...sparkVals.map(v => v.value), 1) : 1;
+      const sparkHtml = sparkVals.length > 0 ? `<div class="kpi-spark">${sparkVals.map(v => {
+        const h = Math.max(4, (v.value / maxV) * 28);
+        return `<div class="kpi-spark-bar" style="height:${h}px" title="${esc(v.period)}: ${v.value}${k.unit || ''}"></div>`;
+      }).join('')}</div>` : '';
+      return `<div class="kpi-card-custom">
+        <div class="kpi-card-custom-header">
+          <div>
+            <div class="kpi-header" style="color:var(--primary)">${esc(k.name)}</div>
+            ${k.description ? `<div style="font-size:12px;color:var(--text-muted)">${esc(k.description)}</div>` : ''}
+            <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${k.frequency || 'monthly'}</div>
+          </div>
         </div>
-        ${actionMenu([
-          { label: '&#128200; Record Value', onclick: `openKpiValueModal(${k.id})`, cls: 'primary' },
-          { label: '&#9998; Edit', onclick: `openKpiModal(${k.id})` },
-          'sep',
-          { label: '&#128465; Delete', onclick: `deleteKpi(${k.id})`, cls: 'danger' },
-        ])}
-      </div>
-      <div style="display:flex;align-items:end;gap:16px">
-        <div>
-          <div class="kpi-value">${latest !== null ? latest + (k.unit || '') : 'N/A'}</div>
-          ${targetHtml}
-          <div style="display:flex;gap:6px;align-items:center">${trendHtml}</div>
+        <div style="display:flex;align-items:flex-end;gap:16px;margin-top:6px">
+          <div>
+            <div class="kpi-value">${latest !== null ? latest + (k.unit || '') : 'N/A'}</div>
+            ${targetHtml}
+            <div style="display:flex;gap:6px;align-items:center;margin-top:2px">${trendHtml}${latestEntry ? `<span style="font-size:10px;color:var(--text-muted)">${esc(latestEntry.period)}</span>` : ''}</div>
+          </div>
+          ${sparkHtml}
         </div>
-        ${sparkHtml}
+      </div>`;
+    }).join('');
+
+    return `<div class="proc-mc-group">
+      <div class="proc-mc-group-header">
+        <span class="proc-mc-group-name">&#9881; ${esc(proc.name)}</span>
+        <button class="btn btn-secondary btn-sm" onclick="switchView('architecture');setTimeout(()=>switchArchTab('process'),100)" style="font-size:11px">Open in Architecture &#8599;</button>
       </div>
+      <div class="proc-mc-cards">${cards}</div>
     </div>`;
   }).join('');
 }
@@ -6035,6 +6051,9 @@ function buildArchTableRow(item, meta, links, archType) {
     `).join('');
   }
 
+  const isProcess = archType === 'process';
+  const kpiPanelId = `proc-kpi-panel-${item.id}`;
+
   return `<div class="arch-table-row-wrap">
     <div class="arch-table-row">
       <div class="arch-col-name" style="cursor:pointer" onclick="openArchModal(${item.id})">
@@ -6046,6 +6065,7 @@ function buildArchTableRow(item, meta, links, archType) {
       <div class="arch-col-detail"><span class="badge ${stBadge}">${item.status}</span></div>
       <div class="arch-col-detail arch-col-links">
         ${linkCount > 0 ? `<span class="arch-link-toggle" onclick="toggleArchLinks('${linksDetailId}')">${linkCount} link${linkCount !== 1 ? 's' : ''} <span class="arch-link-arrow" id="${linksDetailId}-arrow">&#9660;</span></span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
+        ${isProcess ? `<span class="arch-link-toggle" onclick="toggleProcessKpiPanel(${item.id})" style="margin-left:8px">KPIs &amp; Objectives <span class="arch-link-arrow" id="proc-kpi-arrow-${item.id}">&#9660;</span></span>` : ''}
       </div>
       <div class="arch-col-actions">
         ${actionMenu([
@@ -6057,6 +6077,7 @@ function buildArchTableRow(item, meta, links, archType) {
       </div>
     </div>
     ${linkCount > 0 ? `<div class="arch-links-detail collapsed" id="${linksDetailId}">${linksDetail}</div>` : ''}
+    ${isProcess ? `<div class="proc-kpi-panel" id="${kpiPanelId}"></div>` : ''}
   </div>`;
 }
 
@@ -6252,6 +6273,299 @@ async function deleteArch(id) {
   if (!confirm('Delete this item?')) return;
   await api(`/api/architecture/${id}`, { method: 'DELETE' });
   loadArchitecture();
+}
+
+// ===========================================================================
+// PROCESS KPIs & OBJECTIVES
+// ===========================================================================
+
+// Toggle the KPI/objectives expand panel for a process row
+function toggleProcessKpiPanel(processId) {
+  const panel = document.getElementById(`proc-kpi-panel-${processId}`);
+  const arrow = document.getElementById(`proc-kpi-arrow-${processId}`);
+  if (!panel) return;
+  const isOpen = panel.classList.toggle('open');
+  arrow.innerHTML = isOpen ? '&#9650;' : '&#9660;';
+  if (isOpen && !panel.dataset.loaded) {
+    panel.dataset.loaded = '1';
+    loadProcessKpiPanel(processId);
+  }
+}
+
+async function loadProcessKpiPanel(processId) {
+  const panel = document.getElementById(`proc-kpi-panel-${processId}`);
+  if (!panel) return;
+  const [kpis, archItem] = await Promise.all([
+    api(`/api/architecture/${processId}/kpis`),
+    api(`/api/architecture?arch_type=process`).then(items => items.find(i => i.id === processId)),
+  ]);
+  let meta = {};
+  try { meta = JSON.parse(archItem?.metadata || '{}'); } catch(e) {}
+  const objectives = meta.objectives || [];
+  panel.innerHTML = renderProcessKpiPanel(processId, kpis, objectives);
+}
+
+function renderProcessKpiPanel(processId, kpis, objectives) {
+  // ── KPI cards ────────────────────────────────────────────────
+  const kpiCards = kpis.map(k => {
+    const vals = k.values || [];
+    const latest = vals.length > 0 ? vals[0] : null;
+    const prev = vals.length > 1 ? vals[1] : null;
+    const latestVal = latest !== null ? latest.value : null;
+    const prevVal = prev !== null ? prev.value : null;
+    const trend = (latestVal !== null && prevVal !== null) ? latestVal - prevVal : null;
+    const trendHtml = trend !== null
+      ? `<span class="kpi-trend ${trend > 0 ? 'up' : trend < 0 ? 'down' : 'flat'}">${trend > 0 ? '+' : ''}${Number(trend.toFixed(2))}${k.unit || ''}</span>`
+      : '';
+    const targetHtml = k.target_value !== null
+      ? `<div class="proc-kpi-target">Target: ${k.target_value}${k.unit || ''}</div>`
+      : '';
+    // Sparkline (up to 12 most recent, reversed for left→right chronological order)
+    const sparkVals = vals.slice(0, 12).reverse();
+    const maxVal = sparkVals.length > 0 ? Math.max(...sparkVals.map(v => v.value), 1) : 1;
+    const sparkHtml = sparkVals.length > 0
+      ? `<div class="kpi-spark proc-kpi-spark">${sparkVals.map(v => {
+          const h = Math.max(4, (v.value / maxVal) * 28);
+          return `<div class="kpi-spark-bar" style="height:${h}px" title="${esc(v.period)}: ${v.value}${k.unit || ''}"></div>`;
+        }).join('')}</div>`
+      : '<span class="proc-kpi-no-data">No data yet</span>';
+    // Trend history table (up to 12 entries)
+    const historyRows = vals.slice(0, 12).map((v, i) => {
+      const nextVal = vals[i + 1] ? vals[i + 1].value : null;
+      const diff = nextVal !== null ? v.value - nextVal : null;
+      const diffHtml = diff !== null
+        ? `<span class="kpi-trend ${diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat'}" style="font-size:10px">${diff > 0 ? '+' : ''}${Number(diff.toFixed(2))}</span>`
+        : '';
+      return `<tr>
+        <td style="font-size:11px;padding:3px 6px;color:var(--text-muted)">${esc(v.period)}</td>
+        <td style="font-size:12px;padding:3px 6px;font-weight:600">${v.value}${k.unit || ''}</td>
+        <td style="padding:3px 6px">${diffHtml}</td>
+        <td style="padding:3px 6px;text-align:right">
+          <span class="proc-kpi-del-val" onclick="deleteProcessKpiValue(${k.id},${v.id},${processId})" title="Remove this entry">&#10005;</span>
+        </td>
+      </tr>`;
+    }).join('');
+    const historyHtml = vals.length > 0
+      ? `<table class="proc-kpi-history-table"><tbody>${historyRows}</tbody></table>`
+      : '';
+
+    return `<div class="proc-kpi-card">
+      <div class="proc-kpi-card-header">
+        <div>
+          <div class="proc-kpi-name">${esc(k.name)}</div>
+          ${k.description ? `<div class="proc-kpi-desc">${esc(k.description)}</div>` : ''}
+          <div class="proc-kpi-meta">${k.frequency || 'monthly'}</div>
+        </div>
+        ${actionMenu([
+          { label: '&#128200; Record Value', onclick: `openProcKpiValueForm(${k.id},${processId})`, cls: 'primary' },
+          { label: '&#9998; Edit', onclick: `openProcKpiForm(${processId},${k.id})` },
+          'sep',
+          { label: '&#128465; Delete KPI', onclick: `deleteProcessKpi(${k.id},${processId})`, cls: 'danger' },
+        ])}
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:12px;margin-top:6px">
+        <div>
+          <div class="kpi-value" style="font-size:20px">${latestVal !== null ? latestVal + (k.unit || '') : 'N/A'}</div>
+          ${targetHtml}
+          <div style="display:flex;gap:6px;align-items:center;margin-top:2px">${trendHtml}${latest ? `<span style="font-size:10px;color:var(--text-muted)">${esc(latest.period)}</span>` : ''}</div>
+        </div>
+        ${sparkHtml}
+      </div>
+      ${historyHtml ? `<details class="proc-kpi-history"><summary style="font-size:11px;color:var(--text-muted);cursor:pointer;margin-top:8px">Trend history (${vals.length})</summary>${historyHtml}</details>` : ''}
+      <div id="proc-kpi-value-form-${k.id}" class="proc-inline-form hidden"></div>
+    </div>`;
+  }).join('');
+
+  // ── Add-KPI inline form placeholder ─────────────────────────
+  const addKpiForm = `<div id="proc-kpi-add-form-${processId}" class="proc-inline-form hidden"></div>
+    <button class="btn btn-secondary btn-sm proc-kpi-add-btn" onclick="openProcKpiForm(${processId})">+ Add KPI</button>`;
+
+  // ── Objective rows ───────────────────────────────────────────
+  const statusIcon = { on_track: '&#128994;', at_risk: '&#128308;', achieved: '&#10003;', cancelled: '&#8211;' };
+  const statusLabel = { on_track: 'On track', at_risk: 'At risk', achieved: 'Achieved', cancelled: 'Cancelled' };
+  const objRows = objectives.map((o, idx) => `
+    <div class="proc-obj-row" id="proc-obj-row-${processId}-${idx}">
+      <span class="proc-obj-icon">${statusIcon[o.status] || '&#9675;'}</span>
+      <span class="proc-obj-text">${esc(o.text)}</span>
+      <span class="proc-obj-due">${o.due ? esc(o.due) : ''}</span>
+      <span class="badge ${o.status === 'achieved' ? 'badge-low' : o.status === 'at_risk' ? 'badge-critical' : o.status === 'cancelled' ? 'badge-inactive' : 'badge-medium'}" style="font-size:10px">${statusLabel[o.status] || o.status}</span>
+      <div style="display:flex;gap:4px;margin-left:auto">
+        <button class="btn btn-secondary btn-sm" onclick="openProcObjForm(${processId},${idx})" style="padding:2px 8px;font-size:11px">&#9998;</button>
+        <button class="btn btn-secondary btn-sm" onclick="deleteProcessObjective(${processId},${idx})" style="padding:2px 8px;font-size:11px;color:var(--danger)">&#10005;</button>
+      </div>
+    </div>`).join('');
+
+  const addObjForm = `<div id="proc-obj-add-form-${processId}" class="proc-inline-form hidden"></div>
+    <button class="btn btn-secondary btn-sm proc-kpi-add-btn" onclick="openProcObjForm(${processId})">+ Add Objective</button>`;
+
+  return `<div class="proc-kpi-panel-inner">
+    <div class="proc-kpi-col">
+      <div class="proc-kpi-col-title">KPIs</div>
+      ${kpis.length ? kpiCards : '<div class="proc-kpi-empty">No KPIs defined yet.</div>'}
+      ${addKpiForm}
+    </div>
+    <div class="proc-kpi-col">
+      <div class="proc-kpi-col-title">Objectives</div>
+      ${objectives.length ? objRows : '<div class="proc-kpi-empty">No objectives defined yet.</div>'}
+      ${addObjForm}
+    </div>
+  </div>`;
+}
+
+// ── Inline KPI form ──────────────────────────────────────────────────────────
+async function openProcKpiForm(processId, kpiId) {
+  const formEl = document.getElementById(kpiId ? `proc-kpi-value-form-${kpiId}` : `proc-kpi-add-form-${processId}`);
+  if (!formEl) return;
+  let kpi = null;
+  if (kpiId) {
+    const kpis = await api(`/api/architecture/${processId}/kpis`);
+    kpi = kpis.find(k => k.id === kpiId);
+  }
+  formEl.innerHTML = `
+    <div class="proc-inline-form-inner">
+      <input type="text" id="pkf-name-${processId}" placeholder="KPI name*" value="${esc(kpi?.name || '')}" style="flex:2">
+      <input type="text" id="pkf-unit-${processId}" placeholder="Unit (%, days…)" value="${esc(kpi?.unit || '')}" style="width:80px">
+      <input type="number" id="pkf-target-${processId}" placeholder="Target" value="${kpi?.target_value ?? ''}" style="width:80px">
+      <select id="pkf-freq-${processId}" style="width:110px">
+        ${['monthly','quarterly','annual','weekly'].map(f => `<option value="${f}"${(kpi?.frequency || 'monthly') === f ? ' selected' : ''}>${f}</option>`).join('')}
+      </select>
+      <input type="text" id="pkf-desc-${processId}" placeholder="Description (optional)" value="${esc(kpi?.description || '')}" style="flex:2">
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button class="btn btn-primary btn-sm" onclick="saveProcKpi(${processId},${kpiId || 'null'})">Save</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeProcInlineForm('${kpiId ? `proc-kpi-value-form-${kpiId}` : `proc-kpi-add-form-${processId}`}')">Cancel</button>
+      </div>
+    </div>`;
+  formEl.classList.remove('hidden');
+}
+
+async function saveProcKpi(processId, kpiId) {
+  const name = document.getElementById(`pkf-name-${processId}`)?.value?.trim();
+  if (!name) { alert('KPI name is required'); return; }
+  const body = {
+    name,
+    unit: document.getElementById(`pkf-unit-${processId}`)?.value || '',
+    target_value: document.getElementById(`pkf-target-${processId}`)?.value ? parseFloat(document.getElementById(`pkf-target-${processId}`).value) : null,
+    frequency: document.getElementById(`pkf-freq-${processId}`)?.value || 'monthly',
+    description: document.getElementById(`pkf-desc-${processId}`)?.value || '',
+    process_id: processId,
+    module: 'process',
+  };
+  if (kpiId) await api(`/api/kpis/${kpiId}`, { method: 'PUT', body });
+  else await api('/api/kpis', { method: 'POST', body });
+  reloadProcessKpiPanel(processId);
+}
+
+async function deleteProcessKpi(kpiId, processId) {
+  if (!confirm('Delete this KPI and all its recorded values?')) return;
+  await api(`/api/kpis/${kpiId}`, { method: 'DELETE' });
+  reloadProcessKpiPanel(processId);
+}
+
+// ── Inline record-value form ────────────────────────────────────────────────
+function openProcKpiValueForm(kpiId, processId) {
+  const formEl = document.getElementById(`proc-kpi-value-form-${kpiId}`);
+  if (!formEl) return;
+  const today = new Date().toISOString().slice(0, 7); // YYYY-MM
+  formEl.innerHTML = `
+    <div class="proc-inline-form-inner">
+      <input type="number" step="any" id="pvf-val-${kpiId}" placeholder="Value*" style="width:100px">
+      <input type="month" id="pvf-period-${kpiId}" value="${today}" style="width:140px">
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button class="btn btn-primary btn-sm" onclick="saveProcKpiValue(${kpiId},${processId})">Record</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeProcInlineForm('proc-kpi-value-form-${kpiId}')">Cancel</button>
+      </div>
+    </div>`;
+  formEl.classList.remove('hidden');
+}
+
+async function saveProcKpiValue(kpiId, processId) {
+  const val = document.getElementById(`pvf-val-${kpiId}`)?.value;
+  const period = document.getElementById(`pvf-period-${kpiId}`)?.value;
+  if (!val || !period) { alert('Value and period are required'); return; }
+  await api(`/api/kpis/${kpiId}/values`, { method: 'POST', body: { value: parseFloat(val), period } });
+  reloadProcessKpiPanel(processId);
+}
+
+async function deleteProcessKpiValue(kpiId, valueId, processId) {
+  await api(`/api/kpis/${kpiId}/values/${valueId}`, { method: 'DELETE' });
+  reloadProcessKpiPanel(processId);
+}
+
+// ── Inline objective form ───────────────────────────────────────────────────
+async function openProcObjForm(processId, objIdx) {
+  const isEdit = objIdx !== undefined;
+  const formId = isEdit ? `proc-obj-row-${processId}-${objIdx}` : `proc-obj-add-form-${processId}`;
+  const formEl = document.getElementById(formId);
+  if (!formEl) return;
+  let existing = null;
+  if (isEdit) {
+    const item = await api(`/api/architecture?arch_type=process`).then(items => items.find(i => i.id === processId));
+    let meta = {};
+    try { meta = JSON.parse(item?.metadata || '{}'); } catch(e) {}
+    existing = (meta.objectives || [])[objIdx] || null;
+  }
+  const formHtml = `<div class="proc-inline-form-inner">
+    <input type="text" id="pof-text-${processId}" placeholder="Objective*" value="${esc(existing?.text || '')}" style="flex:3">
+    <input type="text" id="pof-due-${processId}" placeholder="Due (e.g. Q3 2026)" value="${esc(existing?.due || '')}" style="width:110px">
+    <select id="pof-status-${processId}" style="width:110px">
+      ${['on_track','at_risk','achieved','cancelled'].map(s => `<option value="${s}"${(existing?.status || 'on_track') === s ? ' selected' : ''}>${s.replace('_',' ')}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:6px;margin-top:4px">
+      <button class="btn btn-primary btn-sm" onclick="saveProcObjective(${processId},${isEdit ? objIdx : 'null'})">Save</button>
+      <button class="btn btn-secondary btn-sm" onclick="${isEdit ? `reloadProcessKpiPanel(${processId})` : `closeProcInlineForm('proc-obj-add-form-${processId}')`}">Cancel</button>
+    </div>
+  </div>`;
+  if (isEdit) {
+    formEl.innerHTML = formHtml;
+  } else {
+    formEl.innerHTML = formHtml;
+    formEl.classList.remove('hidden');
+  }
+}
+
+async function saveProcObjective(processId, objIdx) {
+  const text = document.getElementById(`pof-text-${processId}`)?.value?.trim();
+  if (!text) { alert('Objective text is required'); return; }
+  const item = await api(`/api/architecture?arch_type=process`).then(items => items.find(i => i.id === processId));
+  let meta = {};
+  try { meta = JSON.parse(item?.metadata || '{}'); } catch(e) {}
+  const objectives = meta.objectives || [];
+  const obj = {
+    id: objIdx !== null && objectives[objIdx] ? objectives[objIdx].id : crypto.randomUUID(),
+    text,
+    due: document.getElementById(`pof-due-${processId}`)?.value || '',
+    status: document.getElementById(`pof-status-${processId}`)?.value || 'on_track',
+  };
+  if (objIdx !== null && objIdx < objectives.length) objectives[objIdx] = obj;
+  else objectives.push(obj);
+  meta.objectives = objectives;
+  await api(`/api/architecture/${processId}`, { method: 'PUT', body: { metadata: JSON.stringify(meta) } });
+  reloadProcessKpiPanel(processId);
+}
+
+async function deleteProcessObjective(processId, objIdx) {
+  if (!confirm('Delete this objective?')) return;
+  const item = await api(`/api/architecture?arch_type=process`).then(items => items.find(i => i.id === processId));
+  let meta = {};
+  try { meta = JSON.parse(item?.metadata || '{}'); } catch(e) {}
+  const objectives = meta.objectives || [];
+  objectives.splice(objIdx, 1);
+  meta.objectives = objectives;
+  await api(`/api/architecture/${processId}`, { method: 'PUT', body: { metadata: JSON.stringify(meta) } });
+  reloadProcessKpiPanel(processId);
+}
+
+function closeProcInlineForm(formId) {
+  const el = document.getElementById(formId);
+  if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
+}
+
+function reloadProcessKpiPanel(processId) {
+  const panel = document.getElementById(`proc-kpi-panel-${processId}`);
+  if (panel) {
+    panel.dataset.loaded = '';
+    loadProcessKpiPanel(processId);
+  }
 }
 
 // --- Document Control ---
