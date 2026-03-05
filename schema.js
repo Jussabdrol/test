@@ -465,6 +465,33 @@ const POSTGRES_SCHEMA_SQL = `
   ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_doc_type_check;
   ALTER TABLE documents ADD CONSTRAINT documents_doc_type_check
     CHECK (doc_type IN ('policy','procedure','work_instruction','record','form','report','evidence','other'));
+
+  -- Suppliers register
+  CREATE TABLE IF NOT EXISTS suppliers (
+    id                    SERIAL PRIMARY KEY,
+    organization_id       INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name                  TEXT NOT NULL,
+    category              TEXT DEFAULT 'other',
+    criticality           TEXT DEFAULT 'medium',
+    services_provided     TEXT DEFAULT '',
+    data_classification   TEXT DEFAULT '',
+    contract_status       TEXT DEFAULT 'current',
+    contract_expiry_date  DATE DEFAULT NULL,
+    dpa_in_place          TEXT DEFAULT 'no',
+    dpa_review_date       DATE DEFAULT NULL,
+    gaps_identified       TEXT DEFAULT '',
+    remediation_status    TEXT DEFAULT 'open',
+    next_review_date      DATE DEFAULT NULL,
+    status                TEXT DEFAULT 'active',
+    notes                 TEXT DEFAULT '',
+    metadata              TEXT DEFAULT '{}',
+    created_at            TIMESTAMP DEFAULT NOW(),
+    updated_at            TIMESTAMP DEFAULT NOW()
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_suppliers_org_id ON suppliers (organization_id);
+  CREATE INDEX IF NOT EXISTS idx_suppliers_criticality ON suppliers (criticality);
+  CREATE INDEX IF NOT EXISTS idx_suppliers_contract_status ON suppliers (contract_status);
 `;
 
 // Default threat feeds to seed per organization

@@ -3314,3 +3314,98 @@ body {
   white-space: nowrap;
 }
 .mgmt-ref-row:last-child { border-bottom: none; }
+
+/* ── Supplier table & column selector ─────────────────────────────────────── */
+.sup-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.sup-col-selector-wrap { position: relative; }
+.sup-col-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 10px 12px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sup-col-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sup-col-option input { cursor: pointer; }
+
+/* Supplier table — inherits arch-table grid, adds sup-specific overrides */
+.sup-table .arch-table-head,
+.sup-table .arch-table-row { font-size: 12.5px; }
+
+/* ── Supplier modal ────────────────────────────────────────────────────────── */
+.supplier-modal-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 2px solid var(--border);
+  margin: 0 0 18px;
+  flex-wrap: wrap;
+}
+.supplier-modal-tab {
+  background: none;
+  border: none;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color .15s, border-color .15s;
+}
+.supplier-modal-tab:hover { color: var(--text); }
+.supplier-modal-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+
+.supplier-modal-panel { display: flex; flex-direction: column; gap: 0; }
+.supplier-modal-panel .form-group { margin-bottom: 12px; }
+.supplier-modal-panel .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.supplier-modal-panel .form-row .form-group { flex: 1; min-width: 140px; }
+
+/* Performance section headers */
+.sup-perf-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.sup-perf-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Arch link chips */
+.sup-links-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; min-height: 22px; }
+.sup-link-chip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-alt, #f3f4f6);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--text);
+  gap: 4px;
+}
