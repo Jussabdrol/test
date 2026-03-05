@@ -1436,6 +1436,29 @@ body {
 
 .empty-state { text-align: center; padding: 50px; color: var(--text-muted); font-size: 14px; }
 
+/* Org context banner (MSP / superadmin viewing an org) */
+#org-context-banner {
+  position: relative;
+  z-index: 9999;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+/* Shift fixed-positioned chrome down to sit below the banner */
+body.has-org-banner .sidebar {
+  top: 44px;
+}
+body.has-org-banner .user-widget {
+  top: 58px; /* 44px banner + 14px original offset */
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .sidebar { width: 68px; padding: 20px 10px; }

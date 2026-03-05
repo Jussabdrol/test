@@ -313,15 +313,12 @@ function renderOrgBanner() {
 
   const banner = document.createElement('div');
   banner.id = 'org-context-banner';
-  banner.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; z-index: 9999; background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; padding: 10px 24px; display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 500; box-shadow: 0 2px 8px rgba(0,0,0,0.15);';
   banner.innerHTML = `
     <span>Viewing as: <strong>${escapeHtml(activeOrg.name)}</strong></span>
     <a href="#" onclick="backToMSP(); return false;" style="color: #fff; text-decoration: underline; font-weight: 600; cursor: pointer;">Back to MSP Portal</a>
   `;
   document.body.prepend(banner);
-
-  // Push content down to make room for the banner
-  document.body.style.paddingTop = '44px';
+  document.body.classList.add('has-org-banner');
 }
 
 function escapeHtml(str) {
