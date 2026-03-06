@@ -69,6 +69,35 @@ async function initDatabase() {
   return pool;
 }
 
+// ---------------------------------------------------------------------------
+// Incremental migrations – safe to re-run on every startup (all idempotent)
+// ---------------------------------------------------------------------------
+async function runMigrations() {
+  // Migration: allow one saml_config row per organisation instead of the global singleton.
+  //
+  // The original table was created with `id INTEGER PRIMARY KEY CHECK (id = 1)` which
+  // prevents inserting more than one row. We drop that check constraint so each org can
+  // have its own config row, looked up via `organization_id`. The existing singleton row
+  // (id = 1) is kept intact; its organization_id is already set by seedData().
+  try {
+    // PostgreSQL auto-names inline CHECK constraints as <table>_<column>_check
+    await pool.query(`
+      ALTER TABLE saml_config DROP CONSTRAINT IF EXISTS saml_config_id_check
+    `);
+    // Ensure a unique index on organization_id so each org can only have one config
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS saml_config_org_unique
+        ON saml_config (organization_id)
+        WHERE organization_id IS NOT NULL
+    `);
+  } catch (err) {
+    // Non-fatal: constraint may already be gone or have a different name
+    if (!err.message.includes('already exists') && !err.message.includes('does not exist')) {
+      console.warn('[migration] saml_config constraint tweak failed (non-fatal):', err.message);
+    }
+  }
+}
+
 async function initSchema() {
   try {
     const statements = POSTGRES_SCHEMA_SQL.split(';').filter(s => s.trim());
@@ -83,6 +112,7 @@ async function initSchema() {
         }
       }
     }
+    await runMigrations();
     await seedData();
     console.log('PostgreSQL schema initialized');
   } catch (err) {
