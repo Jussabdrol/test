@@ -16,6 +16,19 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
+  <!-- Mobile top bar (hamburger + logo) – visible only on mobile -->
+  <div class="mobile-header" id="mobile-header">
+    <button class="hamburger-btn" onclick="toggleMobileNav()" aria-label="Open navigation menu" aria-expanded="false" id="hamburger-btn">
+      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+        <line x1="2" y1="5.5" x2="20" y2="5.5"/>
+        <line x1="2" y1="11" x2="20" y2="11"/>
+        <line x1="2" y1="16.5" x2="20" y2="16.5"/>
+      </svg>
+    </button>
+    <span class="mobile-logo">Bop</span>
+  </div>
+  <!-- Backdrop – tap to close the drawer on mobile -->
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeMobileNav()"></div>
   <div id="app">
     <nav class="sidebar">
       <div class="logo">
