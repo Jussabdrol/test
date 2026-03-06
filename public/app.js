@@ -375,11 +375,22 @@ document.addEventListener('keydown', e => {
 });
 
 // --- Navigation ---
-// Module toggles (expand/collapse)
+// Module toggles (expand/collapse, or direct navigation when data-view is set)
 document.querySelectorAll('.module-toggle').forEach(toggle => {
   toggle.addEventListener('click', e => {
     e.preventDefault();
+
+    // Modules with data-view navigate directly (e.g. AI Agent – no submenu)
+    if (toggle.dataset.view) {
+      switchView(toggle.dataset.view);
+      if (isMobile()) closeMobileNav();
+      return;
+    }
+
     const sb = document.querySelector('.sidebar');
+    const submenu = toggle.nextElementSibling;
+    if (!submenu) return; // guard for direct-nav modules
+
     // On mobile the drawer is always full-width – just toggle the submenu
     if (!isMobile() && sb.classList.contains('collapsed')) {
       // Desktop collapsed: expand sidebar and open this module's submenu
@@ -387,11 +398,9 @@ document.querySelectorAll('.module-toggle').forEach(toggle => {
       localStorage.setItem('sidebarCollapsed', 'false');
       document.querySelectorAll('.module-submenu').forEach(s => s.classList.remove('open'));
       document.querySelectorAll('.module-toggle').forEach(t => t.classList.add('collapsed'));
-      const submenu = toggle.nextElementSibling;
       submenu.classList.add('open');
       toggle.classList.remove('collapsed');
     } else {
-      const submenu = toggle.nextElementSibling;
       submenu.classList.toggle('open');
       toggle.classList.toggle('collapsed');
     }
@@ -485,6 +494,7 @@ function switchView(view) {
   else if (view === 'admin-settings') loadAdminSettings();
   else if (view === 'admin-data') loadAdminData();
   else if (view === 'admin-integrations') loadAdminIntegrations();
+  else if (view === 'ai-agent') loadAIAgent();
 }
 
 // --- API helpers ---
@@ -9530,3 +9540,143 @@ userReady.then(showingMSP => {
   // If mission-control is not permitted, applyModulePermissions() in
   // loadCurrentUser already navigated to the first accessible view.
 });
+
+// =====================================================================
+// AI AGENT – Chat module
+// =====================================================================
+
+let agentHistory = []; // { role: 'user'|'assistant', content }
+let agentConfigured = true; // set to false when backend reports 503
+
+async function loadAIAgent() {
+  // On first load, probe the endpoint to know if the key is set
+  if (agentConfigured) return; // already checked
+  try {
+    const r = await fetch('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: '__probe__' }) });
+    if (r.status === 503) _markAgentUnconfigured();
+    else agentConfigured = true;
+  } catch { /* network error – assume configured, will surface on send */ }
+}
+
+function _markAgentUnconfigured() {
+  agentConfigured = false;
+  const inputRow = document.getElementById('agent-input-row');
+  const unconfigured = document.getElementById('agent-unconfigured');
+  if (inputRow) inputRow.style.display = 'none';
+  if (unconfigured) unconfigured.style.display = 'flex';
+}
+
+function clearAgentChat() {
+  agentHistory = [];
+  const msgs = document.getElementById('agent-messages');
+  if (!msgs) return;
+  msgs.innerHTML = `
+    <div class="agent-welcome">
+      <div class="agent-avatar">&#10024;</div>
+      <p>Hello! I'm your BOP AI assistant. What would you like to know?</p>
+    </div>`;
+}
+
+function agentKeyDown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAgentMessage(); }
+}
+
+function agentAutoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+// Minimal, safe markdown → HTML renderer
+function renderAgentMarkdown(raw) {
+  // Escape HTML first, then selectively un-escape for markdown
+  let t = raw
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    // Code spans (must come before other transforms)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    // Bold / italic
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // Headings (line-level)
+    .replace(/^#{3,} (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^# (.+)$/gm,  '<h3>$1</h3>')
+    // Unordered list items
+    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
+    // Numbered list items
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+  // Wrap consecutive <li> runs in <ul>
+  t = t.replace(/((<li>.*?<\/li>\n?)+)/gs, '<ul>$1</ul>');
+
+  // Paragraphs: split by blank lines, wrap non-block lines
+  t = t.split(/\n{2,}/).map(chunk => {
+    chunk = chunk.trim();
+    if (!chunk) return '';
+    if (/^<(h3|ul|ol|li|pre|code|blockquote)/.test(chunk)) return chunk;
+    return `<p>${chunk.replace(/\n/g, '<br>')}</p>`;
+  }).join('\n');
+
+  return t;
+}
+
+function _appendAgentMsg(role, htmlContent) {
+  const msgs = document.getElementById('agent-messages');
+  if (!msgs) return;
+  msgs.querySelector('.agent-welcome')?.remove();
+
+  const row = document.createElement('div');
+  row.className = `agent-msg-row ${role}`;
+  row.innerHTML = `<div class="agent-bubble">${htmlContent}</div>`;
+  msgs.appendChild(row);
+  msgs.scrollTop = msgs.scrollHeight;
+  return row;
+}
+
+function _showTyping() {
+  const msgs = document.getElementById('agent-messages');
+  if (!msgs) return;
+  const row = document.createElement('div');
+  row.id = 'agent-typing';
+  row.className = 'agent-msg-row assistant agent-typing';
+  row.innerHTML = '<div class="agent-bubble"><div class="agent-typing-dots"><span></span><span></span><span></span></div></div>';
+  msgs.appendChild(row);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+function _hideTyping() { document.getElementById('agent-typing')?.remove(); }
+
+async function sendAgentMessage() {
+  const input   = document.getElementById('agent-input');
+  const sendBtn = document.getElementById('agent-send-btn');
+  const message = input?.value.trim();
+  if (!message) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  input.disabled = true;
+  sendBtn.disabled = true;
+
+  _appendAgentMsg('user', esc(message));
+  agentHistory.push({ role: 'user', content: message });
+  _showTyping();
+
+  try {
+    const data = await api('/api/agent', {
+      method: 'POST',
+      body: { message, history: agentHistory.slice(-20) },
+      timeout: 60000,
+    });
+    _hideTyping();
+    _appendAgentMsg('assistant', renderAgentMarkdown(data.reply));
+    agentHistory.push({ role: 'assistant', content: data.reply });
+  } catch (err) {
+    _hideTyping();
+    const msg = err.message || 'Something went wrong. Please try again.';
+    // Check if this is the "not configured" error
+    if (msg.includes('not configured') || msg.includes('OPENAI_API_KEY')) _markAgentUnconfigured();
+    _appendAgentMsg('assistant', `<span style="color:var(--danger)">&#9888; ${esc(msg)}</span>`);
+  } finally {
+    if (input)   { input.disabled = false; input.focus(); }
+    if (sendBtn) sendBtn.disabled = false;
+  }
+}
