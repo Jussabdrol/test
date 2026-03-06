@@ -329,7 +329,7 @@ function escapeHtml(str) {
 // Load user on page load — stored as promise so init can await it
 const userReady = loadCurrentUser();
 
-// --- Sidebar Toggle ---
+// --- Sidebar Toggle (desktop: icon-rail collapse) ---
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
   sb.classList.toggle('collapsed');
@@ -339,17 +339,52 @@ if (localStorage.getItem('sidebarCollapsed') === 'true') {
   document.querySelector('.sidebar').classList.add('collapsed');
 }
 
+// --- Mobile Navigation (hamburger drawer) ---
+function isMobile() { return window.matchMedia('(max-width: 767px)').matches; }
+
+function toggleMobileNav() {
+  const sb  = document.querySelector('.sidebar');
+  const ov  = document.getElementById('sidebar-overlay');
+  const btn = document.getElementById('hamburger-btn');
+  const open = sb.classList.toggle('mobile-open');
+  ov.classList.toggle('active', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  // Prevent body scroll when drawer is open
+  document.body.style.overflow = open ? 'hidden' : '';
+}
+
+function closeMobileNav() {
+  const sb  = document.querySelector('.sidebar');
+  const ov  = document.getElementById('sidebar-overlay');
+  const btn = document.getElementById('hamburger-btn');
+  if (!sb) return;
+  sb.classList.remove('mobile-open');
+  ov.classList.remove('active');
+  btn.setAttribute('aria-expanded', 'false');
+  document.body.style.overflow = '';
+}
+
+// Close drawer automatically when a view is selected on mobile
+document.querySelectorAll('.nav-link').forEach(link => {
+  link.addEventListener('click', () => { if (isMobile()) closeMobileNav(); });
+});
+
+// Close drawer on Escape key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeMobileNav();
+});
+
 // --- Navigation ---
 // Module toggles (expand/collapse)
 document.querySelectorAll('.module-toggle').forEach(toggle => {
   toggle.addEventListener('click', e => {
     e.preventDefault();
     const sb = document.querySelector('.sidebar');
-    if (sb.classList.contains('collapsed')) {
-      // Expand sidebar and open this module's submenu
+    // On mobile the drawer is always full-width – just toggle the submenu
+    if (!isMobile() && sb.classList.contains('collapsed')) {
+      // Desktop collapsed: expand sidebar and open this module's submenu
       sb.classList.remove('collapsed');
       localStorage.setItem('sidebarCollapsed', 'false');
-      // Close all submenus, open this one
       document.querySelectorAll('.module-submenu').forEach(s => s.classList.remove('open'));
       document.querySelectorAll('.module-toggle').forEach(t => t.classList.add('collapsed'));
       const submenu = toggle.nextElementSibling;

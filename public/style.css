@@ -1554,16 +1554,266 @@ body.has-org-banner .user-widget {
   top: 58px; /* 44px banner + 14px original offset */
 }
 
-/* Responsive */
-@media (max-width: 768px) {
+/* =====================================================================
+   RESPONSIVE – Mobile-first breakpoints
+   Mobile : ≤ 767 px   (hamburger drawer, card tables, full-screen modals)
+   Tablet : 768–1023px (narrower sidebar, condensed spacing)
+   Desktop: ≥ 1024px  (original layout, no changes)
+   ===================================================================== */
+
+/* ── Mobile header (hamburger bar) ──────────────────────────────────── */
+.mobile-header {
+  display: none;                   /* hidden on desktop / tablet */
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 56px;
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border);
+  z-index: 200;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+}
+.hamburger-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.hamburger-btn:hover { background: #f3f4f6; }
+.mobile-logo {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: 'Dancing Script', cursive;
+}
+
+/* ── Sidebar overlay backdrop ────────────────────────────────────────── */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 155;
+  animation: fadeIn 0.2s ease;
+}
+.sidebar-overlay.active { display: block; }
+
+/* ── Tablet (768 – 1023 px) ─────────────────────────────────────────── */
+@media (min-width: 768px) and (max-width: 1023px) {
   .sidebar { width: 68px; padding: 20px 10px; }
-  .logo-wordmark { font-size: 28px; }
-  .content { margin-left: 68px; padding: 24px; }
-  .view-header { padding-right: 180px; }
+  .sidebar .logo-wordmark { display: none; }
+  .sidebar .module-submenu { display: none; }
+  .sidebar .module-arrow { display: none; }
+  .sidebar .module-text { display: none; }
+  .sidebar .sidebar-toggle-label { display: none; }
+  .sidebar .logo { justify-content: center; }
+  .sidebar .module-toggle { justify-content: center; padding: 12px 0; }
+  .sidebar .module-icon { font-size: 20px; }
+  .content { margin-left: 68px; padding: 24px 20px; }
   .dashboard-columns { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .yearly-grid { grid-template-columns: repeat(2, 1fr); }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .user-widget { top: 10px; right: 12px; }
+}
+
+/* ── Mobile (≤ 767 px) ───────────────────────────────────────────────── */
+@media (max-width: 767px) {
+
+  /* Show mobile header, hide desktop user-widget on mobile */
+  .mobile-header { display: flex; }
+  .user-widget { display: none; }
+
+  /* ── Sidebar: off-canvas drawer ── */
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 280px !important;
+    padding: 20px 16px;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 160;
+    overflow-y: auto;
+    /* Reset any collapsed-state overrides */
+    display: flex !important;
+  }
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  /* Always show all sidebar content inside drawer */
+  .sidebar .logo-wordmark { display: inline !important; }
+  .sidebar .module-text { display: inline !important; }
+  .sidebar .module-arrow { display: inline !important; }
+  .sidebar .sidebar-toggle-label { display: inline !important; }
+  .sidebar .module-submenu { display: block !important; }
+  .sidebar .logo { justify-content: flex-start !important; }
+  .sidebar .module-toggle { justify-content: flex-start !important; padding: 9px 12px !important; }
+  .sidebar .module-icon { font-size: 16px !important; }
+
+  /* Desktop sidebar-toggle button: hide on mobile (we use hamburger instead) */
+  .sidebar-toggle { display: none; }
+
+  /* ── Main content area ── */
+  .content {
+    margin-left: 0 !important;
+    padding: 72px 14px 32px;   /* 72px = 56px mobile header + 16px gap */
+    max-width: 100%;
+  }
+
+  /* ── View header ── */
+  .view-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-right: 0 !important;
+    margin-bottom: 16px;
+  }
+  .view-header h1 { font-size: 20px; }
+  .view-header > .btn, .view-header > div { flex-shrink: 0; }
+
+  /* ── KPI cards: single column ── */
+  .kpi-grid { grid-template-columns: 1fr !important; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  .dashboard-columns { grid-template-columns: 1fr !important; }
+  .yearly-grid { grid-template-columns: 1fr !important; }
+
+  /* ── Forms: full width ── */
+  .form-row { grid-template-columns: 1fr !important; gap: 0; }
+  .form-group input, .form-group select, .form-group textarea {
+    font-size: 16px; /* prevents iOS zoom on focus */
+  }
+
+  /* ── Filters bar: wrap + scrollable ── */
+  .filters {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 6px;
+  }
+
+  /* ── Tabs (management review): horizontally scrollable ── */
+  .mgmt-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+    /* visual scroll hint */
+    -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
+    mask-image: linear-gradient(to right, black 85%, transparent 100%);
+  }
+  .mgmt-tab { white-space: nowrap; flex-shrink: 0; padding: 10px 14px; min-height: 44px; }
+
+  /* ── Action buttons: minimum touch target ── */
+  .btn { min-height: 40px; }
+  .btn-sm { min-height: 36px; }
+
+  /* ── Tables: horizontally scrollable with fade-right hint ── */
+  .task-table-wrap,
+  .arch-table-wrap,
+  .doc-table-wrap,
+  .req-table,
+  .soa-table,
+  .audit-checklist-table,
+  .gantt-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: var(--radius);
+    /* subtle right-fade to hint there's more content */
+    -webkit-mask-image: linear-gradient(to right, black 90%, transparent 100%);
+    mask-image: linear-gradient(to right, black 90%, transparent 100%);
+  }
+
+  /* Risk register and similar heavy tables: card layout on mobile */
+  .risk-row-card {
+    display: flex !important;
+    flex-direction: column;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    box-shadow: var(--shadow);
+  }
+
+  /* Doc table: collapse to card style */
+  .doc-table-head { display: none !important; }
+  .doc-table-row {
+    display: flex !important;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 16px !important;
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-table-row > [class*="doc-col-"] { width: auto !important; }
+
+  /* SoA table: scrollable (complex enough, card conversion too lossy) */
+  .soa-table { min-width: 620px; }
+
+  /* Requirement table: scrollable */
+  .req-table { min-width: 560px; }
+
+  /* ── Task management card: full width layout ── */
+  .task-mgmt-card { flex-direction: column; }
+
+  /* ── Modals: full-screen on mobile ── */
+  .modal { align-items: flex-end; }
+  .modal-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 92vh !important;
+    border-radius: 20px 20px 0 0 !important;
+    padding: 20px 16px 24px !important;
+    animation: mobileModalIn 0.28s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  }
+  /* Ensure close button is always reachable */
+  .modal-header { position: sticky; top: 0; background: #fff; z-index: 2; padding-bottom: 12px; }
+
+  /* Pin modal form actions to the bottom */
+  .modal-content .form-actions {
+    position: sticky;
+    bottom: 0;
+    background: #fff;
+    padding: 14px 0 4px;
+    margin-top: 16px;
+    border-top: 1px solid var(--border);
+    justify-content: stretch;
+    gap: 10px;
+  }
+  .modal-content .form-actions .btn { flex: 1; justify-content: center; min-height: 44px; }
+
+  /* ── Stat cards: 2-column grid ── */
+  .stat-card { padding: 14px 16px; }
+
+  /* ── SAML / admin config cards ── */
+  .saml-config-card { padding: 16px; }
+  .saml-sp-info { flex-direction: column; gap: 8px; }
+
+  /* ── Management review: stack sections ── */
+  .mgmt-form-grid,
+  .mgmt-meta-grid { grid-template-columns: 1fr !important; }
+
+  /* ── Architecture org chart: allow horizontal scroll ── */
+  .org-chart-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* ── Hide non-essential table columns on small screens ── */
+  .doc-col-version,
+  .doc-col-location { display: none !important; }
+}
+
+/* ── Mobile slide-up modal animation ───────────────────────────────── */
+@keyframes mobileModalIn {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
 }
 
 /* Document Control - Table Layout */
