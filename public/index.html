@@ -35,6 +35,13 @@
         <span class="logo-wordmark">Bop</span>
       </div>
       <ul class="nav-links">
+        <!-- AI Agent – direct navigation (no submenu) -->
+        <li class="nav-module">
+          <a href="#" class="module-toggle nav-ai-entry" data-module="ai-agent" data-view="ai-agent" title="AI Agent">
+            <span class="module-icon">&#10024;</span>
+            <span class="module-text">AI Agent</span>
+          </a>
+        </li>
         <li class="nav-module">
           <a href="#" class="module-toggle active" data-module="org-planning" title="Organizational Planning">
             <span class="module-icon">&#127970;</span>
@@ -130,6 +137,38 @@
     </div>
 
     <main class="content">
+      <!-- AI Agent View -->
+      <section id="view-ai-agent" class="view hidden">
+        <div class="view-header">
+          <h2>&#10024; AI Agent</h2>
+          <button class="btn btn-secondary btn-sm" onclick="clearAgentChat()">Clear chat</button>
+        </div>
+        <div class="agent-container" id="agent-container">
+          <div class="agent-messages" id="agent-messages">
+            <div class="agent-welcome">
+              <div class="agent-avatar">&#10024;</div>
+              <p>Hello! I'm your BOP AI assistant. I can help you query and manage your compliance data — risks, tasks, audits, documents, and more.<br>What would you like to know?</p>
+            </div>
+          </div>
+          <div class="agent-input-row" id="agent-unconfigured" style="display:none">
+            <p class="agent-unconfigured-msg">&#128683; AI Agent is not configured. Set the <code>OPENAI_API_KEY</code> environment variable to enable it.</p>
+          </div>
+          <div class="agent-input-row" id="agent-input-row">
+            <textarea
+              id="agent-input"
+              class="agent-input"
+              placeholder="Ask about your risks, audits, tasks…"
+              rows="1"
+              onkeydown="agentKeyDown(event)"
+              oninput="agentAutoResize(this)"
+            ></textarea>
+            <button class="agent-send-btn" id="agent-send-btn" onclick="sendAgentMessage()" aria-label="Send message">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <!-- My Tasks View -->
       <section id="view-my-tasks" class="view hidden">
         <div class="view-header">

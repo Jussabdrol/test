@@ -4005,6 +4005,323 @@ app.delete('/api/suppliers/:id', requireOrgContext, async (req, res) => {
 
 // Database migrations and seeding are handled in db.js
 
+// ===== AI AGENT =====
+// Lazy-load the OpenAI client so the server starts fine without the API key.
+let _openaiClient = null;
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) return null;
+  if (_openaiClient) return _openaiClient;
+  try {
+    const { OpenAI } = require('openai');
+    _openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    return _openaiClient;
+  } catch { return null; }
+}
+
+const AGENT_SYSTEM_PROMPT =
+  'You are an AI assistant for BOP (Business Orchestration Platform), an ISO and compliance ' +
+  'management system. You help users manage their compliance activities. You have access to the ' +
+  "organization's data and can query and create records. Always be professional, concise and " +
+  'compliance-focused. When creating or updating records, always confirm with the user what you did.';
+
+const AGENT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'get_dashboard_summary',
+      description: 'Fetches KPI counts: open risks, open non-conformities, overdue tasks, upcoming audits (next 30 days), total documents.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_risks',
+      description: 'Fetches the risk register. Optionally filter by status.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', description: 'open | accepted | treated | closed', enum: ['open', 'accepted', 'treated', 'closed'] },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_risk',
+      description: 'Creates a new risk in the risk register.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title:       { type: 'string', description: 'Short descriptive title' },
+          description: { type: 'string', description: 'Full description' },
+          likelihood:  { type: 'number', description: 'Likelihood 1–5' },
+          impact:      { type: 'number', description: 'Impact 1–5' },
+          category:    { type: 'string', description: 'e.g. Operational, Compliance, Financial' },
+          owner:       { type: 'string', description: 'Risk owner name' },
+        },
+        required: ['title', 'likelihood', 'impact'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_nonconformities',
+      description: 'Fetches non-conformities. Optionally filter by status.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', description: 'open | in_progress | closed | verified', enum: ['open', 'in_progress', 'closed', 'verified'] },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_nonconformity',
+      description: 'Creates a new non-conformity attached to the most recent audit.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title:       { type: 'string', description: 'Short title' },
+          description: { type: 'string', description: 'Description' },
+          severity:    { type: 'string', description: 'minor | major | critical', enum: ['minor', 'major', 'critical'] },
+          clause:      { type: 'string', description: 'Related ISO clause e.g. 6.1.2' },
+          assigned_to: { type: 'string', description: 'Responsible person' },
+        },
+        required: ['title', 'severity'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_tasks',
+      description: 'Fetches recurring compliance tasks. Optionally filter by status or assignee.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status:   { type: 'string', description: 'active | inactive' },
+          assignee: { type: 'string', description: 'Filter by assignee name (partial match)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_task',
+      description: 'Creates a new recurring compliance task.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title:       { type: 'string', description: 'Task title' },
+          description: { type: 'string', description: 'What needs to be done' },
+          assignee:    { type: 'string', description: 'Person responsible' },
+          recurrence:  { type: 'string', description: 'daily | weekly | monthly | quarterly | annually | once', enum: ['daily', 'weekly', 'monthly', 'quarterly', 'annually', 'once'] },
+          category:    { type: 'string', description: 'Task category' },
+          priority:    { type: 'string', description: 'low | medium | high | critical', enum: ['low', 'medium', 'high', 'critical'] },
+        },
+        required: ['title', 'recurrence'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_audits',
+      description: 'Fetches audits from the audit plan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', description: 'planned | in_progress | completed', enum: ['planned', 'in_progress', 'completed'] },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_documents',
+      description: 'Fetches the document register.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_open_actions',
+      description: 'Fetches all open follow-up actions.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+];
+
+async function executeAgentTool(toolName, args, orgId) {
+  switch (toolName) {
+    case 'get_dashboard_summary': {
+      const openRisks      = (await db.prepare("SELECT COUNT(*) as c FROM risks WHERE organization_id = $1 AND status = 'open'").get(orgId))?.c ?? 0;
+      const openNCs        = (await db.prepare("SELECT COUNT(*) as c FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE a.organization_id = $1 AND n.status IN ('open','in_progress')").get(orgId))?.c ?? 0;
+      const overdueTasks   = (await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE organization_id = $1 AND status = 'active' AND next_due < CURRENT_DATE").get(orgId))?.c ?? 0;
+      const upcomingAudits = (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE organization_id = $1 AND status = 'planned' AND planned_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '30 days')").get(orgId))?.c ?? 0;
+      const docCount       = (await db.prepare("SELECT COUNT(*) as c FROM documents WHERE organization_id = $1").get(orgId))?.c ?? 0;
+      return { open_risks: openRisks, open_nonconformities: openNCs, overdue_tasks: overdueTasks, upcoming_audits_30d: upcomingAudits, total_documents: docCount };
+    }
+    case 'get_risks': {
+      const params = [orgId];
+      let sql = 'SELECT id, title, description, likelihood, impact, risk_score, status, category, owner, created_at FROM risks WHERE organization_id = $1';
+      if (args.status) { sql += ' AND status = $2'; params.push(args.status); }
+      sql += ' ORDER BY risk_score DESC NULLS LAST LIMIT 50';
+      const risks = await db.prepare(sql).all(...params);
+      return { risks, count: risks.length };
+    }
+    case 'create_risk': {
+      const { title, description = '', likelihood, impact, category = 'General', owner = '' } = args;
+      const score = Math.round((likelihood ?? 1) * (impact ?? 1));
+      const result = await db.prepare(`
+        INSERT INTO risks (organization_id, title, description, likelihood, impact, risk_score, category, owner, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open')
+      `).run(orgId, title, description, likelihood, impact, score, category, owner);
+      return { success: true, id: result.lastInsertRowid, title, risk_score: score };
+    }
+    case 'get_nonconformities': {
+      const params = [orgId];
+      let sql = `SELECT n.id, n.title, n.description, n.severity, n.status, n.clause, n.assigned_to, n.created_at
+                 FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE a.organization_id = $1`;
+      if (args.status) { sql += ' AND n.status = $2'; params.push(args.status); }
+      sql += ' ORDER BY n.created_at DESC LIMIT 50';
+      const ncs = await db.prepare(sql).all(...params);
+      return { nonconformities: ncs, count: ncs.length };
+    }
+    case 'create_nonconformity': {
+      const latest = await db.prepare('SELECT id FROM audits WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 1').get(orgId);
+      if (!latest) return { error: 'No audit found. Please create an audit first before adding a non-conformity.' };
+      const { title, description = '', severity = 'minor', clause = '', assigned_to = '' } = args;
+      const result = await db.prepare(`
+        INSERT INTO non_conformities (audit_id, title, description, severity, status, clause, assigned_to)
+        VALUES ($1, $2, $3, $4, 'open', $5, $6)
+      `).run(latest.id, title, description, severity, clause, assigned_to);
+      return { success: true, id: result.lastInsertRowid, title, severity, audit_id: latest.id };
+    }
+    case 'get_tasks': {
+      const params = [orgId];
+      let sql = 'SELECT id, title, description, assignee, recurrence, category, priority, status, next_due FROM tasks WHERE organization_id = $1';
+      if (args.status)   { sql += ` AND status = $${params.length + 1}`;                   params.push(args.status); }
+      if (args.assignee) { sql += ` AND assignee ILIKE $${params.length + 1}`;             params.push(`%${args.assignee}%`); }
+      sql += ' ORDER BY next_due ASC NULLS LAST LIMIT 50';
+      const tasks = await db.prepare(sql).all(...params);
+      return { tasks, count: tasks.length };
+    }
+    case 'create_task': {
+      const { title, description = '', assignee = '', recurrence, category = 'General', priority = 'medium' } = args;
+      const result = await db.prepare(`
+        INSERT INTO tasks (organization_id, title, description, assignee, recurrence, category, priority, status, next_due)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', CURRENT_DATE)
+      `).run(orgId, title, description, assignee, recurrence, category, priority);
+      return { success: true, id: result.lastInsertRowid, title, recurrence };
+    }
+    case 'get_audits': {
+      const params = [orgId];
+      let sql = 'SELECT id, title, standard, status, planned_date, completed_date, lead_auditor FROM audits WHERE organization_id = $1';
+      if (args.status) { sql += ' AND status = $2'; params.push(args.status); }
+      sql += ' ORDER BY planned_date DESC LIMIT 30';
+      const audits = await db.prepare(sql).all(...params);
+      return { audits, count: audits.length };
+    }
+    case 'get_documents': {
+      const docs = await db.prepare(`
+        SELECT id, title, document_type, version, status, owner, review_date
+        FROM documents WHERE organization_id = $1 ORDER BY updated_at DESC LIMIT 50
+      `).all(orgId);
+      return { documents: docs, count: docs.length };
+    }
+    case 'get_open_actions': {
+      const actions = await db.prepare(`
+        SELECT id, title, description, assigned_to, due_date, status, priority
+        FROM actions WHERE organization_id = $1 AND status = 'open' ORDER BY due_date ASC NULLS LAST LIMIT 50
+      `).all(orgId);
+      return { actions, count: actions.length };
+    }
+    default:
+      return { error: `Unknown tool: ${toolName}` };
+  }
+}
+
+app.post('/api/agent', requireOrgContext, async (req, res) => {
+  const openai = getOpenAI();
+  if (!openai) {
+    return res.status(503).json({ error: 'AI Agent is not configured. Ask your administrator to set the OPENAI_API_KEY environment variable.' });
+  }
+
+  const { message, history = [] } = req.body;
+  if (!message?.trim()) return res.status(400).json({ error: 'Message is required' });
+
+  // System + last 20 history messages + new user turn
+  const messages = [
+    { role: 'system', content: AGENT_SYSTEM_PROMPT },
+    ...history.slice(-20),
+    { role: 'user', content: message.trim() },
+  ];
+
+  try {
+    let response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages,
+      tools: AGENT_TOOLS,
+      tool_choice: 'auto',
+      max_tokens: 1024,
+    });
+
+    let assistantMsg = response.choices[0].message;
+
+    // Agentic loop: resolve all tool calls before returning to the user
+    const MAX_ROUNDS = 5;
+    let rounds = 0;
+    while (assistantMsg.tool_calls?.length && rounds < MAX_ROUNDS) {
+      rounds++;
+      messages.push(assistantMsg);
+
+      const toolResults = await Promise.all(
+        assistantMsg.tool_calls.map(async tc => {
+          let result;
+          try {
+            const toolArgs = JSON.parse(tc.function.arguments || '{}');
+            result = await executeAgentTool(tc.function.name, toolArgs, req.orgId);
+          } catch (err) {
+            result = { error: `Tool failed: ${err.message}` };
+          }
+          return { role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) };
+        })
+      );
+
+      messages.push(...toolResults);
+
+      response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages,
+        tools: AGENT_TOOLS,
+        tool_choice: 'auto',
+        max_tokens: 1024,
+      });
+      assistantMsg = response.choices[0].message;
+    }
+
+    res.json({ reply: assistantMsg.content || '_(no response)_' });
+  } catch (err) {
+    console.error('[Agent] OpenAI error:', err);
+    if (err.status === 429) return res.status(429).json({ error: 'Rate limit reached. Please wait a moment and try again.' });
+    if (err.status === 401) return res.status(503).json({ error: 'Invalid OpenAI API key. Please check your server configuration.' });
+    res.status(500).json({ error: 'The AI agent encountered an error. Please try again.' });
+  }
+});
+
 // SPA fallback
 app.get('*', async (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
