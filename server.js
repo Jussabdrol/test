@@ -4029,6 +4029,33 @@ const AGENT_SYSTEM_PROMPT =
   'After taking an action, confirm what you did with a brief summary. ' +
   'Be professional, concise and compliance-focused. When unsure of an ID, first use a get_ tool to look it up.';
 
+// Maps each agent tool to the permission string required to use it.
+// Permission values mirror the users.permissions column: 'org', 'risk', 'ops', 'audit', 'admin'
+const AGENT_TOOL_PERMISSIONS = {
+  get_dashboard_summary:    'org',
+  get_documents:            'org',
+  create_document:          'org',
+  get_open_actions:         'org',
+  create_action:            'org',
+  update_action:            'org',
+  get_tasks:                'ops',
+  create_task:              'ops',
+  complete_task:            'ops',
+  update_task:              'ops',
+  get_risks:                'risk',
+  create_risk:              'risk',
+  update_risk:              'risk',
+  create_treatment:         'risk',
+  update_treatment:         'risk',
+  get_nonconformities:      'audit',
+  create_nonconformity:     'audit',
+  update_nonconformity:     'audit',
+  get_audits:               'audit',
+  create_audit:             'audit',
+  update_audit:             'audit',
+  rate_checklist_item:      'audit',
+};
+
 const AGENT_TOOLS = [
   {
     type: 'function',
@@ -4651,6 +4678,23 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
   const { message, history = [] } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: 'Message is required' });
 
+  // Load the current user's permissions from the database
+  const userRecord = await db.prepare('SELECT permissions FROM users WHERE id = $1').get(req.session.userId);
+  let userPerms = [];
+  try {
+    userPerms = JSON.parse(userRecord?.permissions || '[]');
+  } catch (_) { userPerms = []; }
+  // Superadmins and org admins get all permissions
+  if (req.session.userRole === 'superadmin' || userPerms.includes('admin')) {
+    userPerms = Object.values(AGENT_TOOL_PERMISSIONS);
+  }
+
+  // Filter tools to only those the user has permission to use
+  const allowedTools = AGENT_TOOLS.filter(t => {
+    const required = AGENT_TOOL_PERMISSIONS[t.function.name];
+    return !required || userPerms.includes(required);
+  });
+
   // System + last 20 history messages + new user turn
   const messages = [
     { role: 'system', content: AGENT_SYSTEM_PROMPT },
@@ -4662,7 +4706,7 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
     let response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages,
-      tools: AGENT_TOOLS,
+      tools: allowedTools,
       tool_choice: 'auto',
       max_tokens: 1024,
     });
@@ -4680,8 +4724,14 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
         assistantMsg.tool_calls.map(async tc => {
           let result;
           try {
-            const toolArgs = JSON.parse(tc.function.arguments || '{}');
-            result = await executeAgentTool(tc.function.name, toolArgs, req.orgId);
+            // Defense-in-depth: verify permission even if tool slipped through
+            const required = AGENT_TOOL_PERMISSIONS[tc.function.name];
+            if (required && !userPerms.includes(required)) {
+              result = { error: `Permission denied. You do not have access to the '${required}' module.` };
+            } else {
+              const toolArgs = JSON.parse(tc.function.arguments || '{}');
+              result = await executeAgentTool(tc.function.name, toolArgs, req.orgId);
+            }
           } catch (err) {
             result = { error: `Tool failed: ${err.message}` };
           }
@@ -4694,7 +4744,7 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
       response = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages,
-        tools: AGENT_TOOLS,
+        tools: allowedTools,
         tool_choice: 'auto',
         max_tokens: 1024,
       });
