@@ -4020,9 +4020,14 @@ function getOpenAI() {
 
 const AGENT_SYSTEM_PROMPT =
   'You are an AI assistant for BOP (Business Orchestration Platform), an ISO and compliance ' +
-  'management system. You help users manage their compliance activities. You have access to the ' +
-  "organization's data and can query and create records. Always be professional, concise and " +
-  'compliance-focused. When creating or updating records, always confirm with the user what you did.';
+  'management system. You help users manage their compliance activities. You have full access to ' +
+  "the organization's data and can read AND write records on behalf of the user. " +
+  'You can: create and update risks, add risk treatments, create and close non-conformities, ' +
+  'complete and update tasks, create and resolve actions, create and update audits, rate audit ' +
+  'checklist items, and register documents. ' +
+  'Always use the available tools to take real action — do not just describe what you would do. ' +
+  'After taking an action, confirm what you did with a brief summary. ' +
+  'Be professional, concise and compliance-focused. When unsure of an ID, first use a get_ tool to look it up.';
 
 const AGENT_TOOLS = [
   {
@@ -4162,6 +4167,238 @@ const AGENT_TOOLS = [
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'complete_task',
+      description: 'Marks a recurring compliance task as completed for this cycle, advancing its next due date.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id:      { type: 'number', description: 'ID of the task to complete' },
+          completed_by: { type: 'string', description: 'Name of person completing the task' },
+          notes:        { type: 'string', description: 'Completion notes' },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_task',
+      description: 'Updates fields of an existing compliance task (title, assignee, priority, recurrence, status, etc.).',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id:    { type: 'number', description: 'ID of the task' },
+          title:      { type: 'string' },
+          description:{ type: 'string' },
+          assignee:   { type: 'string' },
+          priority:   { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+          recurrence: { type: 'string', enum: ['daily', 'weekly', 'monthly', 'quarterly', 'annually', 'once'] },
+          category:   { type: 'string' },
+          status:     { type: 'string', enum: ['active', 'inactive'] },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_risk',
+      description: 'Updates an existing risk (status, likelihood, impact, owner, description, etc.).',
+      parameters: {
+        type: 'object',
+        properties: {
+          risk_id:       { type: 'number', description: 'ID of the risk' },
+          title:         { type: 'string' },
+          description:   { type: 'string' },
+          likelihood:    { type: 'number', description: '1–5' },
+          impact:        { type: 'number', description: '1–5' },
+          category:      { type: 'string' },
+          status:        { type: 'string', enum: ['open', 'accepted', 'treated', 'closed'] },
+          risk_owner:    { type: 'string' },
+          source:        { type: 'string' },
+          asset:         { type: 'string' },
+          threat:        { type: 'string' },
+          vulnerability: { type: 'string' },
+        },
+        required: ['risk_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_nonconformity',
+      description: 'Updates a non-conformity: set status, add root cause, correction, corrective action, assign responsible, set due date.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nc_id:              { type: 'number', description: 'ID of the non-conformity' },
+          status:             { type: 'string', enum: ['open', 'in_progress', 'closed', 'verified'] },
+          root_cause:         { type: 'string' },
+          correction:         { type: 'string' },
+          corrective_action:  { type: 'string' },
+          responsible:        { type: 'string' },
+          due_date:           { type: 'string', description: 'ISO date YYYY-MM-DD' },
+          verification_notes: { type: 'string' },
+          severity:           { type: 'string', enum: ['minor', 'major', 'critical'] },
+        },
+        required: ['nc_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_action',
+      description: 'Creates a new follow-up action item.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title:       { type: 'string', description: 'Short action title' },
+          description: { type: 'string' },
+          assignee:    { type: 'string' },
+          priority:    { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+          due_date:    { type: 'string', description: 'ISO date YYYY-MM-DD' },
+        },
+        required: ['title'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_action',
+      description: 'Updates a follow-up action: close/resolve it, change assignee, priority, or due date.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action_id:   { type: 'number', description: 'ID of the action' },
+          title:       { type: 'string' },
+          description: { type: 'string' },
+          assignee:    { type: 'string' },
+          priority:    { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+          status:      { type: 'string', enum: ['open', 'in_progress', 'resolved', 'closed'] },
+          due_date:    { type: 'string', description: 'ISO date YYYY-MM-DD' },
+          resolved_by: { type: 'string' },
+        },
+        required: ['action_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_audit',
+      description: 'Creates a new audit in the audit plan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title:         { type: 'string', description: 'Audit title' },
+          standard:      { type: 'string', description: 'e.g. ISO 27001, ISO 9001' },
+          planned_date:  { type: 'string', description: 'ISO date YYYY-MM-DD' },
+          lead_auditor:  { type: 'string' },
+          scope:         { type: 'string' },
+        },
+        required: ['title', 'planned_date'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_audit',
+      description: 'Updates an audit: change status (planned → in_progress → completed), update planned date, lead auditor, etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          audit_id:       { type: 'number', description: 'ID of the audit' },
+          status:         { type: 'string', enum: ['planned', 'in_progress', 'completed'] },
+          planned_date:   { type: 'string', description: 'ISO date YYYY-MM-DD' },
+          completed_date: { type: 'string', description: 'ISO date YYYY-MM-DD' },
+          lead_auditor:   { type: 'string' },
+          title:          { type: 'string' },
+          scope:          { type: 'string' },
+        },
+        required: ['audit_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_treatment',
+      description: 'Adds a risk treatment to an existing risk.',
+      parameters: {
+        type: 'object',
+        properties: {
+          risk_id:     { type: 'number', description: 'ID of the risk' },
+          description: { type: 'string', description: 'What will be done to treat the risk' },
+          status:      { type: 'string', enum: ['planned', 'in_progress', 'completed'], description: 'Default: planned' },
+          due_date:    { type: 'string', description: 'ISO date YYYY-MM-DD' },
+          owner:       { type: 'string' },
+        },
+        required: ['risk_id', 'description'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_treatment',
+      description: 'Updates a risk treatment status or description.',
+      parameters: {
+        type: 'object',
+        properties: {
+          treatment_id: { type: 'number', description: 'ID of the treatment' },
+          description:  { type: 'string' },
+          status:       { type: 'string', enum: ['planned', 'in_progress', 'completed'] },
+          due_date:     { type: 'string', description: 'ISO date YYYY-MM-DD' },
+          owner:        { type: 'string' },
+        },
+        required: ['treatment_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_document',
+      description: 'Registers a document in the document register (metadata only, no file upload).',
+      parameters: {
+        type: 'object',
+        properties: {
+          title:       { type: 'string', description: 'Document title' },
+          doc_type:    { type: 'string', description: 'e.g. Policy, Procedure, Record, Manual' },
+          version:     { type: 'string', description: 'e.g. 1.0' },
+          owner:       { type: 'string' },
+          status:      { type: 'string', enum: ['draft', 'review', 'approved', 'obsolete'] },
+          review_date: { type: 'string', description: 'ISO date YYYY-MM-DD' },
+        },
+        required: ['title'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'rate_checklist_item',
+      description: 'Rates an audit checklist item during audit execution (conformant, non_conformant, not_applicable, open).',
+      parameters: {
+        type: 'object',
+        properties: {
+          checklist_id: { type: 'number', description: 'ID of the checklist item' },
+          rating:       { type: 'string', enum: ['open', 'conformant', 'non_conformant', 'not_applicable'], description: 'Assessment result' },
+          notes:        { type: 'string', description: 'Optional auditor notes' },
+        },
+        required: ['checklist_id', 'rating'],
+      },
+    },
+  },
 ];
 
 async function executeAgentTool(toolName, args, orgId) {
@@ -4248,6 +4485,157 @@ async function executeAgentTool(toolName, args, orgId) {
         FROM actions WHERE organization_id = $1 AND status = 'open' ORDER BY due_date ASC NULLS LAST LIMIT 50
       `).all(orgId);
       return { actions, count: actions.length };
+    }
+    case 'complete_task': {
+      const { task_id, completed_by = '', notes = '' } = args;
+      // Verify task belongs to org
+      const task = await db.prepare('SELECT * FROM tasks WHERE id = $1 AND organization_id = $2').get(task_id, orgId);
+      if (!task) return { error: `Task ${task_id} not found.` };
+      // Insert completion record
+      await db.prepare(
+        `INSERT INTO task_completions (task_id, completed_by, notes, completed_at)
+         VALUES ($1, $2, $3, NOW())`
+      ).run(task_id, completed_by, notes);
+      // Advance next_due based on recurrence
+      const recurrenceMap = { daily: '1 day', weekly: '1 week', monthly: '1 month', quarterly: '3 months', annually: '1 year', once: null };
+      const interval = recurrenceMap[task.recurrence];
+      if (interval) {
+        await db.prepare(
+          `UPDATE tasks SET next_due = COALESCE(next_due, CURRENT_DATE) + INTERVAL '${interval}' WHERE id = $1`
+        ).run(task_id);
+      }
+      return { success: true, task_id, task_title: task.title, message: 'Task marked as completed.' };
+    }
+    case 'update_task': {
+      const { task_id, ...fields } = args;
+      const allowed = ['title', 'description', 'assignee', 'priority', 'recurrence', 'category', 'status'];
+      const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      if (!updates.length) return { error: 'No valid fields to update.' };
+      const verify = await db.prepare('SELECT id FROM tasks WHERE id = $1 AND organization_id = $2').get(task_id, orgId);
+      if (!verify) return { error: `Task ${task_id} not found.` };
+      const setClauses = updates.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+      await db.prepare(`UPDATE tasks SET ${setClauses}, updated_at = NOW() WHERE id = $1`)
+        .run(task_id, ...updates.map(([, v]) => v));
+      return { success: true, task_id, updated_fields: updates.map(([k]) => k) };
+    }
+    case 'update_risk': {
+      const { risk_id, ...fields } = args;
+      const allowed = ['title', 'description', 'category', 'source', 'asset', 'threat', 'vulnerability', 'likelihood', 'impact', 'risk_owner', 'status'];
+      const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      if (!updates.length) return { error: 'No valid fields to update.' };
+      const verify = await db.prepare('SELECT id, likelihood, impact FROM risks WHERE id = $1 AND organization_id = $2').get(risk_id, orgId);
+      if (!verify) return { error: `Risk ${risk_id} not found.` };
+      // Recalculate score if likelihood/impact changed
+      const newLikelihood = fields.likelihood ?? verify.likelihood;
+      const newImpact = fields.impact ?? verify.impact;
+      const scoreUpdate = (fields.likelihood || fields.impact) ? `, risk_score = ${Math.round(newLikelihood * newImpact)}` : '';
+      const setClauses = updates.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+      await db.prepare(`UPDATE risks SET ${setClauses}${scoreUpdate}, updated_at = NOW() WHERE id = $1`)
+        .run(risk_id, ...updates.map(([, v]) => v));
+      return { success: true, risk_id, updated_fields: updates.map(([k]) => k) };
+    }
+    case 'update_nonconformity': {
+      const { nc_id, ...fields } = args;
+      const allowed = ['clause', 'description', 'severity', 'root_cause', 'correction', 'corrective_action', 'responsible', 'due_date', 'status', 'verification_notes'];
+      const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      if (!updates.length) return { error: 'No valid fields to update.' };
+      // Verify belongs to org via audit join
+      const verify = await db.prepare(
+        `SELECT n.id FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE n.id = $1 AND a.organization_id = $2`
+      ).get(nc_id, orgId);
+      if (!verify) return { error: `Non-conformity ${nc_id} not found.` };
+      // Auto-set closed_date when closing
+      const closedDateClause = (fields.status === 'closed' || fields.status === 'verified') ? ', closed_date = CURRENT_DATE' : '';
+      const setClauses = updates.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+      await db.prepare(`UPDATE non_conformities SET ${setClauses}${closedDateClause} WHERE id = $1`)
+        .run(nc_id, ...updates.map(([, v]) => v));
+      return { success: true, nc_id, updated_fields: updates.map(([k]) => k) };
+    }
+    case 'create_action': {
+      const { title, description = '', assignee = '', priority = 'medium', due_date = null } = args;
+      const result = await db.prepare(
+        `INSERT INTO actions (organization_id, title, description, assignee, priority, status, due_date)
+         VALUES ($1, $2, $3, $4, $5, 'open', $6)`
+      ).run(orgId, title, description, assignee, priority, due_date);
+      return { success: true, id: result.lastInsertRowid, title, priority };
+    }
+    case 'update_action': {
+      const { action_id, ...fields } = args;
+      const allowed = ['title', 'description', 'assignee', 'priority', 'status', 'due_date', 'resolved_by'];
+      const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      if (!updates.length) return { error: 'No valid fields to update.' };
+      const verify = await db.prepare('SELECT id FROM actions WHERE id = $1 AND organization_id = $2').get(action_id, orgId);
+      if (!verify) return { error: `Action ${action_id} not found.` };
+      const resolvedClause = (fields.status === 'resolved' || fields.status === 'closed') ? ', resolved_at = NOW()' : '';
+      const setClauses = updates.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+      await db.prepare(`UPDATE actions SET ${setClauses}${resolvedClause} WHERE id = $1`)
+        .run(action_id, ...updates.map(([, v]) => v));
+      return { success: true, action_id, updated_fields: updates.map(([k]) => k) };
+    }
+    case 'create_audit': {
+      const { title, standard = '', planned_date, lead_auditor = '', scope = '' } = args;
+      const result = await db.prepare(
+        `INSERT INTO audits (organization_id, title, standard, status, planned_date, lead_auditor, scope)
+         VALUES ($1, $2, $3, 'planned', $4, $5, $6)`
+      ).run(orgId, title, standard, planned_date, lead_auditor, scope);
+      return { success: true, id: result.lastInsertRowid, title, planned_date };
+    }
+    case 'update_audit': {
+      const { audit_id, ...fields } = args;
+      const allowed = ['title', 'standard', 'status', 'planned_date', 'completed_date', 'lead_auditor', 'scope'];
+      const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      if (!updates.length) return { error: 'No valid fields to update.' };
+      const verify = await db.prepare('SELECT id FROM audits WHERE id = $1 AND organization_id = $2').get(audit_id, orgId);
+      if (!verify) return { error: `Audit ${audit_id} not found.` };
+      const setClauses = updates.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+      await db.prepare(`UPDATE audits SET ${setClauses} WHERE id = $1`)
+        .run(audit_id, ...updates.map(([, v]) => v));
+      return { success: true, audit_id, updated_fields: updates.map(([k]) => k) };
+    }
+    case 'create_treatment': {
+      const { risk_id, description, status = 'planned', due_date = null, owner = '' } = args;
+      const verify = await db.prepare('SELECT id FROM risks WHERE id = $1 AND organization_id = $2').get(risk_id, orgId);
+      if (!verify) return { error: `Risk ${risk_id} not found.` };
+      const result = await db.prepare(
+        `INSERT INTO risk_treatments (risk_id, description, status, due_date, owner)
+         VALUES ($1, $2, $3, $4, $5)`
+      ).run(risk_id, description, status, due_date, owner);
+      return { success: true, id: result.lastInsertRowid, risk_id, description };
+    }
+    case 'update_treatment': {
+      const { treatment_id, ...fields } = args;
+      const allowed = ['description', 'status', 'due_date', 'owner'];
+      const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      if (!updates.length) return { error: 'No valid fields to update.' };
+      // Verify ownership via risk join
+      const verify = await db.prepare(
+        `SELECT rt.id FROM risk_treatments rt JOIN risks r ON rt.risk_id = r.id WHERE rt.id = $1 AND r.organization_id = $2`
+      ).get(treatment_id, orgId);
+      if (!verify) return { error: `Treatment ${treatment_id} not found.` };
+      const setClauses = updates.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+      await db.prepare(`UPDATE risk_treatments SET ${setClauses} WHERE id = $1`)
+        .run(treatment_id, ...updates.map(([, v]) => v));
+      return { success: true, treatment_id, updated_fields: updates.map(([k]) => k) };
+    }
+    case 'create_document': {
+      const { title, doc_type = 'Policy', version = '1.0', owner = '', status = 'draft', review_date = null } = args;
+      const result = await db.prepare(
+        `INSERT INTO documents (organization_id, title, document_type, version, owner, status, review_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`
+      ).run(orgId, title, doc_type, version, owner, status, review_date);
+      return { success: true, id: result.lastInsertRowid, title, doc_type, status };
+    }
+    case 'rate_checklist_item': {
+      const { checklist_id, rating, notes = '' } = args;
+      // Verify item belongs to org via audit join
+      const item = await db.prepare(
+        `SELECT cl.id, cl.audit_id FROM audit_checklist cl JOIN audits a ON cl.audit_id = a.id WHERE cl.id = $1 AND a.organization_id = $2`
+      ).get(checklist_id, orgId);
+      if (!item) return { error: `Checklist item ${checklist_id} not found.` };
+      await db.prepare(
+        `UPDATE audit_checklist SET rating = $1, notes = $2, updated_at = NOW() WHERE id = $3`
+      ).run(rating, notes, checklist_id);
+      return { success: true, checklist_id, rating, message: `Item rated as ${rating}.` };
     }
     default:
       return { error: `Unknown tool: ${toolName}` };
