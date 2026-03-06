@@ -2147,6 +2147,72 @@ const entityResolvers = {
   treatment: async (id) => { const t = await db.get('SELECT id, description FROM risk_treatments WHERE id = ?', id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
 };
 
+// Bulk cross-links: fetch all cross-links for multiple items of the same type in one shot.
+// Reduces N+1 requests to 2 (one for all links, one per distinct linked entity type).
+// Usage: GET /api/cross-links/batch/:type?ids=1,2,3
+app.get('/api/cross-links/batch/:type', requireOrgContext, async (req, res) => {
+  const { type } = req.params;
+  const ids = (req.query.ids || '').split(',').map(Number).filter(Boolean);
+  if (!ids.length) return res.json({});
+
+  const ph = ids.map(() => '?').join(',');
+  const rawLinks = await db.prepare(`
+    SELECT * FROM cross_links
+    WHERE organization_id = ?
+    AND ((source_type = ? AND source_id IN (${ph})) OR (target_type = ? AND target_id IN (${ph})))
+  `).all(req.orgId, type, ...ids, type, ...ids);
+
+  // Map raw links -> { itemId -> [{link_id, otherType, otherId}] }
+  const linksByItem = {};
+  const needed = {}; // otherType -> Set<id>
+  for (const l of rawLinks) {
+    const isSource = l.source_type === type && ids.includes(l.source_id);
+    const isTarget = l.target_type === type && ids.includes(l.target_id);
+    const itemId = isSource ? l.source_id : isTarget ? l.target_id : null;
+    if (!itemId) continue;
+    const otherType = isSource ? l.target_type : l.source_type;
+    const otherId   = isSource ? l.target_id   : l.source_id;
+    if (!linksByItem[itemId]) linksByItem[itemId] = [];
+    linksByItem[itemId].push({ link_id: l.id, otherType, otherId });
+    if (!needed[otherType]) needed[otherType] = new Set();
+    needed[otherType].add(otherId);
+  }
+
+  // Resolve names in bulk — one query per distinct linked entity type
+  const nameCache = {}; // `${type}:${id}` -> name
+  for (const [eType, eIds] of Object.entries(needed)) {
+    const idArr = [...eIds];
+    const eph = idArr.map(() => '?').join(',');
+    let rows = [];
+    if (eType === 'risk') rows = await db.prepare(`SELECT id, title as name FROM risks WHERE id IN (${eph})`).all(...idArr);
+    else if (eType === 'task') rows = await db.prepare(`SELECT id, title as name FROM tasks WHERE id IN (${eph})`).all(...idArr);
+    else if (eType === 'action') rows = await db.prepare(`SELECT id, title as name FROM actions WHERE id IN (${eph})`).all(...idArr);
+    else if (eType === 'audit') rows = await db.prepare(`SELECT id, title as name FROM audits WHERE id IN (${eph})`).all(...idArr);
+    else if (eType === 'document') rows = await db.prepare(`SELECT id, title as name FROM documents WHERE id IN (${eph})`).all(...idArr);
+    else if (eType === 'requirement') rows = (await db.prepare(`SELECT id, clause, title, standard FROM standard_requirements WHERE id IN (${eph})`).all(...idArr))
+      .map(r => ({ id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` }));
+    else if (eType === 'ncr') rows = (await db.prepare(`SELECT id, clause, description FROM non_conformities WHERE id IN (${eph})`).all(...idArr))
+      .map(n => ({ id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` }));
+    else if (eType === 'treatment') rows = (await db.prepare(`SELECT id, description FROM risk_treatments WHERE id IN (${eph})`).all(...idArr))
+      .map(t => ({ id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` }));
+    else if (['role','process','system','asset','facility'].includes(eType))
+      rows = await db.prepare(`SELECT id, name FROM org_architecture WHERE arch_type = ? AND id IN (${eph})`).all(eType, ...idArr);
+    for (const r of rows) nameCache[`${eType}:${r.id}`] = r.name;
+  }
+
+  // Build final result keyed by item id
+  const result = {};
+  for (const [itemId, entries] of Object.entries(linksByItem)) {
+    result[itemId] = entries.map(({ link_id, otherType, otherId }) => ({
+      link_id,
+      type: otherType,
+      id: otherId,
+      name: nameCache[`${otherType}:${otherId}`] || `${otherType} #${otherId}`,
+    }));
+  }
+  res.json(result);
+});
+
 // Get all cross-links for an entity
 app.get('/api/cross-links/:type/:id', requireOrgContext, async (req, res) => {
   const { type, id } = req.params;

@@ -454,18 +454,45 @@ function switchView(view) {
 
 // --- API helpers ---
 async function api(url, options = {}) {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    const msg = body.error || `HTTP ${res.status}`;
-    console.error(`[API] ${options.method || 'GET'} ${url} → ${res.status}: ${msg}`);
-    throw new Error(msg);
+  const { signal: callerSignal, timeout = 20000, ...fetchOptions } = options;
+
+  // Combine an optional caller AbortSignal with a per-request timeout so that:
+  //   • switching tabs aborts all in-flight requests immediately (callerSignal)
+  //   • a hung corporate proxy / SSL-inspection box never blocks forever (timeout)
+  const timeoutCtrl = new AbortController();
+  const timerId = setTimeout(() => timeoutCtrl.abort(new DOMException('Request timed out', 'TimeoutError')), timeout);
+
+  let signal;
+  if (callerSignal && typeof AbortSignal.any === 'function') {
+    // Modern browsers: combine both signals natively
+    signal = AbortSignal.any([callerSignal, timeoutCtrl.signal]);
+  } else if (callerSignal) {
+    // Fallback: forward caller's abort into the timeout controller
+    callerSignal.addEventListener('abort', () => timeoutCtrl.abort(callerSignal.reason), { once: true });
+    signal = timeoutCtrl.signal;
+  } else {
+    signal = timeoutCtrl.signal;
   }
-  return res.json();
+
+  try {
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json' },
+      ...fetchOptions,
+      body: fetchOptions.body ? JSON.stringify(fetchOptions.body) : undefined,
+      signal,
+    });
+    clearTimeout(timerId);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const msg = body.error || `HTTP ${res.status}`;
+      console.error(`[API] ${fetchOptions.method || 'GET'} ${url} → ${res.status}: ${msg}`);
+      throw new Error(msg);
+    }
+    return res.json();
+  } catch (err) {
+    clearTimeout(timerId);
+    throw err;
+  }
 }
 
 // Run async tasks with bounded concurrency to avoid overwhelming connections
@@ -5257,16 +5284,28 @@ function switchArchTab(type) {
 }
 
 let orgChartZoom = 1;
-let _archLoadId = 0; // race-condition guard for rapid tab switching
+let _archLoadId = 0;           // counter-based stale-result guard (belt)
+let _archAbortCtrl = null;     // AbortController for in-flight requests (suspenders)
 
 async function loadArchitecture() {
+  // Cancel any previous in-flight load immediately, freeing browser connection slots.
+  // This is the primary fix for slow/corporate networks: old requests no longer
+  // hold TCP connections that would queue-block the new tab's requests.
+  if (_archAbortCtrl) _archAbortCtrl.abort();
+  _archAbortCtrl = new AbortController();
+  const signal = _archAbortCtrl.signal;
+
   const loadId = ++_archLoadId;
   const tabAtStart = currentArchTab;
-  try {
-  const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
-  // If user clicked a different tab while we were fetching, discard this result
-  if (loadId !== _archLoadId) return;
   const list = document.getElementById('arch-list');
+
+  // Show loading state immediately so users on slow networks get feedback
+  if (list) list.innerHTML = `<div class="arch-loading"><span class="arch-loading-spinner"></span>Loading ${archTypeLabels[tabAtStart] || ''}…</div>`;
+
+  try {
+  // 1 request for the items list
+  const items = await api(`/api/architecture?arch_type=${currentArchTab}`, { signal });
+  if (signal.aborted || loadId !== _archLoadId) return;
 
   // Update Add button label to match current tab
   const archSingular = { role: 'Role', process: 'Process', system: 'System', asset: 'Asset', facility: 'Facility' };
@@ -5295,13 +5334,11 @@ async function loadArchitecture() {
     return;
   }
 
-  // Fetch cross-links for all items
-  const allLinks = {};
-  await batchAll(items, async item => {
-    allLinks[item.id] = await api(`/api/cross-links/${currentArchTab}/${item.id}`);
-  });
-  // Second race-condition check after cross-link fetches
-  if (loadId !== _archLoadId) return;
+  // 1 bulk request for ALL cross-links (replaces N individual requests).
+  // On a 15-item tab this goes from 16 round-trips down to 2.
+  const ids = items.map(i => i.id).join(',');
+  const allLinksMap = await api(`/api/cross-links/batch/${currentArchTab}?ids=${ids}`, { signal });
+  if (signal.aborted || loadId !== _archLoadId) return;
 
   // Summary stats
   const activeCount = items.filter(i => i.status === 'active').length;
@@ -5323,16 +5360,18 @@ async function loadArchitecture() {
   for (const item of items) {
     let meta = {};
     try { meta = JSON.parse(item.metadata || '{}'); } catch(e) {}
-    const links = allLinks[item.id] || [];
+    const links = allLinksMap[item.id] || [];
     html += buildArchTableRow(item, meta, links, currentArchTab);
   }
 
   html += '</div>';
   list.innerHTML = html;
   } catch (err) {
+    // AbortError = intentional cancel (tab switch or timeout). Don't show an error
+    // state — the new tab's load will replace the content momentarily.
+    if (err.name === 'AbortError') return;
     console.error(`[loadArchitecture:${tabAtStart}] Failed:`, err);
-    const list = document.getElementById('arch-list');
-    if (list) list.innerHTML = `<div class="empty-state" style="color:var(--danger)">Failed to load ${archTypeLabels[tabAtStart] || 'architecture'}: ${esc(err.message)}</div>`;
+    if (list) list.innerHTML = `<div class="empty-state" style="color:var(--danger)">Failed to load ${archTypeLabels[tabAtStart] || 'data'}: ${esc(err.message)}<br><button class="btn btn-secondary btn-sm" style="margin-top:12px" onclick="loadArchitecture()">Retry</button></div>`;
   }
 }
 
