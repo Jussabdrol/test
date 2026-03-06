@@ -3384,9 +3384,11 @@ async function loadRequirements() {
   const reqs = await api(`/api/requirements?${params}`);
   const standards = await api('/api/requirements/standards');
 
-  // Prefetch cross-links for all requirements
-  const allLinks = {};
-  await batchAll(reqs, async r => { allLinks[r.id] = await api(`/api/cross-links/requirement/${r.id}`); });
+  // Fetch cross-links for all requirements in a single bulk request
+  // (previously: N individual requests via batchAll)
+  const allLinks = reqs.length
+    ? await api(`/api/cross-links/batch/requirement?ids=${reqs.map(r => r.id).join(',')}`)
+    : {};
 
   // Render filter bar
   document.getElementById('req-filters-bar').innerHTML = `

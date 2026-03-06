@@ -1373,39 +1373,68 @@ app.get('/api/requirements', requireOrgContext, async (req, res) => {
   sql += ' ORDER BY standard, sort_order, clause';
   const reqs = await db.prepare(sql).all(...params);
 
-  // Enrich each requirement with audit history
+  if (reqs.length === 0) return res.json([]);
+
+  // Previously: 2 queries per requirement (2N total for audit history + NCs).
+  // Now: 2 bulk queries for the entire result set, matched in JS by clause+standard.
+  const clauses   = [...new Set(reqs.map(r => r.clause))];
+  const standards = [...new Set(reqs.map(r => r.standard))];
+  const cPh = clauses.map(() => '?').join(',');
+  const sPh = standards.map(() => '?').join(',');
+
+  // Bulk audit history: one row per checklist item across all matching clauses/standards
+  const auditHistory = await db.prepare(`
+    SELECT a.id as audit_id, a.title as audit_title, a.planned_date, a.completed_date,
+           a.status as audit_status, a.standard as audit_standard,
+           cl.rating, cl.clause, cl.standard as cl_standard
+    FROM audit_checklist cl
+    JOIN audits a ON cl.audit_id = a.id
+    WHERE cl.clause IN (${cPh})
+      AND (cl.standard IN (${sPh}) OR (cl.standard = '' AND a.standard IN (${sPh})))
+      AND a.organization_id = ?
+    ORDER BY COALESCE(a.completed_date, a.planned_date) DESC
+  `).all(...clauses, ...standards, ...standards, req.orgId);
+
+  // Bulk NCs: one row per NC across all matching clauses/standards
+  const allNcs = await db.prepare(`
+    SELECT n.id, n.status, n.severity, n.clause,
+           COALESCE(cl.standard, a.standard) as nc_standard
+    FROM non_conformities n
+    JOIN audits a ON n.audit_id = a.id
+    LEFT JOIN audit_checklist cl ON n.checklist_item_id = cl.id
+    WHERE n.clause IN (${cPh})
+      AND (COALESCE(cl.standard, a.standard) IN (${sPh}) OR a.standard IN (${sPh}))
+      AND a.organization_id = ?
+  `).all(...clauses, ...standards, ...standards, req.orgId);
+
+  // Build lookup maps keyed by "clause|||standard"
+  const auditMap = {};
+  for (const h of auditHistory) {
+    const effectiveStd = h.cl_standard || h.audit_standard;
+    const key = `${h.clause}|||${effectiveStd}`;
+    if (!auditMap[key]) auditMap[key] = [];
+    auditMap[key].push(h);
+  }
+  const ncMap = {};
+  for (const n of allNcs) {
+    const key = `${n.clause}|||${n.nc_standard}`;
+    if (!ncMap[key]) ncMap[key] = [];
+    ncMap[key].push(n);
+  }
+
+  // Assemble per-requirement data in JS (no more per-row DB queries)
   for (const r of reqs) {
-    // Find checklist items matching this requirement's clause and standard
-    // Check both checklist item's standard field and fallback to audit's standard
-    const auditHistory = await db.prepare(`
-      SELECT a.id as audit_id, a.title as audit_title, a.planned_date, a.completed_date, a.status as audit_status,
-             cl.rating, cl.id as checklist_item_id
-      FROM audit_checklist cl
-      JOIN audits a ON cl.audit_id = a.id
-      WHERE cl.clause = ? AND (cl.standard = ? OR (cl.standard = '' AND a.standard = ?))
-        AND a.organization_id = ?
-      ORDER BY COALESCE(a.completed_date, a.planned_date) DESC
-    `).all(r.clause, r.standard, r.standard, req.orgId);
+    const key = `${r.clause}|||${r.standard}`;
+    const history = auditMap[key] || [];
+    const completedAudits = history.filter(h => h.audit_status === 'completed');
+    r.last_audited    = completedAudits[0]?.completed_date || completedAudits[0]?.planned_date || null;
+    r.last_audit_title = completedAudits[0]?.audit_title || null;
+    r.last_rating     = completedAudits[0]?.rating || null;
+    r.times_audited   = completedAudits.length;
 
-    // Last audited info
-    const completedAudits = auditHistory.filter(h => h.audit_status === 'completed');
-    r.last_audited = completedAudits.length > 0 ? (completedAudits[0].completed_date || completedAudits[0].planned_date) : null;
-    r.last_audit_title = completedAudits.length > 0 ? completedAudits[0].audit_title : null;
-    r.last_rating = completedAudits.length > 0 ? completedAudits[0].rating : null;
-    r.times_audited = completedAudits.length;
-
-    // NC info for this clause + standard (check checklist item standard or audit standard)
-    const ncs = await db.prepare(`
-      SELECT n.id, n.status, n.severity
-      FROM non_conformities n
-      JOIN audits a ON n.audit_id = a.id
-      LEFT JOIN audit_checklist cl ON n.checklist_item_id = cl.id
-      WHERE n.clause = ? AND (COALESCE(cl.standard, a.standard) = ? OR a.standard = ?)
-        AND a.organization_id = ?
-    `).all(r.clause, r.standard, r.standard, req.orgId);
-
-    r.nc_total = ncs.length;
-    r.nc_open = ncs.filter(n => n.status === 'open' || n.status === 'in_progress').length;
+    const ncs = ncMap[key] || [];
+    r.nc_total  = ncs.length;
+    r.nc_open   = ncs.filter(n => n.status === 'open' || n.status === 'in_progress').length;
     r.nc_closed = ncs.filter(n => n.status === 'closed' || n.status === 'verified').length;
   }
 
@@ -1725,26 +1754,66 @@ app.delete('/api/treatments/:id', requireOrgContext, async (req, res) => {
 // --- Statement of Applicability API ---
 
 app.get('/api/soa', requireOrgContext, async (req, res) => {
-  // Get all Annex A requirements with their SoA status
-  const reqs = await db.prepare(`SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification, soa.implementation_status, soa.notes as soa_notes, soa.linked_processes, soa.regulatory
-    FROM standard_requirements sr LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
+  const reqs = await db.prepare(`
+    SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification,
+           soa.implementation_status, soa.notes as soa_notes, soa.linked_processes, soa.regulatory
+    FROM standard_requirements sr
+    LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
     WHERE sr.standard = 'ISO 27001 Annex A' AND sr.organization_id = ?
-    ORDER BY sr.sort_order, sr.clause`).all(req.orgId);
-  // Attach linked risk treatments (via requirement_id OR control_reference)
-  const allProcesses = await db.prepare("SELECT id, name FROM org_architecture WHERE arch_type = 'process' AND organization_id = ?").all(req.orgId);
+    ORDER BY sr.sort_order, sr.clause
+  `).all(req.orgId);
+
+  if (reqs.length === 0) return res.json([]);
+
+  const allProcesses = await db.prepare(
+    "SELECT id, name FROM org_architecture WHERE arch_type = 'process' AND organization_id = ?"
+  ).all(req.orgId);
+
+  // Previously: 2 queries per requirement (2N total). Now: 2 bulk queries regardless of N.
+  const reqIds = reqs.map(r => r.id);
+  const clauses = [...new Set(reqs.map(r => r.clause).filter(Boolean))];
+  const idPh = reqIds.map(() => '?').join(',');
+  const clausePh = clauses.map(() => '?').join(',');
+
+  // Bulk fetch treatments linked by requirement_id
+  const treatsByReqId = await db.prepare(`
+    SELECT rt.id, rt.description, rt.status, ri.title as risk_title, rt.requirement_id
+    FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id
+    WHERE rt.requirement_id IN (${idPh}) AND ri.organization_id = ?
+  `).all(...reqIds, req.orgId);
+
+  // Bulk fetch treatments linked by control_reference (clause match)
+  const treatsByRef = clauses.length ? await db.prepare(`
+    SELECT rt.id, rt.description, rt.status, ri.title as risk_title, rt.control_reference
+    FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id
+    WHERE rt.control_reference IN (${clausePh}) AND rt.control_reference != '' AND ri.organization_id = ?
+  `).all(...clauses, req.orgId) : [];
+
+  // Build lookup maps
+  const byIdMap = {};
+  for (const t of treatsByReqId) {
+    if (!byIdMap[t.requirement_id]) byIdMap[t.requirement_id] = [];
+    byIdMap[t.requirement_id].push(t);
+  }
+  const byRefMap = {};
+  for (const t of treatsByRef) {
+    if (!byRefMap[t.control_reference]) byRefMap[t.control_reference] = [];
+    byRefMap[t.control_reference].push(t);
+  }
+
+  // Assemble per-requirement data entirely in JS (no more per-row queries)
   for (const r of reqs) {
-    // Get treatments linked by requirement_id
-    const linkedById = await db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.requirement_id = ? AND ri.organization_id = ?`).all(r.id, req.orgId);
-    // Get treatments linked by control_reference (matching clause)
-    const linkedByRef = await db.prepare(`SELECT rt.id, rt.description, rt.status, ri.title as risk_title FROM risk_treatments rt JOIN risks ri ON rt.risk_id = ri.id WHERE rt.control_reference = ? AND rt.control_reference != '' AND ri.organization_id = ?`).all(r.clause, req.orgId);
-    // Combine and dedupe
-    const allLinked = [...linkedById];
-    for (const t of linkedByRef) {
+    const byId = byIdMap[r.id] || [];
+    const byRef = byRefMap[r.clause] || [];
+    const allLinked = [...byId];
+    for (const t of byRef) {
       if (!allLinked.some(l => l.id === t.id)) allLinked.push(t);
     }
     r.linked_treatments = allLinked;
     try { r.linked_process_ids = JSON.parse(r.linked_processes || '[]'); } catch(e) { r.linked_process_ids = []; }
-    r.linked_process_names = r.linked_process_ids.map(pid => { const p = allProcesses.find(x => x.id === pid); return p ? p.name : null; }).filter(Boolean);
+    r.linked_process_names = r.linked_process_ids
+      .map(pid => { const p = allProcesses.find(x => x.id === pid); return p ? p.name : null; })
+      .filter(Boolean);
   }
   res.json(reqs);
 });
