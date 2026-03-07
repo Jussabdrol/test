@@ -4050,10 +4050,12 @@ const AGENT_TOOL_PERMISSIONS = {
   get_nonconformities:      'audit',
   create_nonconformity:     'audit',
   update_nonconformity:     'audit',
-  get_audits:               'audit',
-  create_audit:             'audit',
-  update_audit:             'audit',
-  rate_checklist_item:      'audit',
+  get_audits:                  'audit',
+  create_audit:                'audit',
+  update_audit:                'audit',
+  rate_checklist_item:         'audit',
+  get_management_reviews:      'org',
+  create_management_review:    'org',
 };
 
 const AGENT_TOOLS = [
@@ -4073,7 +4075,7 @@ const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          status: { type: 'string', description: 'open | accepted | treated | closed', enum: ['open', 'accepted', 'treated', 'closed'] },
+          status: { type: 'string', description: 'identified | analyzing | treating | accepted | closed', enum: ['identified', 'analyzing', 'treating', 'accepted', 'closed'] },
         },
         required: [],
       },
@@ -4122,7 +4124,7 @@ const AGENT_TOOLS = [
         properties: {
           title:       { type: 'string', description: 'Short title' },
           description: { type: 'string', description: 'Description' },
-          severity:    { type: 'string', description: 'minor | major | critical', enum: ['minor', 'major', 'critical'] },
+          severity:    { type: 'string', description: 'minor | major', enum: ['minor', 'major'] },
           clause:      { type: 'string', description: 'Related ISO clause e.g. 6.1.2' },
           assigned_to: { type: 'string', description: 'Responsible person' },
         },
@@ -4156,9 +4158,9 @@ const AGENT_TOOLS = [
           title:       { type: 'string', description: 'Task title' },
           description: { type: 'string', description: 'What needs to be done' },
           assignee:    { type: 'string', description: 'Person responsible' },
-          recurrence:  { type: 'string', description: 'daily | weekly | monthly | quarterly | annually | once', enum: ['daily', 'weekly', 'monthly', 'quarterly', 'annually', 'once'] },
+          recurrence:  { type: 'string', description: 'daily | weekly | biweekly | monthly | quarterly | yearly', enum: ['daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'] },
           category:    { type: 'string', description: 'Task category' },
-          priority:    { type: 'string', description: 'low | medium | high | critical', enum: ['low', 'medium', 'high', 'critical'] },
+          priority:    { type: 'string', description: 'Low | Medium | High | Critical', enum: ['Low', 'Medium', 'High', 'Critical'] },
         },
         required: ['title', 'recurrence'],
       },
@@ -4222,8 +4224,8 @@ const AGENT_TOOLS = [
           title:      { type: 'string' },
           description:{ type: 'string' },
           assignee:   { type: 'string' },
-          priority:   { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
-          recurrence: { type: 'string', enum: ['daily', 'weekly', 'monthly', 'quarterly', 'annually', 'once'] },
+          priority:   { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'] },
+          recurrence: { type: 'string', enum: ['daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'] },
           category:   { type: 'string' },
           status:     { type: 'string', enum: ['active', 'inactive'] },
         },
@@ -4245,7 +4247,7 @@ const AGENT_TOOLS = [
           likelihood:    { type: 'number', description: '1–5' },
           impact:        { type: 'number', description: '1–5' },
           category:      { type: 'string' },
-          status:        { type: 'string', enum: ['open', 'accepted', 'treated', 'closed'] },
+          status:        { type: 'string', enum: ['identified', 'analyzing', 'treating', 'accepted', 'closed'] },
           risk_owner:    { type: 'string' },
           source:        { type: 'string' },
           asset:         { type: 'string' },
@@ -4272,7 +4274,7 @@ const AGENT_TOOLS = [
           responsible:        { type: 'string' },
           due_date:           { type: 'string', description: 'ISO date YYYY-MM-DD' },
           verification_notes: { type: 'string' },
-          severity:           { type: 'string', enum: ['minor', 'major', 'critical'] },
+          severity:           { type: 'string', enum: ['minor', 'major'] },
         },
         required: ['nc_id'],
       },
@@ -4289,7 +4291,7 @@ const AGENT_TOOLS = [
           title:       { type: 'string', description: 'Short action title' },
           description: { type: 'string' },
           assignee:    { type: 'string' },
-          priority:    { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+          priority:    { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'] },
           due_date:    { type: 'string', description: 'ISO date YYYY-MM-DD' },
         },
         required: ['title'],
@@ -4308,7 +4310,7 @@ const AGENT_TOOLS = [
           title:       { type: 'string' },
           description: { type: 'string' },
           assignee:    { type: 'string' },
-          priority:    { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+          priority:    { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'] },
           status:      { type: 'string', enum: ['open', 'in_progress', 'resolved', 'closed'] },
           due_date:    { type: 'string', description: 'ISO date YYYY-MM-DD' },
           resolved_by: { type: 'string' },
@@ -4365,7 +4367,7 @@ const AGENT_TOOLS = [
         properties: {
           risk_id:     { type: 'number', description: 'ID of the risk' },
           description: { type: 'string', description: 'What will be done to treat the risk' },
-          status:      { type: 'string', enum: ['planned', 'in_progress', 'completed'], description: 'Default: planned' },
+          status:      { type: 'string', enum: ['planned', 'in_progress', 'implemented', 'verified'], description: 'Default: planned' },
           due_date:    { type: 'string', description: 'ISO date YYYY-MM-DD' },
           owner:       { type: 'string' },
         },
@@ -4383,11 +4385,43 @@ const AGENT_TOOLS = [
         properties: {
           treatment_id: { type: 'number', description: 'ID of the treatment' },
           description:  { type: 'string' },
-          status:       { type: 'string', enum: ['planned', 'in_progress', 'completed'] },
+          status:       { type: 'string', enum: ['planned', 'in_progress', 'implemented', 'verified'] },
           due_date:     { type: 'string', description: 'ISO date YYYY-MM-DD' },
-          owner:        { type: 'string' },
+          responsible:  { type: 'string' },
         },
         required: ['treatment_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_management_reviews',
+      description: 'Fetches management reviews (ISO management review meetings). Optionally filter by status.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', description: 'scheduled | in_progress | completed', enum: ['scheduled', 'in_progress', 'completed'] },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_management_review',
+      description: 'Plans (creates) a new management review meeting.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title:            { type: 'string', description: 'Title of the management review' },
+          review_date:      { type: 'string', description: 'ISO date YYYY-MM-DD when the review is planned' },
+          chairperson:      { type: 'string', description: 'Name of the chairperson' },
+          attendees:        { type: 'string', description: 'Comma-separated list of attendees' },
+          next_review_date: { type: 'string', description: 'ISO date YYYY-MM-DD for the next review' },
+        },
+        required: ['title', 'review_date'],
       },
     },
   },
@@ -4478,20 +4512,25 @@ async function executeAgentTool(toolName, args, orgId) {
     }
     case 'get_tasks': {
       const params = [orgId];
-      let sql = 'SELECT id, title, description, assignee, recurrence, category, priority, status, next_due FROM tasks WHERE organization_id = $1';
-      if (args.status)   { sql += ` AND status = $${params.length + 1}`;                   params.push(args.status); }
-      if (args.assignee) { sql += ` AND assignee ILIKE $${params.length + 1}`;             params.push(`%${args.assignee}%`); }
+      let sql = 'SELECT id, title, description, assignee, recurrence, category, priority, is_active, next_due FROM tasks WHERE organization_id = $1';
+      if (args.status === 'active')   { sql += ` AND is_active = 1`; }
+      if (args.status === 'inactive') { sql += ` AND is_active = 0`; }
+      if (args.assignee) { sql += ` AND assignee ILIKE $${params.length + 1}`; params.push(`%${args.assignee}%`); }
       sql += ' ORDER BY next_due ASC NULLS LAST LIMIT 50';
       const tasks = await db.prepare(sql).all(...params);
       return { tasks, count: tasks.length };
     }
     case 'create_task': {
-      const { title, description = '', assignee = '', recurrence, category = 'General', priority = 'medium' } = args;
+      const { title, description = '', assignee = '', recurrence, category = 'General', priority = 'Medium' } = args;
+      // Normalize priority to title-case to match schema CHECK constraint
+      const normPriority = priority.charAt(0).toUpperCase() + priority.slice(1).toLowerCase();
+      // Normalize recurrence: agent may send 'annually' but schema uses 'yearly'
+      const normRecurrence = recurrence === 'annually' ? 'yearly' : recurrence;
       const result = await db.prepare(`
-        INSERT INTO tasks (organization_id, title, description, assignee, recurrence, category, priority, status, next_due)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', CURRENT_DATE)
-      `).run(orgId, title, description, assignee, recurrence, category, priority);
-      return { success: true, id: result.lastInsertRowid, title, recurrence };
+        INSERT INTO tasks (organization_id, title, description, assignee, recurrence, category, priority, start_date, next_due)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, CURRENT_DATE)
+      `).run(orgId, title, description, assignee, normRecurrence, category, normPriority);
+      return { success: true, id: result.lastInsertRowid, title, recurrence: normRecurrence };
     }
     case 'get_audits': {
       const params = [orgId];
@@ -4522,11 +4561,11 @@ async function executeAgentTool(toolName, args, orgId) {
       if (!task) return { error: `Task ${task_id} not found.` };
       // Insert completion record
       await db.prepare(
-        `INSERT INTO task_completions (task_id, completed_by, notes, completed_at)
-         VALUES ($1, $2, $3, NOW())`
-      ).run(task_id, completed_by, notes);
+        `INSERT INTO completions (organization_id, task_id, completed_by, notes, completed_at)
+         VALUES ($1, $2, $3, $4, NOW())`
+      ).run(orgId, task_id, completed_by, notes);
       // Advance next_due based on recurrence
-      const recurrenceMap = { daily: '1 day', weekly: '1 week', monthly: '1 month', quarterly: '3 months', annually: '1 year', once: null };
+      const recurrenceMap = { daily: '1 day', weekly: '1 week', biweekly: '2 weeks', monthly: '1 month', quarterly: '3 months', yearly: '1 year' };
       const interval = recurrenceMap[task.recurrence];
       if (interval) {
         await db.prepare(
@@ -4537,8 +4576,12 @@ async function executeAgentTool(toolName, args, orgId) {
     }
     case 'update_task': {
       const { task_id, ...fields } = args;
-      const allowed = ['title', 'description', 'assignee', 'priority', 'recurrence', 'category', 'status'];
-      const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      const allowed = ['title', 'description', 'assignee', 'priority', 'recurrence', 'category'];
+      let updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      // Normalize priority casing to match schema CHECK constraint
+      updates = updates.map(([k, v]) => k === 'priority'
+        ? [k, v.charAt(0).toUpperCase() + v.slice(1).toLowerCase()]
+        : [k, v === 'annually' ? 'yearly' : v]);
       if (!updates.length) return { error: 'No valid fields to update.' };
       const verify = await db.prepare('SELECT id FROM tasks WHERE id = $1 AND organization_id = $2').get(task_id, orgId);
       if (!verify) return { error: `Task ${task_id} not found.` };
@@ -4582,16 +4625,21 @@ async function executeAgentTool(toolName, args, orgId) {
     }
     case 'create_action': {
       const { title, description = '', assignee = '', priority = 'Medium', due_date = null } = args;
+      const normPriority = priority.charAt(0).toUpperCase() + priority.slice(1).toLowerCase();
       const result = await db.prepare(
         `INSERT INTO actions (organization_id, title, description, assignee, priority, status, due_date)
          VALUES ($1, $2, $3, $4, $5, 'open', $6)`
-      ).run(orgId, title, description, assignee, priority, due_date);
+      ).run(orgId, title, description, assignee, normPriority, due_date);
       return { success: true, id: result.lastInsertRowid, title, priority };
     }
     case 'update_action': {
       const { action_id, ...fields } = args;
       const allowed = ['title', 'description', 'assignee', 'priority', 'status', 'due_date', 'resolved_by'];
-      const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      let updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      // Normalize priority casing to match schema CHECK constraint
+      updates = updates.map(([k, v]) => k === 'priority'
+        ? [k, v.charAt(0).toUpperCase() + v.slice(1).toLowerCase()]
+        : [k, v]);
       if (!updates.length) return { error: 'No valid fields to update.' };
       const verify = await db.prepare('SELECT id FROM actions WHERE id = $1 AND organization_id = $2').get(action_id, orgId);
       if (!verify) return { error: `Action ${action_id} not found.` };
@@ -4665,6 +4713,26 @@ async function executeAgentTool(toolName, args, orgId) {
         `UPDATE audit_checklist SET rating = $1, notes = $2, updated_at = NOW() WHERE id = $3`
       ).run(rating, notes, checklist_id);
       return { success: true, checklist_id, rating, message: `Item rated as ${rating}.` };
+    }
+    case 'get_management_reviews': {
+      const params = [orgId];
+      let sql = 'SELECT id, title, review_date, status, chairperson, next_review_date, summary FROM management_reviews WHERE organization_id = $1';
+      if (args.status) { sql += ' AND status = $2'; params.push(args.status); }
+      sql += ' ORDER BY review_date DESC LIMIT 20';
+      const reviews = await db.prepare(sql).all(...params);
+      return { management_reviews: reviews, count: reviews.length };
+    }
+    case 'create_management_review': {
+      const { title, review_date, chairperson = '', attendees = '', next_review_date = null } = args;
+      // Store attendees as JSON array if passed as comma-separated string
+      const attendeesJson = Array.isArray(attendees)
+        ? JSON.stringify(attendees)
+        : JSON.stringify(attendees.split(',').map(a => a.trim()).filter(Boolean));
+      const result = await db.prepare(`
+        INSERT INTO management_reviews (organization_id, title, review_date, status, chairperson, attendees, next_review_date)
+        VALUES ($1, $2, $3, 'scheduled', $4, $5, $6)
+      `).run(orgId, title, review_date, chairperson, attendeesJson, next_review_date);
+      return { success: true, id: result.lastInsertRowid, title, review_date, status: 'scheduled' };
     }
     default:
       return { error: `Unknown tool: ${toolName}` };
