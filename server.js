@@ -4670,16 +4670,29 @@ async function executeAgentTool(toolName, args, orgId) {
 }
 
 app.post('/api/agent', requireOrgContext, async (req, res) => {
+  console.log('[Agent] Request received — userId:', req.session.userId, 'orgId:', req.orgId);
+
   const openai = getOpenAI();
   if (!openai) {
+    console.error('[Agent] No OpenAI client — OPENAI_API_KEY missing or openai package failed to load');
     return res.status(503).json({ error: 'AI Agent is not configured. Ask your administrator to set the OPENAI_API_KEY environment variable.' });
   }
+  console.log('[Agent] OpenAI client obtained successfully');
 
   const { message, history = [] } = req.body;
+  console.log('[Agent] Message:', JSON.stringify(message), '| History length:', history.length);
   if (!message?.trim()) return res.status(400).json({ error: 'Message is required' });
 
   // Load the current user's permissions from the database
-  const userRecord = await db.prepare('SELECT permissions FROM users WHERE id = $1').get(req.session.userId);
+  let userRecord;
+  try {
+    userRecord = await db.prepare('SELECT permissions FROM users WHERE id = $1').get(req.session.userId);
+    console.log('[Agent] User permissions raw:', userRecord?.permissions);
+  } catch (dbErr) {
+    console.error('[Agent] DB error loading user permissions:', dbErr.stack || dbErr);
+    return res.status(500).json({ error: 'Failed to load user permissions: ' + dbErr.message });
+  }
+
   let userPerms = [];
   try {
     userPerms = JSON.parse(userRecord?.permissions || '[]');
@@ -4688,12 +4701,14 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
   if (req.session.userRole === 'superadmin' || userPerms.includes('admin')) {
     userPerms = Object.values(AGENT_TOOL_PERMISSIONS);
   }
+  console.log('[Agent] Resolved user permissions:', userPerms);
 
   // Filter tools to only those the user has permission to use
   const allowedTools = AGENT_TOOLS.filter(t => {
     const required = AGENT_TOOL_PERMISSIONS[t.function.name];
     return !required || userPerms.includes(required);
   });
+  console.log('[Agent] Allowed tools:', allowedTools.map(t => t.function.name));
 
   // System + last 20 history messages + new user turn
   const messages = [
@@ -4702,14 +4717,21 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
     { role: 'user', content: message.trim() },
   ];
 
+  const openaiPayload = {
+    model: 'gpt-4o-mini',
+    messages,
+    tools: allowedTools,
+    tool_choice: 'auto',
+    max_tokens: 1024,
+  };
+  console.log('[Agent] Sending request to OpenAI — model:', openaiPayload.model,
+    '| messages:', openaiPayload.messages.length,
+    '| tools:', openaiPayload.tools.length);
+
   try {
-    let response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages,
-      tools: allowedTools,
-      tool_choice: 'auto',
-      max_tokens: 1024,
-    });
+    let response = await openai.chat.completions.create(openaiPayload);
+    console.log('[Agent] OpenAI responded — finish_reason:', response.choices[0]?.finish_reason,
+      '| tool_calls:', response.choices[0]?.message?.tool_calls?.length ?? 0);
 
     let assistantMsg = response.choices[0].message;
 
@@ -4718,6 +4740,7 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
     let rounds = 0;
     while (assistantMsg.tool_calls?.length && rounds < MAX_ROUNDS) {
       rounds++;
+      console.log('[Agent] Agentic loop round', rounds, '— tool calls:', assistantMsg.tool_calls.map(tc => tc.function.name));
       messages.push(assistantMsg);
 
       const toolResults = await Promise.all(
@@ -4727,12 +4750,16 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
             // Defense-in-depth: verify permission even if tool slipped through
             const required = AGENT_TOOL_PERMISSIONS[tc.function.name];
             if (required && !userPerms.includes(required)) {
+              console.warn('[Agent] Permission denied for tool', tc.function.name, '— required:', required);
               result = { error: `Permission denied. You do not have access to the '${required}' module.` };
             } else {
               const toolArgs = JSON.parse(tc.function.arguments || '{}');
+              console.log('[Agent] Executing tool:', tc.function.name, '| args:', JSON.stringify(toolArgs));
               result = await executeAgentTool(tc.function.name, toolArgs, req.orgId);
+              console.log('[Agent] Tool result for', tc.function.name, ':', JSON.stringify(result).slice(0, 200));
             }
           } catch (err) {
+            console.error('[Agent] Tool execution error for', tc.function.name, ':', err.stack || err);
             result = { error: `Tool failed: ${err.message}` };
           }
           return { role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) };
@@ -4741,6 +4768,7 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
 
       messages.push(...toolResults);
 
+      console.log('[Agent] Sending follow-up request to OpenAI after tool results (round', rounds, ')');
       response = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages,
@@ -4748,15 +4776,23 @@ app.post('/api/agent', requireOrgContext, async (req, res) => {
         tool_choice: 'auto',
         max_tokens: 1024,
       });
+      console.log('[Agent] OpenAI round', rounds, 'response — finish_reason:', response.choices[0]?.finish_reason,
+        '| tool_calls:', response.choices[0]?.message?.tool_calls?.length ?? 0);
       assistantMsg = response.choices[0].message;
     }
 
+    console.log('[Agent] Final reply length:', (assistantMsg.content || '').length);
     res.json({ reply: assistantMsg.content || '_(no response)_' });
   } catch (err) {
-    console.error('[Agent] OpenAI error:', err);
+    console.error('[Agent] OpenAI error — status:', err.status, '| message:', err.message);
+    console.error('[Agent] Full error:', err.stack || err);
     if (err.status === 429) return res.status(429).json({ error: 'Rate limit reached. Please wait a moment and try again.' });
     if (err.status === 401) return res.status(503).json({ error: 'Invalid OpenAI API key. Please check your server configuration.' });
-    res.status(500).json({ error: 'The AI agent encountered an error. Please try again.' });
+    if (err.status === 400) return res.status(400).json({ error: 'Bad request to OpenAI: ' + (err.message || 'unknown error') });
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+      return res.status(503).json({ error: 'Cannot reach OpenAI API. Check network connectivity: ' + err.message });
+    }
+    res.status(500).json({ error: 'AI agent error: ' + (err.message || 'unknown error') });
   }
 });
 
