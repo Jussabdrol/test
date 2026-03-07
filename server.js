@@ -4056,6 +4056,12 @@ const AGENT_TOOL_PERMISSIONS = {
   rate_checklist_item:         'audit',
   get_management_reviews:      'org',
   create_management_review:    'org',
+  get_mission:                 'org',
+  update_mission:              'org',
+  get_architecture:            'org',
+  create_architecture_item:    'org',
+  update_architecture_item:    'org',
+  delete_architecture_item:    'org',
 };
 
 const AGENT_TOOLS = [
@@ -4428,6 +4434,96 @@ const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_mission',
+      description: "Fetches the organization's mission statement, vision, and values.",
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_mission',
+      description: "Updates the organization's mission statement, vision, and/or values. Only provided fields are updated.",
+      parameters: {
+        type: 'object',
+        properties: {
+          content:     { type: 'string', description: 'Mission statement text' },
+          vision:      { type: 'string', description: 'Vision statement text' },
+          values_text: { type: 'string', description: 'Values text' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_architecture',
+      description: 'Fetches architecture items (roles, processes, systems, assets, facilities). Optionally filter by type.',
+      parameters: {
+        type: 'object',
+        properties: {
+          arch_type: { type: 'string', description: 'Filter by type', enum: ['role', 'process', 'system', 'asset', 'facility'] },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_architecture_item',
+      description: 'Creates a new architecture item such as a role, process, system, asset, or facility.',
+      parameters: {
+        type: 'object',
+        properties: {
+          arch_type:   { type: 'string', description: 'Type of item', enum: ['role', 'process', 'system', 'asset', 'facility'] },
+          name:        { type: 'string', description: 'Name of the item' },
+          description: { type: 'string', description: 'Description' },
+          owner:       { type: 'string', description: 'Owner / responsible person' },
+          status:      { type: 'string', description: 'active | inactive', enum: ['active', 'inactive'] },
+          parent_id:   { type: 'number', description: 'ID of parent architecture item (for hierarchy)' },
+        },
+        required: ['arch_type', 'name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_architecture_item',
+      description: 'Updates an existing architecture item (role, process, system, asset, or facility).',
+      parameters: {
+        type: 'object',
+        properties: {
+          item_id:     { type: 'number', description: 'ID of the architecture item' },
+          name:        { type: 'string' },
+          description: { type: 'string' },
+          owner:       { type: 'string' },
+          status:      { type: 'string', enum: ['active', 'inactive'] },
+          parent_id:   { type: 'number', description: 'ID of parent item (set to 0 to remove parent)' },
+        },
+        required: ['item_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_architecture_item',
+      description: 'Deletes an architecture item. Use with caution — this is permanent.',
+      parameters: {
+        type: 'object',
+        properties: {
+          item_id: { type: 'number', description: 'ID of the architecture item to delete' },
+        },
+        required: ['item_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'create_document',
       description: 'Registers a document in the document register (metadata only, no file upload).',
       parameters: {
@@ -4713,6 +4809,65 @@ async function executeAgentTool(toolName, args, orgId) {
         `UPDATE audit_checklist SET rating = $1, notes = $2, updated_at = NOW() WHERE id = $3`
       ).run(rating, notes, checklist_id);
       return { success: true, checklist_id, rating, message: `Item rated as ${rating}.` };
+    }
+    case 'get_mission': {
+      const mission = await db.prepare('SELECT content, vision, values_text FROM org_mission WHERE organization_id = $1').get(orgId);
+      const org = await db.prepare('SELECT name FROM organizations WHERE id = $1').get(orgId);
+      return { org_name: org?.name || '', ...mission };
+    }
+    case 'update_mission': {
+      const { content, vision, values_text } = args;
+      const existing = await db.prepare('SELECT content, vision, values_text FROM org_mission WHERE organization_id = $1').get(orgId);
+      if (!existing) return { error: 'Mission record not found for this organization.' };
+      await db.prepare(`
+        UPDATE org_mission SET
+          content = $1, vision = $2, values_text = $3, updated_at = NOW()
+        WHERE organization_id = $4
+      `).run(
+        content     !== undefined ? content     : existing.content,
+        vision      !== undefined ? vision      : existing.vision,
+        values_text !== undefined ? values_text : existing.values_text,
+        orgId
+      );
+      const updated = await db.prepare('SELECT content, vision, values_text FROM org_mission WHERE organization_id = $1').get(orgId);
+      return { success: true, ...updated };
+    }
+    case 'get_architecture': {
+      const params = [orgId];
+      let sql = 'SELECT id, arch_type, name, description, owner, status, parent_id, sort_order FROM org_architecture WHERE organization_id = $1';
+      if (args.arch_type) { sql += ' AND arch_type = $2'; params.push(args.arch_type); }
+      sql += ' ORDER BY arch_type, sort_order, name';
+      const items = await db.prepare(sql).all(...params);
+      return { items, count: items.length };
+    }
+    case 'create_architecture_item': {
+      const { arch_type, name, description = '', owner = '', status = 'active', parent_id = null } = args;
+      const result = await db.prepare(`
+        INSERT INTO org_architecture (organization_id, arch_type, name, description, owner, status, parent_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `).run(orgId, arch_type, name, description, owner, status, parent_id || null);
+      return { success: true, id: result.lastInsertRowid, arch_type, name };
+    }
+    case 'update_architecture_item': {
+      const { item_id, ...fields } = args;
+      const verify = await db.prepare('SELECT id FROM org_architecture WHERE id = $1 AND organization_id = $2').get(item_id, orgId);
+      if (!verify) return { error: `Architecture item ${item_id} not found.` };
+      const allowed = ['name', 'description', 'owner', 'status', 'parent_id'];
+      let updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
+      if (!updates.length) return { error: 'No valid fields to update.' };
+      // Allow parent_id = 0 to mean "remove parent" → set to NULL
+      updates = updates.map(([k, v]) => [k, k === 'parent_id' && v === 0 ? null : v]);
+      const setClauses = updates.map(([k], i) => `${k} = $${i + 2}`).join(', ');
+      await db.prepare(`UPDATE org_architecture SET ${setClauses}, updated_at = NOW() WHERE id = $1`)
+        .run(item_id, ...updates.map(([, v]) => v));
+      return { success: true, item_id, updated_fields: updates.map(([k]) => k) };
+    }
+    case 'delete_architecture_item': {
+      const { item_id } = args;
+      const verify = await db.prepare('SELECT id, name, arch_type FROM org_architecture WHERE id = $1 AND organization_id = $2').get(item_id, orgId);
+      if (!verify) return { error: `Architecture item ${item_id} not found.` };
+      await db.prepare('DELETE FROM org_architecture WHERE id = $1 AND organization_id = $2').run(item_id, orgId);
+      return { success: true, item_id, deleted: verify.name, arch_type: verify.arch_type };
     }
     case 'get_management_reviews': {
       const params = [orgId];
