@@ -4431,7 +4431,7 @@ const AGENT_TOOLS = [
 async function executeAgentTool(toolName, args, orgId) {
   switch (toolName) {
     case 'get_dashboard_summary': {
-      const openRisks      = (await db.prepare("SELECT COUNT(*) as c FROM risks WHERE organization_id = $1 AND status = 'open'").get(orgId))?.c ?? 0;
+      const openRisks      = (await db.prepare("SELECT COUNT(*) as c FROM risks WHERE organization_id = $1 AND status NOT IN ('accepted','closed')").get(orgId))?.c ?? 0;
       const openNCs        = (await db.prepare("SELECT COUNT(*) as c FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE a.organization_id = $1 AND n.status IN ('open','in_progress')").get(orgId))?.c ?? 0;
       const overdueTasks   = (await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE organization_id = $1 AND status = 'active' AND next_due < CURRENT_DATE").get(orgId))?.c ?? 0;
       const upcomingAudits = (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE organization_id = $1 AND status = 'planned' AND planned_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '30 days')").get(orgId))?.c ?? 0;
@@ -4440,9 +4440,9 @@ async function executeAgentTool(toolName, args, orgId) {
     }
     case 'get_risks': {
       const params = [orgId];
-      let sql = 'SELECT id, title, description, likelihood, impact, risk_score, status, category, owner, created_at FROM risks WHERE organization_id = $1';
+      let sql = 'SELECT id, title, description, likelihood, impact, inherent_score, status, category, risk_owner, created_at FROM risks WHERE organization_id = $1';
       if (args.status) { sql += ' AND status = $2'; params.push(args.status); }
-      sql += ' ORDER BY risk_score DESC NULLS LAST LIMIT 50';
+      sql += ' ORDER BY inherent_score DESC NULLS LAST LIMIT 50';
       const risks = await db.prepare(sql).all(...params);
       return { risks, count: risks.length };
     }
@@ -4450,14 +4450,14 @@ async function executeAgentTool(toolName, args, orgId) {
       const { title, description = '', likelihood, impact, category = 'General', owner = '' } = args;
       const score = Math.round((likelihood ?? 1) * (impact ?? 1));
       const result = await db.prepare(`
-        INSERT INTO risks (organization_id, title, description, likelihood, impact, risk_score, category, owner, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open')
+        INSERT INTO risks (organization_id, title, description, likelihood, impact, inherent_score, category, risk_owner, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'identified')
       `).run(orgId, title, description, likelihood, impact, score, category, owner);
-      return { success: true, id: result.lastInsertRowid, title, risk_score: score };
+      return { success: true, id: result.lastInsertRowid, title, inherent_score: score };
     }
     case 'get_nonconformities': {
       const params = [orgId];
-      let sql = `SELECT n.id, n.title, n.description, n.severity, n.status, n.clause, n.assigned_to, n.created_at
+      let sql = `SELECT n.id, n.description, n.severity, n.status, n.clause, n.responsible, n.created_at
                  FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE a.organization_id = $1`;
       if (args.status) { sql += ' AND n.status = $2'; params.push(args.status); }
       sql += ' ORDER BY n.created_at DESC LIMIT 50';
@@ -4467,12 +4467,14 @@ async function executeAgentTool(toolName, args, orgId) {
     case 'create_nonconformity': {
       const latest = await db.prepare('SELECT id FROM audits WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 1').get(orgId);
       if (!latest) return { error: 'No audit found. Please create an audit first before adding a non-conformity.' };
-      const { title, description = '', severity = 'minor', clause = '', assigned_to = '' } = args;
+      const { title = '', description = '', severity = 'minor', clause = '', assigned_to = '' } = args;
+      // non_conformities has no title column — combine title+description into description
+      const fullDescription = title ? (description ? `${title}: ${description}` : title) : description;
       const result = await db.prepare(`
-        INSERT INTO non_conformities (audit_id, title, description, severity, status, clause, assigned_to)
+        INSERT INTO non_conformities (organization_id, audit_id, description, severity, status, clause, responsible)
         VALUES ($1, $2, $3, $4, 'open', $5, $6)
-      `).run(latest.id, title, description, severity, clause, assigned_to);
-      return { success: true, id: result.lastInsertRowid, title, severity, audit_id: latest.id };
+      `).run(orgId, latest.id, fullDescription, severity, clause, assigned_to);
+      return { success: true, id: result.lastInsertRowid, description: fullDescription, severity, audit_id: latest.id };
     }
     case 'get_tasks': {
       const params = [orgId];
@@ -4501,14 +4503,14 @@ async function executeAgentTool(toolName, args, orgId) {
     }
     case 'get_documents': {
       const docs = await db.prepare(`
-        SELECT id, title, document_type, version, status, owner, review_date
+        SELECT id, title, doc_type, version, status, owner, review_date
         FROM documents WHERE organization_id = $1 ORDER BY updated_at DESC LIMIT 50
       `).all(orgId);
       return { documents: docs, count: docs.length };
     }
     case 'get_open_actions': {
       const actions = await db.prepare(`
-        SELECT id, title, description, assigned_to, due_date, status, priority
+        SELECT id, title, description, assignee, due_date, status, priority
         FROM actions WHERE organization_id = $1 AND status = 'open' ORDER BY due_date ASC NULLS LAST LIMIT 50
       `).all(orgId);
       return { actions, count: actions.length };
@@ -4555,7 +4557,7 @@ async function executeAgentTool(toolName, args, orgId) {
       // Recalculate score if likelihood/impact changed
       const newLikelihood = fields.likelihood ?? verify.likelihood;
       const newImpact = fields.impact ?? verify.impact;
-      const scoreUpdate = (fields.likelihood || fields.impact) ? `, risk_score = ${Math.round(newLikelihood * newImpact)}` : '';
+      const scoreUpdate = (fields.likelihood || fields.impact) ? `, inherent_score = ${Math.round(newLikelihood * newImpact)}` : '';
       const setClauses = updates.map(([k], i) => `${k} = $${i + 2}`).join(', ');
       await db.prepare(`UPDATE risks SET ${setClauses}${scoreUpdate}, updated_at = NOW() WHERE id = $1`)
         .run(risk_id, ...updates.map(([, v]) => v));
@@ -4579,7 +4581,7 @@ async function executeAgentTool(toolName, args, orgId) {
       return { success: true, nc_id, updated_fields: updates.map(([k]) => k) };
     }
     case 'create_action': {
-      const { title, description = '', assignee = '', priority = 'medium', due_date = null } = args;
+      const { title, description = '', assignee = '', priority = 'Medium', due_date = null } = args;
       const result = await db.prepare(
         `INSERT INTO actions (organization_id, title, description, assignee, priority, status, due_date)
          VALUES ($1, $2, $3, $4, $5, 'open', $6)`
@@ -4624,14 +4626,14 @@ async function executeAgentTool(toolName, args, orgId) {
       const verify = await db.prepare('SELECT id FROM risks WHERE id = $1 AND organization_id = $2').get(risk_id, orgId);
       if (!verify) return { error: `Risk ${risk_id} not found.` };
       const result = await db.prepare(
-        `INSERT INTO risk_treatments (risk_id, description, status, due_date, owner)
-         VALUES ($1, $2, $3, $4, $5)`
-      ).run(risk_id, description, status, due_date, owner);
+        `INSERT INTO risk_treatments (organization_id, risk_id, description, status, due_date, responsible)
+         VALUES ($1, $2, $3, $4, $5, $6)`
+      ).run(orgId, risk_id, description, status, due_date, owner);
       return { success: true, id: result.lastInsertRowid, risk_id, description };
     }
     case 'update_treatment': {
       const { treatment_id, ...fields } = args;
-      const allowed = ['description', 'status', 'due_date', 'owner'];
+      const allowed = ['description', 'status', 'due_date', 'responsible'];
       const updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
       if (!updates.length) return { error: 'No valid fields to update.' };
       // Verify ownership via risk join
@@ -4647,7 +4649,7 @@ async function executeAgentTool(toolName, args, orgId) {
     case 'create_document': {
       const { title, doc_type = 'Policy', version = '1.0', owner = '', status = 'draft', review_date = null } = args;
       const result = await db.prepare(
-        `INSERT INTO documents (organization_id, title, document_type, version, owner, status, review_date)
+        `INSERT INTO documents (organization_id, title, doc_type, version, owner, status, review_date)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`
       ).run(orgId, title, doc_type, version, owner, status, review_date);
       return { success: true, id: result.lastInsertRowid, title, doc_type, status };
