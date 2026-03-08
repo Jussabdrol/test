@@ -5337,6 +5337,186 @@ async function bulkInsert(dataType, mappedRows, orgId) {
   return results;
 }
 
+function buildImportTemplate() {
+  const wb = XLSX.utils.book_new();
+
+  // Shared style helpers (xlsx CE supports limited cell styling via !cols / !rows)
+  const col = w => ({ wch: w });
+
+  // ── Sheet definitions ────────────────────────────────────────────────────
+  const sheets = [
+    {
+      name: 'Instructions',
+      headerColor: null,
+      colWidths: [28, 60],
+      rows: [
+        ['BOP Compliance Platform – Master Import Template', ''],
+        ['', ''],
+        ['How to use this file:', ''],
+        ['1. Fill in the relevant sheet(s) for the data you want to import.', ''],
+        ['2. Do NOT rename the column headers – the AI uses them to map your data.', ''],
+        ['3. Delete the example rows before importing (rows starting with "EXAMPLE").', ''],
+        ['4. Upload the file via the Agent → Import button in the app.', ''],
+        ['5. You can upload one sheet at a time or all sheets in one file – the agent detects the type automatically.', ''],
+        ['', ''],
+        ['Sheet', 'What it imports'],
+        ['Risks', 'Risk register entries'],
+        ['Risk_Treatments', 'Treatment / control actions linked to a risk (by title)'],
+        ['Architecture', 'Roles, processes, systems, assets, facilities'],
+        ['Requirements', 'Standard clauses (ISO 27001, ISO 9001 etc.) + optional link to a process'],
+        ['Tasks', 'Recurring compliance tasks'],
+        ['Actions', 'One-off follow-up action items'],
+        ['Nonconformities', 'Non-conformities (attached to the most recent audit)'],
+        ['Documents', 'Document register entries (metadata only, no file)'],
+        ['', ''],
+        ['Notes:', ''],
+        ['• likelihood / impact: integers 1 (very low) to 5 (very high)', ''],
+        ['• Dates: use YYYY-MM-DD format (e.g. 2025-12-31)', ''],
+        ['• arch_type must be exactly: role | process | system | asset | facility', ''],
+        ['• risk_title in Risk_Treatments must exactly match a title in the Risks sheet (or an existing risk in the app)', ''],
+        ['• process_name in Requirements links to an architecture item by name (fuzzy match is case-insensitive)', ''],
+        ['• Priority values: Low | Medium | High | Critical', ''],
+        ['• Recurrence values: daily | weekly | biweekly | monthly | quarterly | yearly', ''],
+      ],
+    },
+    {
+      name: 'Risks',
+      colWidths: [30, 50, 25, 12, 10, 25, 20],
+      headers: ['title','description','category','likelihood','impact','risk_owner','status'],
+      notes:   ['Required. Short name','Full description','e.g. Operational, Compliance, Financial, Information Security','1–5 (1=very low)','1–5 (1=very low)','Responsible person','identified | analyzing | treating | accepted | closed'],
+      examples: [
+        ['Unauthorised access to customer data','A breach of the customer database by an external attacker','Information Security',4,4,'John Smith','identified'],
+        ['GDPR non-compliance','Failure to maintain adequate records of processing activities','Compliance',3,5,'Jane Doe','analyzing'],
+        ['Key supplier failure','Single-source supplier goes out of business','Operational',2,4,'Operations Manager','treating'],
+      ],
+    },
+    {
+      name: 'Risk_Treatments',
+      colWidths: [32, 50, 20, 15, 25],
+      headers: ['risk_title','description','status','due_date','responsible'],
+      notes:   ['Required. Must match a risk title exactly','What will be done','planned | in_progress | implemented | verified','YYYY-MM-DD','Person responsible'],
+      examples: [
+        ['Unauthorised access to customer data','Implement multi-factor authentication for all admin accounts','planned','2025-06-30','IT Security Lead'],
+        ['Unauthorised access to customer data','Conduct penetration test of customer portal','in_progress','2025-04-15','IT Manager'],
+        ['GDPR non-compliance','Appoint a Data Protection Officer and document all processing activities','planned','2025-07-31','Legal Counsel'],
+      ],
+    },
+    {
+      name: 'Architecture',
+      colWidths: [15, 30, 45, 22, 12, 28],
+      headers: ['arch_type','name','description','owner','status','parent_name'],
+      notes:   ['Required: role | process | system | asset | facility','Required. Item name','What this item does / is','Owner / manager','active | inactive','Name of parent item (leave blank if none)'],
+      examples: [
+        ['process','Customer Onboarding','End-to-end process for onboarding new customers','Sales Director','active',''],
+        ['role','Data Protection Officer','Responsible for GDPR compliance and data governance','Jane Doe','active',''],
+        ['system','CRM Platform','Customer relationship management system (Salesforce)','IT Manager','active',''],
+        ['asset','Customer Database','Primary PostgreSQL database containing customer PII','IT Manager','active','CRM Platform'],
+        ['facility','Head Office','Main office location in Amsterdam','Facilities Manager','active',''],
+      ],
+    },
+    {
+      name: 'Requirements',
+      colWidths: [18, 12, 40, 50, 22, 28],
+      headers: ['standard','clause','title','description','category','process_name'],
+      notes:   ['e.g. ISO 27001, ISO 9001','Required: e.g. 4.1','Required. Requirement title','Full requirement text','Category / theme','Architecture process to cross-link (leave blank if none)'],
+      examples: [
+        ['ISO 27001','4.1','Understanding the organisation','Determine external and internal issues relevant to the ISMS','Context','Strategic Planning'],
+        ['ISO 27001','6.1.2','Information security risk assessment','Establish and apply a risk assessment process','Risk','Risk Management Process'],
+        ['ISO 9001','8.1','Operational planning and control','Plan, implement, control, monitor and review processes','Operations','Customer Onboarding'],
+      ],
+    },
+    {
+      name: 'Tasks',
+      colWidths: [32, 45, 22, 15, 20, 12],
+      headers: ['title','description','assignee','recurrence','category','priority'],
+      notes:   ['Required','What needs to be done','Person responsible','daily | weekly | biweekly | monthly | quarterly | yearly','Task category','Low | Medium | High | Critical'],
+      examples: [
+        ['Monthly backup verification','Verify that all system backups completed successfully and are restorable','IT Manager','monthly','IT Operations','High'],
+        ['Quarterly security awareness training','Deliver security awareness training session to all staff','HR Manager','quarterly','Training','Medium'],
+        ['Annual penetration test','Commission and complete external penetration test of production systems','IT Security Lead','yearly','Security','High'],
+      ],
+    },
+    {
+      name: 'Actions',
+      colWidths: [32, 45, 22, 12, 15],
+      headers: ['title','description','assignee','priority','due_date'],
+      notes:   ['Required','Details','Person responsible','Low | Medium | High | Critical','YYYY-MM-DD'],
+      examples: [
+        ['Update privacy notice on website','Review and update the public privacy notice to reflect new processing activities','Legal Counsel','High','2025-05-31'],
+        ['Remediate open firewall ports','Close unnecessary open ports identified in last vulnerability scan','IT Security Lead','Critical','2025-04-01'],
+        ['Complete DPA with new processor','Execute a Data Processing Agreement with the new payroll provider','Legal Counsel','Medium','2025-06-15'],
+      ],
+    },
+    {
+      name: 'Nonconformities',
+      colWidths: [55, 10, 12, 22, 15],
+      headers: ['description','severity','clause','responsible','status'],
+      notes:   ['Required. Full description of the non-conformity','minor | major','Related ISO clause e.g. 8.1','Responsible person','open | in_progress | closed | verified'],
+      examples: [
+        ['Backup restore procedure has not been tested in the last 12 months as required by the backup policy','minor','A.12.3','IT Manager','open'],
+        ['No evidence of management review meeting held in current calendar year','major','9.3','Quality Manager','in_progress'],
+        ['Third-party supplier risk assessment overdue by 6 months','minor','A.15.2','Procurement Manager','open'],
+      ],
+    },
+    {
+      name: 'Documents',
+      colWidths: [35, 20, 10, 22, 12, 15],
+      headers: ['title','doc_type','version','owner','status','review_date'],
+      notes:   ['Required','policy | procedure | work_instruction | record | form | report | evidence | other','e.g. 1.0','Document owner','draft | review | approved | obsolete','YYYY-MM-DD'],
+      examples: [
+        ['Information Security Policy','policy','3.1','CISO','approved','2026-01-01'],
+        ['Incident Response Procedure','procedure','2.0','IT Security Lead','approved','2025-12-01'],
+        ['Risk Assessment Record – 2024','record','1.0','Risk Manager','approved',''],
+        ['Access Control Work Instruction','work_instruction','1.2','IT Manager','review','2025-09-01'],
+      ],
+    },
+  ];
+
+  // ── Build each sheet ─────────────────────────────────────────────────────
+  for (const def of sheets) {
+    const wsData = [];
+
+    if (def.name === 'Instructions') {
+      wsData.push(...def.rows);
+    } else {
+      // Row 1: Notes / valid values
+      wsData.push(def.notes);
+      // Row 2: Bold column headers
+      wsData.push(def.headers);
+      // Example rows
+      for (const ex of def.examples) {
+        wsData.push(ex);
+      }
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Column widths
+    ws['!cols'] = def.colWidths.map(col);
+
+    // Freeze the header row (row 2 for data sheets, row 1 for Instructions)
+    if (def.name !== 'Instructions') {
+      ws['!freeze'] = { xSplit: 0, ySplit: 2 };
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws, def.name);
+  }
+
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+app.get('/api/agent/import/template', requireOrgContext, (req, res) => {
+  try {
+    const buf = buildImportTemplate();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="BOP_Import_Template.xlsx"');
+    res.send(buf);
+  } catch (err) {
+    console.error('[Import Template] error:', err);
+    res.status(500).json({ error: 'Failed to generate template.' });
+  }
+});
+
 app.post('/api/agent/import', requireOrgContext, upload.single('file'), async (req, res) => {
   const openai = getOpenAI();
   if (!openai) return res.status(503).json({ error: 'AI Agent is not configured (missing OPENAI_API_KEY).' });
