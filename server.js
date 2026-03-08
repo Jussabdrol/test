@@ -5131,19 +5131,34 @@ const IMPORT_TYPE_PERMISSIONS = {
   documents:        'org',
 };
 
+// Maps template tab names → import data types (case-insensitive)
+const SHEET_NAME_TO_TYPE = {
+  risks:             'risks',
+  risk_treatments:   'risk_treatments',
+  'risk treatments': 'risk_treatments',
+  architecture:      'architecture',
+  requirements:      'requirements',
+  tasks:             'tasks',
+  actions:           'actions',
+  nonconformities:   'nonconformities',
+  documents:         'documents',
+};
+
 function parseImportFile(buffer, originalname) {
   const ext = (originalname || '').split('.').pop().toLowerCase();
-  let workbook;
-  if (ext === 'csv') {
-    workbook = XLSX.read(buffer, { type: 'buffer', raw: false });
-  } else {
-    workbook = XLSX.read(buffer, { type: 'buffer' });
+  const workbook = XLSX.read(buffer, { type: 'buffer', raw: ext === 'csv' });
+
+  const sheets = [];
+  for (const sheetName of workbook.SheetNames) {
+    const ws = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    if (rows.length === 0) continue; // skip empty / instructions tabs
+    const headers = Object.keys(rows[0]);
+    // Skip the Instructions sheet (its first column is the long intro text)
+    if (sheetName.toLowerCase() === 'instructions') continue;
+    sheets.push({ sheetName, headers, rows });
   }
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  // header: 1 → array of arrays; defval: '' → empty cells become ''
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-  const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
-  return { headers, rows };
+  return sheets; // array of { sheetName, headers, rows }
 }
 
 async function detectAndMap(openai, headers, sampleRows, dataTypeHint, userMessage) {
@@ -5531,58 +5546,111 @@ app.post('/api/agent/import', requireOrgContext, upload.single('file'), async (r
   }
 
   const { data_type: hintedType, message } = req.body;
-  console.log('[Import] file:', req.file.originalname, 'size:', req.file.size, 'hint:', hintedType);
+  console.log('[Import] file:', req.file.originalname, 'size:', req.file.size);
 
-  // 1. Parse file
-  let headers, rows;
+  // 1. Parse all sheets from the file
+  let sheets;
   try {
-    ({ headers, rows } = parseImportFile(req.file.buffer, req.file.originalname));
+    sheets = parseImportFile(req.file.buffer, req.file.originalname);
   } catch (err) {
     console.error('[Import] parse error:', err.message);
     return res.status(400).json({ error: `Could not parse file: ${err.message}` });
   }
-  if (rows.length === 0) return res.status(400).json({ error: 'File is empty or has no data rows.' });
-  console.log('[Import] parsed rows:', rows.length, 'headers:', headers);
+  if (sheets.length === 0) return res.status(400).json({ error: 'File is empty or contains no importable data.' });
 
-  // Cap at 500 rows
   const MAX_ROWS = 500;
-  const truncated = rows.length > MAX_ROWS;
-  const workingRows = truncated ? rows.slice(0, MAX_ROWS) : rows;
+  const sheetResults = [];
+  let totalImported = 0;
+  let totalSkipped = 0;
 
-  // 2. Detect data type + get column mapping from OpenAI
-  let dataType, mapping;
-  try {
-    ({ data_type: dataType, mapping } = await detectAndMap(openai, headers, workingRows, hintedType, message));
-    console.log('[Import] detected type:', dataType, 'mapping:', mapping);
-  } catch (err) {
-    console.error('[Import] OpenAI mapping error:', err.message);
-    return res.status(500).json({ error: `Failed to analyse file: ${err.message}` });
+  for (const { sheetName, headers, rows } of sheets) {
+    // Resolve data type: tab name takes priority, then caller hint, then OpenAI detection
+    const nameKey = sheetName.toLowerCase().trim();
+    let dataType = SHEET_NAME_TO_TYPE[nameKey] || (sheets.length === 1 ? hintedType : null);
+
+    const workingRows = rows.slice(0, MAX_ROWS);
+    const truncated = rows.length > MAX_ROWS;
+
+    // Skip rows that look like the template's notes row (first cell matches a known notes phrase)
+    const dataRows = workingRows.filter(r => {
+      const firstVal = String(Object.values(r)[0] || '').trim();
+      return firstVal !== '' && !firstVal.startsWith('Required') && !firstVal.startsWith('e.g.');
+    });
+
+    if (dataRows.length === 0) {
+      console.log(`[Import] sheet "${sheetName}" skipped — no data rows after filtering notes`);
+      continue;
+    }
+
+    // If type still unknown, ask OpenAI
+    if (!dataType || !IMPORT_SCHEMAS[dataType]) {
+      try {
+        ({ data_type: dataType } = await detectAndMap(openai, headers, dataRows, hintedType, message));
+        console.log(`[Import] sheet "${sheetName}" — OpenAI detected type: ${dataType}`);
+      } catch (err) {
+        sheetResults.push({ sheet: sheetName, error: `Type detection failed: ${err.message}` });
+        continue;
+      }
+    }
+
+    if (!IMPORT_SCHEMAS[dataType]) {
+      sheetResults.push({ sheet: sheetName, error: `Unrecognised data type: "${dataType}"` });
+      continue;
+    }
+
+    // Permission check
+    const requiredPerm = IMPORT_TYPE_PERMISSIONS[dataType];
+    if (!userPerms.includes(requiredPerm)) {
+      sheetResults.push({ sheet: sheetName, data_type: dataType, error: `Permission denied (requires '${requiredPerm}' module access)` });
+      continue;
+    }
+
+    // Get column mapping (use cached type-based mapping for named sheets, OpenAI otherwise)
+    let mapping;
+    try {
+      ({ mapping } = await detectAndMap(openai, headers, dataRows, dataType, message));
+    } catch (err) {
+      sheetResults.push({ sheet: sheetName, data_type: dataType, error: `Column mapping failed: ${err.message}` });
+      continue;
+    }
+
+    console.log(`[Import] sheet "${sheetName}" type=${dataType} rows=${dataRows.length} mapping=`, mapping);
+
+    const mappedRows = applyMapping(dataRows, mapping);
+    const results = await bulkInsert(dataType, mappedRows, req.orgId);
+
+    totalImported += results.imported;
+    totalSkipped  += results.skipped;
+    sheetResults.push({
+      sheet:     sheetName,
+      data_type: dataType,
+      rows:      dataRows.length,
+      imported:  results.imported,
+      skipped:   results.skipped,
+      truncated,
+      errors:    results.errors,
+    });
   }
 
-  if (!IMPORT_SCHEMAS[dataType]) {
-    return res.status(400).json({ error: `Unrecognised data type detected: "${dataType}". Supported: ${Object.keys(IMPORT_SCHEMAS).join(', ')}` });
+  // Build human-readable summary
+  const summaryLines = [`**Import complete** — ${totalImported} record(s) imported across ${sheetResults.filter(s => !s.error).length} sheet(s).`];
+  for (const s of sheetResults) {
+    if (s.error) {
+      summaryLines.push(`• ${s.sheet}: ⚠ ${s.error}`);
+    } else {
+      const line = [`• ${s.sheet} (${s.data_type}): ✓ ${s.imported} imported`];
+      if (s.skipped)   line.push(`⚠ ${s.skipped} skipped`);
+      if (s.truncated) line.push(`(capped at ${MAX_ROWS} rows)`);
+      summaryLines.push(line.join(', '));
+      if (s.errors?.length) {
+        summaryLines.push(...s.errors.slice(0, 5).map(e => `  – ${e}`));
+        if (s.errors.length > 5) summaryLines.push(`  – …and ${s.errors.length - 5} more`);
+      }
+    }
   }
 
-  // 3. Permission check
-  const requiredPerm = IMPORT_TYPE_PERMISSIONS[dataType];
-  if (!userPerms.includes(requiredPerm)) {
-    return res.status(403).json({ error: `You do not have permission to import "${dataType}" (requires '${requiredPerm}' module access).` });
-  }
-
-  // 4. Apply mapping + bulk insert
-  const mappedRows = applyMapping(workingRows, mapping);
-  const results = await bulkInsert(dataType, mappedRows, req.orgId);
-
-  const summary = [
-    `Detected type: **${dataType}**`,
-    `Processed ${workingRows.length} row(s)${truncated ? ` (file was capped at ${MAX_ROWS} rows)` : ''}.`,
-    `✓ Imported: ${results.imported}`,
-    results.skipped > 0 ? `⚠ Skipped: ${results.skipped}` : null,
-    results.errors.length > 0 ? `\nIssues:\n${results.errors.slice(0, 10).map(e => `• ${e}`).join('\n')}${results.errors.length > 10 ? `\n• …and ${results.errors.length - 10} more` : ''}` : null,
-  ].filter(Boolean).join('\n');
-
-  console.log('[Import] done — imported:', results.imported, 'skipped:', results.skipped);
-  res.json({ data_type: dataType, mapping, imported: results.imported, skipped: results.skipped, errors: results.errors, summary });
+  console.log('[Import] done — total imported:', totalImported, 'skipped:', totalSkipped);
+  res.json({ sheets: sheetResults, imported: totalImported, skipped: totalSkipped, summary: summaryLines.join('\n') });
 });
 
 // SPA fallback
