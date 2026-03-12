@@ -686,12 +686,20 @@ async function addCrossLink(sourceType, sourceId, containerId) {
   if (!targetType || !targetId) return alert('Please select a type and item');
   await api('/api/cross-links', { method: 'POST', body: { source_type: sourceType, source_id: sourceId, target_type: targetType, target_id: parseInt(targetId) } });
   closeCrossLinkPicker();
-  renderCrossLinks(sourceType, sourceId, containerId);
+  if (sourceType === 'requirement') {
+    loadRequirements();
+  } else {
+    renderCrossLinks(sourceType, sourceId, containerId);
+  }
 }
 
 async function removeCrossLink(linkId, entityType, entityId, containerId) {
   await api(`/api/cross-links/${linkId}`, { method: 'DELETE' });
-  renderCrossLinks(entityType, entityId, containerId);
+  if (entityType === 'requirement') {
+    loadRequirements();
+  } else {
+    renderCrossLinks(entityType, entityId, containerId);
+  }
 }
 
 async function ensureMeta() {
@@ -3496,21 +3504,15 @@ async function loadRequirements() {
         }
       }
 
-      // Build links column: show processes inline, rest behind collapse
+      // Build links column
       const links = allLinks[r.id] || [];
-      const processLinks = links.filter(l => l.type === 'process');
-      const otherLinks = links.filter(l => l.type !== 'process');
       const collapseId = `req-cl-${r.id}`;
       let linksHtml;
       if (links.length === 0) {
         linksHtml = '<span style="color:var(--text-muted);font-size:11px">-</span>';
       } else {
-        const procLabel = processLinks.length > 0 ? processLinks.map(l => esc(l.name)).join(', ') : '';
-        const otherCount = otherLinks.length;
-        linksHtml = `<span style="font-size:12px;cursor:pointer" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">`;
-        if (procLabel) linksHtml += procLabel;
-        if (otherCount > 0) linksHtml += `${procLabel ? ' ' : ''}<span style="color:var(--text-muted)">(+${otherCount})</span>`;
-        linksHtml += ` <span class="cl-toggle-icon">+</span></span>`;
+        const linkCount = links.length;
+        linksHtml = `<span class="arch-link-toggle" onclick="toggleArchLinks('${collapseId}')">${linkCount} link${linkCount !== 1 ? 's' : ''} <span class="arch-link-arrow" id="${collapseId}-arrow">&#9660;</span></span>`;
       }
 
       html += `<div class="req-table-row">
@@ -3532,7 +3534,7 @@ async function loadRequirements() {
           </div>
         </div>
         <div id="req-expand-${r.id}" class="req-expand-row">
-          <div id="${collapseId}" class="req-links-detail collapsed">
+          <div id="${collapseId}" class="arch-links-detail collapsed">
             ${links.length > 0 ? buildInlineLinksDetail(links, 'requirement', r.id, `req-expand-${r.id}`) : ''}
           </div>
         </div>`;
