@@ -2680,11 +2680,36 @@ async function loadAuditExecution(auditId) {
 }
 
 async function updateChecklistField(itemId, field, value) {
-  await api(`/api/checklist/${itemId}`, { method: 'PUT', body: { [field]: value } });
+  const result = await api(`/api/checklist/${itemId}`, { method: 'PUT', body: { [field]: value } });
   // Re-render on rating change so badge and Raise NCR button update
   if (field === 'rating' && currentAuditId) {
-    loadAuditExecution(currentAuditId);
+    await loadAuditExecution(currentAuditId);
+    if (result?._auditStatus === 'completed') {
+      showAuditCompletedDialog(currentAuditId);
+    }
   }
+}
+
+function showAuditCompletedDialog(auditId) {
+  // Use a styled modal-style dialog instead of browser confirm
+  const existing = document.getElementById('audit-complete-dialog');
+  if (existing) existing.remove();
+
+  const dialog = document.createElement('div');
+  dialog.id = 'audit-complete-dialog';
+  dialog.className = 'modal';
+  dialog.innerHTML = `
+    <div class="modal-overlay"></div>
+    <div class="modal-content modal-sm" style="text-align:center;padding:28px 24px">
+      <div style="font-size:36px;margin-bottom:12px">&#9989;</div>
+      <h3 style="margin:0 0 8px">Audit Completed</h3>
+      <p style="color:var(--text-muted);font-size:13px;margin:0 0 20px">All items have been assessed. The audit has been marked as <strong>completed</strong>.<br><br>Would you like to generate an audit report and save it to Document Control?</p>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button class="btn btn-secondary" onclick="document.getElementById('audit-complete-dialog').remove()">Not now</button>
+        <button class="btn btn-primary" onclick="document.getElementById('audit-complete-dialog').remove();generateAuditReport(${auditId})">&#128196; Generate Report</button>
+      </div>
+    </div>`;
+  document.body.appendChild(dialog);
 }
 
 // PDF Export for Audit Report
@@ -2779,7 +2804,8 @@ function bopDrawFooters(doc) {
   }
 }
 
-async function exportAuditPDF(auditId) {
+// Build the audit PDF doc object (shared between export and report-save flows)
+async function buildAuditPDF(auditId) {
   const audit = await api(`/api/audits/${auditId}`);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -2949,8 +2975,35 @@ async function exportAuditPDF(auditId) {
   }
 
   bopDrawFooters(doc);
+  return { doc, audit };
+}
+
+async function exportAuditPDF(auditId) {
+  const { doc, audit } = await buildAuditPDF(auditId);
   const filename = `Audit_Report_${(audit.title || 'report').replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
   doc.save(filename);
+}
+
+async function generateAuditReport(auditId) {
+  try {
+    const { doc, audit } = await buildAuditPDF(auditId);
+
+    // Upload PDF to server → creates Document Control record
+    const blob = doc.output('blob');
+    const form = new FormData();
+    form.append('pdf', blob, `audit-report-${auditId}.pdf`);
+    const resp = await fetch(`/api/audits/${auditId}/upload-report`, { method: 'POST', body: form });
+    if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
+
+    // Also trigger local download
+    const filename = `Audit_Report_${(audit.title || 'report').replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+    doc.save(filename);
+
+    showToast('Audit report generated and saved to Document Control!', 'success');
+    loadAuditExecution(auditId);
+  } catch (e) {
+    alert('Failed to generate report: ' + e.message);
+  }
 }
 
 async function completeAudit(auditId) {

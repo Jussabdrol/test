@@ -1106,6 +1106,58 @@ app.delete('/api/audits/:id', requireOrgContext, async (req, res) => {
   res.json({ success: true });
 });
 
+// Upload client-generated audit report PDF and save to Document Control
+app.post('/api/audits/:id/upload-report', requireOrgContext, upload.single('pdf'), async (req, res) => {
+  const audit = await db.prepare('SELECT * FROM audits WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!audit) return res.status(404).json({ error: 'Audit not found' });
+  if (!req.file) return res.status(400).json({ error: 'No PDF file provided' });
+
+  let filePath = '';
+  const fileSize = req.file.size;
+  try {
+    filePath = await uploadToSupabase('reports', {
+      originalname: `audit-report-${audit.id}.pdf`,
+      buffer: req.file.buffer,
+      mimetype: 'application/pdf',
+    });
+  } catch (uploadErr) {
+    console.warn('[Audit Report] Supabase upload failed, storing reference only:', uploadErr.message);
+  }
+
+  // Find or create document control record for this audit's report
+  let existingDoc = await db.prepare(
+    "SELECT * FROM documents WHERE linked_ref_type = 'audit' AND linked_ref_id = ? AND organization_id = ?"
+  ).get(audit.id, req.orgId);
+
+  let docId;
+  if (!existingDoc) {
+    const result = await db.prepare(`
+      INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status,
+        file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id,
+        review_date, classification)
+      VALUES (?, ?, ?, 'report', '1.0', ?, 'approved', ?, ?, ?, 'application/pdf', 'audit', 'audit', ?, NULL, '')
+    `).run(
+      req.orgId,
+      `Audit Report – ${audit.title}`,
+      `Auto-generated report for audit: ${audit.title}`,
+      audit.lead_auditor || '',
+      `audit-report-${audit.id}.pdf`,
+      filePath,
+      fileSize,
+      audit.id
+    );
+    docId = result.lastInsertRowid;
+  } else {
+    await db.prepare(
+      "UPDATE documents SET file_path = ?, file_size = ?, file_name = ?, mime_type = 'application/pdf', updated_at = datetime('now') WHERE id = ?"
+    ).run(filePath, fileSize, `audit-report-${audit.id}.pdf`, existingDoc.id);
+    docId = existingDoc.id;
+  }
+
+  await logAuditAction(req.session.userId, req.session.userName || 'User', 'data_exported', 'audit', audit.id, audit.title, 'Report generated', req.orgId);
+  res.json({ success: true, doc_id: docId });
+});
+
 // --- Audit Checklist API ---
 
 // Add checklist item
@@ -1158,7 +1210,28 @@ app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
     }
   }
 
-  res.json(await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+  // Auto-update audit status when rating changes
+  let auditStatusChanged = null;
+  if (req.body.rating !== undefined) {
+    const audit = await db.prepare('SELECT * FROM audits WHERE id = ? AND organization_id = ?').get(existing.audit_id, req.orgId);
+    if (audit && audit.status !== 'completed' && audit.status !== 'cancelled') {
+      const allItems = await db.prepare('SELECT rating FROM audit_checklist WHERE audit_id = ?').all(existing.audit_id);
+      const allAssessed = allItems.length > 0 && allItems.every(i => i.rating !== 'not_assessed');
+      const anyAssessed = allItems.some(i => i.rating !== 'not_assessed');
+      if (allAssessed) {
+        await db.prepare("UPDATE audits SET status = 'completed', completed_date = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?")
+          .run(new Date().toISOString().split('T')[0], existing.audit_id, req.orgId);
+        auditStatusChanged = 'completed';
+      } else if (anyAssessed && audit.status === 'planned') {
+        await db.prepare("UPDATE audits SET status = 'in_progress', updated_at = datetime('now') WHERE id = ? AND organization_id = ?")
+          .run(existing.audit_id, req.orgId);
+        auditStatusChanged = 'in_progress';
+      }
+    }
+  }
+
+  const updatedItem = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  res.json({ ...updatedItem, _auditStatus: auditStatusChanged });
 });
 
 // Delete checklist item
