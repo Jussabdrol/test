@@ -488,7 +488,6 @@ function switchView(view) {
   else if (view === 'my-tasks') loadMyTasks();
   else if (view === 'management-reviews') loadManagementReviews();
   // Admin views
-  else if (view === 'admin-overview') loadAdminOverview();
   else if (view === 'admin-users') loadAdminUsers();
   else if (view === 'admin-audit-log') loadAdminAuditLog();
   else if (view === 'admin-settings') loadAdminSettings();
@@ -7375,122 +7374,7 @@ let adminUserFilters = { status: '', role: '', search: '' };
 let auditLogFilters = { action: '', entity_type: '' };
 let auditLogPage = 0;
 
-// --- Admin: System Overview ---
-async function loadAdminOverview() {
-  const stats = await api('/api/admin/overview');
-
-  // Health grid
-  const healthGrid = document.getElementById('admin-health-grid');
-  const dbSizeMB = (stats.databaseSize / (1024 * 1024)).toFixed(2);
-  const lastBackupDate = stats.lastBackup ? new Date(stats.lastBackup.created_at).toLocaleDateString() : 'Never';
-
-  healthGrid.innerHTML = `
-    <div class="admin-health-card">
-      <div class="health-icon success">&#9889;</div>
-      <div class="health-info">
-        <div class="health-label">System Status</div>
-        <div class="health-value">Operational</div>
-      </div>
-    </div>
-    <div class="admin-health-card">
-      <div class="health-icon info">&#128451;</div>
-      <div class="health-info">
-        <div class="health-label">Database Size</div>
-        <div class="health-value">${dbSizeMB} MB</div>
-      </div>
-    </div>
-    <div class="admin-health-card">
-      <div class="health-icon ${stats.lastBackup ? 'success' : 'warning'}">&#128190;</div>
-      <div class="health-info">
-        <div class="health-label">Last Backup</div>
-        <div class="health-value">${lastBackupDate}</div>
-      </div>
-    </div>
-    <div class="admin-health-card">
-      <div class="health-icon info">&#128100;</div>
-      <div class="health-info">
-        <div class="health-label">Active Users</div>
-        <div class="health-value">${stats.activeUsers} / ${stats.users}</div>
-      </div>
-    </div>
-  `;
-
-  // Module stats
-  const moduleStats = document.getElementById('admin-module-stats');
-  moduleStats.innerHTML = `
-    <div class="module-stat-grid">
-      <div class="module-stat-card">
-        <div class="module-stat-header">
-          <span class="module-stat-icon">&#9881;</span>
-          <span class="module-stat-title">Operational Planning</span>
-        </div>
-        <div class="module-stat-body">
-          <div class="stat-row"><span>Active Tasks</span><strong>${stats.activeTasks}</strong></div>
-          <div class="stat-row"><span>Total Completions</span><strong>${stats.completions}</strong></div>
-          <div class="stat-row ${stats.openActions > 0 ? 'warning' : ''}"><span>Open Actions</span><strong>${stats.openActions}</strong></div>
-        </div>
-      </div>
-      <div class="module-stat-card">
-        <div class="module-stat-header">
-          <span class="module-stat-icon">&#9888;</span>
-          <span class="module-stat-title">Risk Management</span>
-        </div>
-        <div class="module-stat-body">
-          <div class="stat-row"><span>Total Risks</span><strong>${stats.risks}</strong></div>
-          <div class="stat-row ${stats.highRisks > 0 ? 'danger' : ''}"><span>High/Critical Risks</span><strong>${stats.highRisks}</strong></div>
-          <div class="stat-row"><span>Treatments</span><strong>${stats.treatments}</strong></div>
-        </div>
-      </div>
-      <div class="module-stat-card">
-        <div class="module-stat-header">
-          <span class="module-stat-icon">&#9998;</span>
-          <span class="module-stat-title">Audits</span>
-        </div>
-        <div class="module-stat-body">
-          <div class="stat-row"><span>Total Audits</span><strong>${stats.audits}</strong></div>
-          <div class="stat-row"><span>Planned</span><strong>${stats.plannedAudits}</strong></div>
-          <div class="stat-row ${stats.openNcrs > 0 ? 'warning' : ''}"><span>Open NCRs</span><strong>${stats.openNcrs}</strong></div>
-        </div>
-      </div>
-      <div class="module-stat-card">
-        <div class="module-stat-header">
-          <span class="module-stat-icon">&#127970;</span>
-          <span class="module-stat-title">Organization</span>
-        </div>
-        <div class="module-stat-body">
-          <div class="stat-row"><span>Architecture Items</span><strong>${stats.architecture}</strong></div>
-          <div class="stat-row"><span>Requirements</span><strong>${stats.requirements}</strong></div>
-          <div class="stat-row"><span>Documents</span><strong>${stats.documents}</strong></div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  // Recent activity
-  const activityList = document.getElementById('admin-recent-activity');
-  if (stats.recentAuditLogs.length === 0) {
-    activityList.innerHTML = '<div class="empty-state">No recent activity recorded.</div>';
-  } else {
-    activityList.innerHTML = stats.recentAuditLogs.map(log => {
-      const actionIcons = {
-        user_created: '&#128100;', user_updated: '&#128100;', user_deleted: '&#128100;', user_password_reset: '&#128274;',
-        settings_updated: '&#9881;', data_exported: '&#128229;', backup_created: '&#128190;',
-        api_key_created: '&#128273;', webhook_created: '&#128279;'
-      };
-      const icon = actionIcons[log.action] || '&#128196;';
-      const time = new Date(log.created_at).toLocaleString();
-      return `
-        <div class="activity-item">
-          <div class="activity-icon">${icon}</div>
-          <div class="activity-content">
-            <div class="activity-action">${formatAuditAction(log.action)}${log.entity_name ? `: ${esc(log.entity_name)}` : ''}</div>
-            <div class="activity-meta">${esc(log.user_name)} &middot; ${time}</div>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-}
+// formatAuditAction is used by audit log views
 
 function formatAuditAction(action) {
   const map = {
@@ -7930,26 +7814,10 @@ async function exportAuditLog() {
 async function loadAdminSettings() {
   const settings = await api('/api/admin/settings');
 
-  // Populate form fields
   if (settings['org-name']) document.getElementById('setting-org-name').value = settings['org-name'];
   if (settings['language']) document.getElementById('setting-language').value = settings['language'];
   if (settings['date-format']) document.getElementById('setting-date-format').value = settings['date-format'];
   if (settings['fiscal-start']) document.getElementById('setting-fiscal-start').value = settings['fiscal-start'];
-
-  document.getElementById('setting-2fa').checked = settings['2fa'] === true || settings['2fa'] === 'true';
-  if (settings['session-timeout']) document.getElementById('setting-session-timeout').value = settings['session-timeout'];
-  if (settings['password-expiry']) document.getElementById('setting-password-expiry').value = settings['password-expiry'];
-  document.getElementById('setting-log-actions').checked = settings['log-actions'] !== false && settings['log-actions'] !== 'false';
-
-  document.getElementById('setting-email-notifications').checked = settings['email-notifications'] !== false;
-  if (settings['overdue-reminder']) document.getElementById('setting-overdue-reminder').value = settings['overdue-reminder'];
-  document.getElementById('setting-audit-alerts').checked = settings['audit-alerts'] !== false;
-  document.getElementById('setting-risk-alerts').checked = settings['risk-alerts'] !== false;
-
-  if (settings['items-per-page']) document.getElementById('setting-items-per-page').value = settings['items-per-page'];
-  if (settings['default-dashboard']) document.getElementById('setting-default-dashboard').value = settings['default-dashboard'];
-  document.getElementById('setting-show-completed').checked = settings['show-completed'] === true;
-  document.getElementById('setting-compact-mode').checked = settings['compact-mode'] === true;
 }
 
 async function saveSystemSettings() {
@@ -7958,18 +7826,6 @@ async function saveSystemSettings() {
     'language': document.getElementById('setting-language').value,
     'date-format': document.getElementById('setting-date-format').value,
     'fiscal-start': document.getElementById('setting-fiscal-start').value,
-    '2fa': document.getElementById('setting-2fa').checked,
-    'session-timeout': parseInt(document.getElementById('setting-session-timeout').value),
-    'password-expiry': parseInt(document.getElementById('setting-password-expiry').value),
-    'log-actions': document.getElementById('setting-log-actions').checked,
-    'email-notifications': document.getElementById('setting-email-notifications').checked,
-    'overdue-reminder': parseInt(document.getElementById('setting-overdue-reminder').value),
-    'audit-alerts': document.getElementById('setting-audit-alerts').checked,
-    'risk-alerts': document.getElementById('setting-risk-alerts').checked,
-    'items-per-page': document.getElementById('setting-items-per-page').value,
-    'default-dashboard': document.getElementById('setting-default-dashboard').value,
-    'show-completed': document.getElementById('setting-show-completed').checked,
-    'compact-mode': document.getElementById('setting-compact-mode').checked,
   };
 
   await api('/api/admin/settings', { method: 'PUT', body: settings });
@@ -7978,36 +7834,6 @@ async function saveSystemSettings() {
 
 // --- Admin: Data Management ---
 async function loadAdminData() {
-  // Load backups
-  const backups = await api('/api/admin/backups');
-  const backupList = document.getElementById('backup-list');
-
-  if (backups.length === 0) {
-    backupList.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:12px 0">No backups available.</div>';
-  } else {
-    backupList.innerHTML = `
-      <table class="task-table" style="margin-top:12px">
-        <thead><tr><th>Filename</th><th>Size</th><th>Type</th><th>Created</th><th></th></tr></thead>
-        <tbody>
-          ${backups.slice(0, 10).map(b => {
-            const sizeMB = (b.size / (1024 * 1024)).toFixed(2);
-            const created = new Date(b.created_at).toLocaleString();
-            return `<tr>
-              <td style="font-size:13px">${esc(b.filename)}</td>
-              <td style="font-size:13px">${sizeMB} MB</td>
-              <td><span class="badge ${b.type === 'scheduled' ? 'badge-low' : 'badge-medium'}">${b.type}</span></td>
-              <td style="font-size:12px">${created}</td>
-              <td>
-                <button class="btn btn-secondary btn-sm" onclick="downloadBackup(${b.id})">&#128229;</button>
-                <button class="btn btn-secondary btn-sm" onclick="deleteBackup(${b.id})" style="color:var(--danger)">&#128465;</button>
-              </td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    `;
-  }
-
   // Import dropzone
   const dropzone = document.getElementById('import-dropzone');
   dropzone.onclick = () => document.getElementById('import-file').click();
@@ -8100,26 +7926,9 @@ async function exportData(format) {
   window.open(`/api/admin/export?format=${format}&include=${includes.join(',')}`, '_blank');
 }
 
-async function createBackup() {
-  const result = await api('/api/admin/backups', { method: 'POST', body: { type: 'manual' } });
-  alert(`Backup created: ${result.filename}`);
-  loadAdminData();
-}
-
-function downloadBackup(id) {
-  window.open(`/api/admin/backups/${id}/download`, '_blank');
-}
-
-async function deleteBackup(id) {
-  if (!confirm('Delete this backup?')) return;
-  await api(`/api/admin/backups/${id}`, { method: 'DELETE' });
-  loadAdminData();
-}
-
 async function cleanupData(type) {
   const messages = {
     history: 'This will permanently delete completion history older than 1 year.',
-    archive: 'This will archive closed items.',
     logs: 'This will permanently delete audit logs older than 90 days.'
   };
   if (!confirm(messages[type] + ' Continue?')) return;

@@ -2378,54 +2378,6 @@ app.get('/api/link-references', requireOrgContext, async (req, res) => {
 // ===== ADMIN API ENDPOINTS =====
 
 // Admin: System Overview Stats
-app.get('/api/admin/overview', requireAdmin, async (req, res) => {
-  const oid = req.orgId;
-  const stats = {
-    // Database stats (Supabase PostgreSQL – size via pg_database_size)
-    databaseSize: await (async () => { try { const r = await db.get("SELECT pg_database_size(current_database()) as size"); return r?.size || 0; } catch { return 0; } })(),
-
-    // Module counts
-    tasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ?').get(oid)).c,
-    activeTasks: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ? AND is_active = 1').get(oid)).c,
-    completions: (await db.prepare('SELECT COUNT(*) as c FROM completions WHERE organization_id = ?').get(oid)).c,
-    actions: (await db.prepare('SELECT COUNT(*) as c FROM actions WHERE organization_id = ?').get(oid)).c,
-    openActions: (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE organization_id = ? AND status IN ('open', 'in_progress')").get(oid)).c,
-
-    risks: (await db.prepare('SELECT COUNT(*) as c FROM risks WHERE organization_id = ?').get(oid)).c,
-    highRisks: (await db.prepare('SELECT COUNT(*) as c FROM risks WHERE organization_id = ? AND (likelihood * impact) >= 15').get(oid)).c,
-    treatments: (await db.prepare('SELECT COUNT(*) as c FROM risk_treatments WHERE organization_id = ?').get(oid)).c,
-
-    audits: (await db.prepare('SELECT COUNT(*) as c FROM audits WHERE organization_id = ?').get(oid)).c,
-    plannedAudits: (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE organization_id = ? AND status = 'planned'").get(oid)).c,
-    ncrs: (await db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE organization_id = ?').get(oid)).c,
-    openNcrs: (await db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE organization_id = ? AND status IN ('open', 'in_progress')").get(oid)).c,
-
-    requirements: (await db.prepare('SELECT COUNT(*) as c FROM standard_requirements WHERE organization_id = ?').get(oid)).c,
-    documents: (await db.prepare('SELECT COUNT(*) as c FROM documents WHERE organization_id = ?').get(oid)).c,
-    architecture: (await db.prepare('SELECT COUNT(*) as c FROM org_architecture WHERE organization_id = ?').get(oid)).c,
-
-    users: (await db.prepare("SELECT COUNT(*) as c FROM users WHERE organization_id = ? AND role != 'superadmin'").get(oid)).c,
-    activeUsers: (await db.prepare("SELECT COUNT(*) as c FROM users WHERE organization_id = ? AND status = 'active' AND role != 'superadmin'").get(oid)).c,
-
-    // Recent activity
-    recentCompletions: await db.prepare(`
-      SELECT c.*, t.title as task_title
-      FROM completions c JOIN tasks t ON c.task_id = t.id
-      WHERE c.organization_id = ?
-      ORDER BY c.completed_at DESC LIMIT 10
-    `).all(oid),
-
-    recentAuditLogs: await db.prepare(`
-      SELECT * FROM admin_audit_log WHERE organization_id = ? ORDER BY created_at DESC LIMIT 20
-    `).all(oid),
-
-    // System health
-    lastBackup: await db.prepare("SELECT * FROM backups WHERE organization_id = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1").get(oid),
-  };
-
-  res.json(stats);
-});
-
 // Admin-only middleware (org_admin or superadmin with active org context)
 function requireAdmin(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Authentication required' });
