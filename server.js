@@ -1924,6 +1924,58 @@ app.put('/api/soa/:requirementId', requireOrgContext, async (req, res) => {
   res.json({ success: true });
 });
 
+// Upload SoA PDF and save to Document Control
+app.post('/api/soa/upload-report', requireOrgContext, upload.single('pdf'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No PDF file provided' });
+
+  const org = await db.prepare('SELECT name FROM organizations WHERE id = ?').get(req.orgId);
+  const orgName = org?.name || 'Organisation';
+  const today = new Date().toISOString().split('T')[0];
+
+  let filePath = '';
+  const fileSize = req.file.size;
+  try {
+    filePath = await uploadToSupabase('reports', {
+      originalname: `soa-${req.orgId}-${today}.pdf`,
+      buffer: req.file.buffer,
+      mimetype: 'application/pdf',
+    });
+  } catch (uploadErr) {
+    console.warn('[SoA Report] Supabase upload failed, storing reference only:', uploadErr.message);
+  }
+
+  // Find or create the Document Control record for this org's SoA
+  const existingDoc = await db.prepare(
+    "SELECT * FROM documents WHERE linked_ref_type = 'soa' AND organization_id = ? LIMIT 1"
+  ).get(req.orgId);
+
+  let docId;
+  if (!existingDoc) {
+    const result = await db.prepare(`
+      INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status,
+        file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id,
+        review_date, classification)
+      VALUES (?, ?, ?, 'report', '1.0', '', 'approved', ?, ?, ?, 'application/pdf',
+              'risk', 'soa', NULL, NULL, 'Confidential')
+    `).run(
+      req.orgId,
+      `Statement of Applicability – ${orgName}`,
+      `ISO/IEC 27001:2022 Annex A Statement of Applicability for ${orgName}`,
+      `soa-${req.orgId}-${today}.pdf`,
+      filePath,
+      fileSize
+    );
+    docId = result.lastInsertRowid;
+  } else {
+    await db.prepare(
+      "UPDATE documents SET file_path = ?, file_size = ?, file_name = ?, version = ?, updated_at = datetime('now') WHERE id = ?"
+    ).run(filePath, fileSize, `soa-${req.orgId}-${today}.pdf`, '1.0', existingDoc.id);
+    docId = existingDoc.id;
+  }
+
+  res.json({ success: true, doc_id: docId });
+});
+
 // --- Organizational Planning API ---
 
 // Mission
