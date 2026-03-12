@@ -3504,15 +3504,20 @@ async function loadRequirements() {
         }
       }
 
-      // Build links column
+      // Build links column — show linked process name(s) inline
       const links = allLinks[r.id] || [];
+      const processLinks = links.filter(l => l.type === 'process');
+      const otherLinks = links.filter(l => l.type !== 'process');
       const collapseId = `req-cl-${r.id}`;
       let linksHtml;
       if (links.length === 0) {
         linksHtml = '<span style="color:var(--text-muted);font-size:11px">-</span>';
       } else {
-        const linkCount = links.length;
-        linksHtml = `<span class="arch-link-toggle" onclick="toggleArchLinks('${collapseId}')">${linkCount} link${linkCount !== 1 ? 's' : ''} <span class="arch-link-arrow" id="${collapseId}-arrow">&#9660;</span></span>`;
+        const procLabel = processLinks.map(l => esc(l.name)).join(', ');
+        let toggleLabel = procLabel || '';
+        if (otherLinks.length > 0) toggleLabel += `${procLabel ? ' ' : ''}<span style="color:var(--text-muted);font-size:11px">(+${otherLinks.length})</span>`;
+        if (!toggleLabel) toggleLabel = `${links.length} link${links.length !== 1 ? 's' : ''}`;
+        linksHtml = `<span class="arch-link-toggle" onclick="toggleArchLinks('${collapseId}')">${toggleLabel} <span class="arch-link-arrow" id="${collapseId}-arrow">&#9660;</span></span>`;
       }
 
       html += `<div class="req-table-row">
