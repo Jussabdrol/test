@@ -1154,6 +1154,11 @@ app.post('/api/audits/:id/upload-report', requireOrgContext, upload.single('pdf'
     docId = existingDoc.id;
   }
 
+  // Auto-cross-link: 'audit' < 'document' alphabetically → audit is source
+  await db.prepare(
+    'INSERT OR IGNORE INTO cross_links (organization_id, source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?, ?)'
+  ).run(req.orgId, 'audit', audit.id, 'document', docId);
+
   await logAuditAction(req.session.userId, req.session.userName || 'User', 'data_exported', 'audit', audit.id, audit.title, 'Report generated', req.orgId);
   res.json({ success: true, doc_id: docId });
 });
@@ -3913,6 +3918,11 @@ app.post('/api/management-reviews/:id/upload-report', requireOrgContext, upload.
       "UPDATE documents SET file_path = ?, file_size = ?, file_name = ?, mime_type = 'application/pdf', updated_at = datetime('now') WHERE id = ?"
     ).run(filePath, fileSize, `management-review-${review.id}.pdf`, docId);
   }
+
+  // Auto-cross-link: 'document' < 'management_review' alphabetically → document is source
+  await db.prepare(
+    'INSERT OR IGNORE INTO cross_links (organization_id, source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?, ?)'
+  ).run(req.orgId, 'document', docId, 'management_review', review.id);
 
   res.json({ success: true, doc_id: docId });
 });
