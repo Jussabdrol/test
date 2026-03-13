@@ -371,7 +371,9 @@ function parseData(raw) {
         markerStart: edge.markerStart ?? undefined,
         data: { edgeType: 'bezier', bidir: false, ...(edge.data ?? {}) },
       }));
-      return { nodes: d.nodes, edges };
+      // Strip legacy `style` from nodes — FlowNode component is the sole style source
+      const nodes = d.nodes.map(({ style: _s, ...rest }) => rest);
+      return { nodes, edges };
     }
   } catch { /* fall through */ }
   return { nodes: [], edges: [] };
@@ -379,8 +381,8 @@ function parseData(raw) {
 
 function stripInternalState(nodes, edges) {
   return {
-    nodes: nodes.map(({ id, type, position, data, style }) =>
-      ({ id, type, position, data, style })
+    nodes: nodes.map(({ id, type, position, data }) =>
+      ({ id, type, position, data })
     ),
     edges: edges.map(({ id, type, source, target, sourceHandle, targetHandle, markerEnd, markerStart, style, data }) =>
       ({ id, type, source, target, sourceHandle, targetHandle, markerEnd, markerStart, style, data })
@@ -424,7 +426,6 @@ function FlowchartEditor({ initialData, onSave }) {
         type,
         position: { x: 60 + col * 180, y: 60 + row * 130 },
         data: { label: TYPE_DEFAULT_LABEL[type] ?? 'Step' },
-        style: TYPE_STYLE[type] ?? TYPE_STYLE.default,
       }];
     });
   }, [setNodes]);

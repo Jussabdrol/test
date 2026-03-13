@@ -6534,7 +6534,7 @@ function buildArchTableRow(item, meta, links, archType) {
         ${archType === 'role' && item.description ? `<span class="arch-desc">${esc(item.description)}</span>` : ''}
         ${isProcess ? `<div class="proc-row-toggles" onclick="event.stopPropagation()">
           <span class="arch-link-toggle" onclick="toggleProcessKpiPanel(${item.id})">KPIs &amp; Objectives <span class="arch-link-arrow" id="proc-kpi-arrow-${item.id}">&#9660;</span></span>
-          <span class="arch-link-toggle" onclick="toggleProcessFlowchartPanel(${item.id})">&#128260; Flowchart <span class="arch-link-arrow" id="proc-flowchart-arrow-${item.id}">&#9660;</span></span>
+          <span class="arch-link-toggle" onclick="toggleProcessFlowchartPanel(${item.id})">Flowchart <span class="arch-link-arrow" id="proc-flowchart-arrow-${item.id}">&#9660;</span></span>
         </div>` : ''}
       </div>
       <div class="arch-col-detail">${detailCol}</div>
