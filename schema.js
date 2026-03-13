@@ -497,6 +497,9 @@ const POSTGRES_SCHEMA_SQL = `
   -- Migrations: add process_id to org_kpis to link KPIs to architecture processes
   ALTER TABLE org_kpis ADD COLUMN IF NOT EXISTS process_id INTEGER DEFAULT NULL REFERENCES org_architecture(id) ON DELETE CASCADE;
   CREATE INDEX IF NOT EXISTS idx_org_kpis_process_id ON org_kpis (process_id);
+
+  -- Migrations: add flowchart DSL column to org_architecture (for process flowcharts)
+  ALTER TABLE org_architecture ADD COLUMN IF NOT EXISTS flowchart TEXT DEFAULT NULL;
 `;
 
 // Default threat feeds to seed per organization

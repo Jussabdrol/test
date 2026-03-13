@@ -2130,7 +2130,7 @@ app.post('/api/architecture', requireOrgContext, async (req, res) => {
 });
 
 app.put('/api/architecture/:id', requireOrgContext, async (req, res) => {
-  const fields = ['name', 'description', 'parent_id', 'owner', 'status', 'metadata', 'sort_order'];
+  const fields = ['name', 'description', 'parent_id', 'owner', 'status', 'metadata', 'sort_order', 'flowchart'];
   const updates = [];
   const params = [];
   for (const f of fields) {
