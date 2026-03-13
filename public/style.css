@@ -1504,17 +1504,13 @@ body {
 /* Inline add/edit forms inside the process panel */
 .proc-inline-form { margin-top: 6px; }
 
-/* Process Flowchart expand panel */
-.proc-flowchart-panel { display: none; border-top: 1px solid var(--border); background: var(--card-bg); }
+/* Process Flowchart expand panel (React Flow editor) */
+.proc-flowchart-panel { display: none; border-top: 1px solid var(--border); }
 .proc-flowchart-panel.open { display: block; }
-.proc-flowchart-canvas { padding: 16px 20px; overflow-x: auto; }
-.proc-flowchart-canvas svg { max-width: 100%; height: auto; display: block; }
+/* React Flow sets its own height on the inner container; no padding needed here */
+.proc-flowchart-canvas { width: 100%; }
 .proc-flowchart-empty { padding: 14px 20px; font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
 .proc-flowchart-loading { padding: 14px 20px; font-size: 12px; color: var(--text-muted); font-style: italic; }
-
-/* Flowchart live preview inside the arch edit modal */
-.arch-flowchart-preview { margin-top: 10px; min-height: 32px; overflow-x: auto; border-radius: var(--radius-sm); }
-.arch-flowchart-preview svg { max-width: 100%; height: auto; display: block; }
 .proc-inline-form-inner {
   display: flex;
   flex-wrap: wrap;

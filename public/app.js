@@ -6587,7 +6587,6 @@ async function openArchModal(id) {
 
   let metadata = {};
   let savedOwner = '';
-  let existingFlowchart = '';
   if (id) {
     const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
     const item = items.find(x => x.id === id);
@@ -6600,7 +6599,6 @@ async function openArchModal(id) {
       savedOwner = item.owner;
       document.getElementById('arch-status').value = item.status;
       try { metadata = JSON.parse(item.metadata || '{}'); } catch(e) { metadata = {}; }
-      existingFlowchart = item.flowchart || '';
     }
   }
   // Set owner after dropdown is populated
@@ -6666,15 +6664,6 @@ async function openArchModal(id) {
         </button>
         <span class="field-hint">Enter coordinates manually or click to auto-detect from address</span>
       </div>`;
-  } else if (archType === 'process') {
-    extraFields.innerHTML = `
-      <div class="form-divider"><span>Flowchart</span></div>
-      <div class="form-group">
-        <label for="arch-flowchart">Flowchart <span class="field-hint" style="font-weight:400">(Mermaid DSL – optional)</span></label>
-        <textarea id="arch-flowchart" rows="7" placeholder="flowchart TD&#10;  A[Start] --> B{Decision?}&#10;  B -->|Yes| C[Step A]&#10;  B -->|No| D[End]" oninput="previewArchFlowchart()" style="font-family:monospace;font-size:12px">${esc(existingFlowchart)}</textarea>
-      </div>
-      <div id="arch-flowchart-preview" class="arch-flowchart-preview"></div>`;
-    if (existingFlowchart) setTimeout(() => previewArchFlowchart(), 50);
   } else {
     extraFields.innerHTML = '';
   }
@@ -6734,8 +6723,6 @@ async function saveArch(e) {
     status: document.getElementById('arch-status').value,
     metadata: JSON.stringify(metadata),
   };
-  const fcEl = document.getElementById('arch-flowchart');
-  if (fcEl) body.flowchart = fcEl.value;
   // Persist assigned user for roles
   if (archType === 'role') {
     const assignedUserSel = document.getElementById('arch-assigned-user');
@@ -9894,35 +9881,8 @@ async function sendAgentMessage() {
 }
 
 // ===========================================================================
-// PROCESS FLOWCHART
+// PROCESS FLOWCHART  (editor powered by React Flow via flowchart-editor.mjs)
 // ===========================================================================
-
-// Shared Mermaid renderer – handles async render + error display
-let _mermaidCounter = 0;
-function renderMermaidSafe(dsl, container) {
-  if (typeof mermaid === 'undefined') {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Mermaid not loaded.</span>';
-    return;
-  }
-  const id = `mermaid-render-${++_mermaidCounter}`;
-  mermaid.render(id, dsl).then(({ svg }) => {
-    container.innerHTML = svg;
-    // Make SVG responsive
-    const svgEl = container.querySelector('svg');
-    if (svgEl) { svgEl.style.maxWidth = '100%'; svgEl.style.height = 'auto'; }
-  }).catch(err => {
-    container.innerHTML = `<span style="color:var(--danger);font-size:12px">&#9888; Diagram error: ${esc(String(err?.message || err))}</span>`;
-  });
-}
-
-// Live preview inside the arch edit modal
-function previewArchFlowchart() {
-  const src = document.getElementById('arch-flowchart')?.value?.trim() || '';
-  const preview = document.getElementById('arch-flowchart-preview');
-  if (!preview) return;
-  if (!src) { preview.innerHTML = ''; return; }
-  renderMermaidSafe(src, preview);
-}
 
 // Toggle the flowchart expand panel for a process row (same pattern as KPI panel)
 function toggleProcessFlowchartPanel(processId) {
@@ -9931,9 +9891,15 @@ function toggleProcessFlowchartPanel(processId) {
   if (!panel) return;
   const isOpen = panel.classList.toggle('open');
   arrow.innerHTML = isOpen ? '&#9650;' : '&#9660;';
-  if (isOpen && !panel.dataset.loaded) {
-    panel.dataset.loaded = '1';
-    loadProcessFlowchartPanel(processId);
+  if (isOpen) {
+    if (!panel.dataset.loaded) {
+      panel.dataset.loaded = '1';
+      loadProcessFlowchartPanel(processId);
+    }
+  } else {
+    // Unmount React component when panel collapses to free memory
+    if (window.FlowchartEditor) window.FlowchartEditor.unmount(`proc-flowchart-canvas-${processId}`);
+    panel.dataset.loaded = '';   // allow fresh mount next open
   }
 }
 
@@ -9941,16 +9907,30 @@ async function loadProcessFlowchartPanel(processId) {
   const panel = document.getElementById(`proc-flowchart-panel-${processId}`);
   if (!panel) return;
   panel.innerHTML = '<div class="proc-flowchart-loading">Loading…</div>';
+
+  // flowchart-editor.mjs loads asynchronously; wait briefly if not ready yet
+  if (!window.FlowchartEditor) {
+    await new Promise(r => setTimeout(r, 600));
+    if (!window.FlowchartEditor) {
+      panel.innerHTML = '<div class="proc-flowchart-empty">Flowchart editor unavailable – please reload the page.</div>';
+      return;
+    }
+  }
+
   const items = await api('/api/architecture?arch_type=process');
   const item = items.find(i => i.id === processId);
-  const dsl = item?.flowchart?.trim() || '';
-  if (!dsl) {
-    panel.innerHTML = `<div class="proc-flowchart-empty">
-      No flowchart defined yet.
-      <button class="btn btn-secondary btn-sm" onclick="openArchModal(${processId})">Add Flowchart</button>
-    </div>`;
-    return;
-  }
+  const flowchartData = item?.flowchart || null;
+
   panel.innerHTML = `<div class="proc-flowchart-canvas" id="proc-flowchart-canvas-${processId}"></div>`;
-  renderMermaidSafe(dsl, document.getElementById(`proc-flowchart-canvas-${processId}`));
+
+  window.FlowchartEditor.mount(
+    `proc-flowchart-canvas-${processId}`,
+    flowchartData,
+    async (data) => {
+      await api(`/api/architecture/${processId}`, {
+        method: 'PUT',
+        body: { flowchart: JSON.stringify(data) },
+      });
+    }
+  );
 }
