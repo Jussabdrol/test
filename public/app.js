@@ -6529,17 +6529,19 @@ function buildArchTableRow(item, meta, links, archType) {
 
   return `<div class="arch-table-row-wrap">
     <div class="arch-table-row">
-      <div class="arch-col-name" style="cursor:pointer" onclick="openArchModal(${item.id})">
+      <div class="arch-col-name" onclick="openArchModal(${item.id})" style="cursor:pointer">
         <span class="arch-name" style="color:var(--primary)">${esc(item.name)}</span>
         ${archType === 'role' && item.description ? `<span class="arch-desc">${esc(item.description)}</span>` : ''}
+        ${isProcess ? `<div class="proc-row-toggles" onclick="event.stopPropagation()">
+          <span class="arch-link-toggle" onclick="toggleProcessKpiPanel(${item.id})">KPIs &amp; Objectives <span class="arch-link-arrow" id="proc-kpi-arrow-${item.id}">&#9660;</span></span>
+          <span class="arch-link-toggle" onclick="toggleProcessFlowchartPanel(${item.id})">&#128260; Flowchart <span class="arch-link-arrow" id="proc-flowchart-arrow-${item.id}">&#9660;</span></span>
+        </div>` : ''}
       </div>
       <div class="arch-col-detail">${detailCol}</div>
       <div class="arch-col-detail"><span style="font-size:12px">${item.owner ? esc(item.owner) : '-'}</span></div>
       <div class="arch-col-detail"><span class="badge ${stBadge}">${item.status}</span></div>
       <div class="arch-col-detail arch-col-links">
         ${linkCount > 0 ? `<span class="arch-link-toggle" onclick="toggleArchLinks('${linksDetailId}')">${linkCount} link${linkCount !== 1 ? 's' : ''} <span class="arch-link-arrow" id="${linksDetailId}-arrow">&#9660;</span></span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
-        ${isProcess ? `<span class="arch-link-toggle" onclick="toggleProcessKpiPanel(${item.id})" style="margin-left:8px">KPIs &amp; Objectives <span class="arch-link-arrow" id="proc-kpi-arrow-${item.id}">&#9660;</span></span>` : ''}
-        ${isProcess ? `<span class="arch-link-toggle" onclick="toggleProcessFlowchartPanel(${item.id})" style="margin-left:8px">&#128260; Flowchart <span class="arch-link-arrow" id="proc-flowchart-arrow-${item.id}">&#9660;</span></span>` : ''}
       </div>
       <div class="arch-col-actions">
         ${actionMenu([
