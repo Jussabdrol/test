@@ -1438,6 +1438,7 @@ body {
 .arch-col-name { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .arch-name { font-size: 14px; font-weight: 600; }
 .arch-desc { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proc-row-toggles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
 .arch-col-detail { font-size: 12px; }
 .arch-col-actions { display: flex; justify-content: flex-end; }
 
