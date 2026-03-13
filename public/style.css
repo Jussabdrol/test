@@ -1512,6 +1512,9 @@ body {
 .proc-flowchart-canvas { width: 100%; }
 /* Neutralise React Flow's default node wrapper border/shadow — FlowNode's own border is the only one */
 .proc-flowchart-panel .react-flow__node { border: none !important; background: transparent !important; padding: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+/* Hide connection handles until the node is hovered */
+.proc-flowchart-panel .react-flow__handle { opacity: 0; transition: opacity 0.15s; }
+.proc-flowchart-panel .react-flow__node:hover .react-flow__handle { opacity: 1; }
 .proc-flowchart-empty { padding: 14px 20px; font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 10px; }
 .proc-flowchart-loading { padding: 14px 20px; font-size: 12px; color: var(--text-muted); font-style: italic; }
 .proc-inline-form-inner {
