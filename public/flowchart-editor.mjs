@@ -583,19 +583,10 @@ function TBtn({ onClick, title, children, danger }) {
   }, children);
 }
 
-function SectionLabel({ label, open, onToggle }) {
-  return e('button', {
-    onClick: onToggle,
-    title: open ? `Collapse ${label}` : `Expand ${label}`,
-    style: {
-      background: 'none', border: 'none', cursor: 'pointer',
-      fontSize: 9, color: '#9ca3af', width: 60, flexShrink: 0,
-      textAlign: 'left', padding: 0, display: 'flex', alignItems: 'center', gap: 2,
-    },
-  },
-    e('span', null, open ? '▾' : '▸'),
-    e('span', null, label),
-  );
+function SectionHdr({ label }) {
+  return e('span', {
+    style: { fontSize: 9, color: '#9ca3af', display: 'block', marginTop: 2, marginBottom: 1 },
+  }, label);
 }
 
 // ─── Main FlowchartEditor ─────────────────────────────────────────────────────
@@ -607,9 +598,8 @@ function FlowchartEditor({ initialData, onSave }) {
   const [dirty,  setDirty]  = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Collapsible toolbar sections
-  const [sOpen, setSOpen] = useState({ events: true, activities: true, gateways: true, artifacts: true });
-  const tog = s => setSOpen(p => ({ ...p, [s]: !p[s] }));
+  // Single toolbar toggle
+  const [toolbarOpen, setToolbarOpen] = useState(true);
 
   // Link picker state
   const [picker, setPicker] = useState({ open: false, nodeId: null });
@@ -655,13 +645,6 @@ function FlowchartEditor({ initialData, onSave }) {
 
   const vsep = e('span', { style: { width: 1, background: '#e5e7eb', alignSelf: 'stretch', margin: '0 2px' } });
 
-  const row = (section, children) => e('div', {
-    style: { display: 'flex', gap: 3, alignItems: 'center', minHeight: 24 },
-  },
-    e(SectionLabel, { label: section, open: sOpen[section.toLowerCase()], onToggle: () => tog(section.toLowerCase()) }),
-    sOpen[section.toLowerCase()] && children,
-  );
-
   return e(FlowCtx.Provider, { value: ctxValue },
     e('div', { style: { height: '520px', width: '100%' } },
       e(ReactFlow, {
@@ -677,38 +660,69 @@ function FlowchartEditor({ initialData, onSave }) {
         e(Panel, { position: 'top-left' },
           e('div', {
             style: {
-              display: 'flex', flexDirection: 'column', gap: 4,
               background: 'rgba(255,255,255,0.94)',
               border: '1px solid #e5e7eb', borderRadius: 8,
-              padding: '6px 8px',
               boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+              overflow: 'hidden',
+              minWidth: toolbarOpen ? undefined : 0,
             },
           },
-            row('Events', [
-              e(TBtn, { key: 'se', onClick: () => addNode('startEvent'),        title: 'Add Start Event'        }, '⬤ Start'),
-              e(TBtn, { key: 'ie', onClick: () => addNode('intermediateEvent'), title: 'Add Intermediate Event' }, '◎ Interm.'),
-              e(TBtn, { key: 'ee', onClick: () => addNode('endEvent'),          title: 'Add End Event'          }, '⬤ End'),
-            ]),
-            row('Activities', [
-              e(TBtn, { key: 'ta', onClick: () => addNode('task'),       title: 'Add Task'        }, '▭ Task'),
-              e(TBtn, { key: 'sp', onClick: () => addNode('subProcess'), title: 'Add Sub-Process' }, '▭⊕ Sub-Process'),
-            ]),
-            row('Gateways', [
-              e(TBtn, { key: 'xg', onClick: () => addNode('xorGateway'), title: 'Exclusive Gateway (XOR)' }, '◇× XOR'),
-              e(TBtn, { key: 'ag', onClick: () => addNode('andGateway'), title: 'Parallel Gateway (AND)'  }, '◇+ AND'),
-              e(TBtn, { key: 'og', onClick: () => addNode('orGateway'),  title: 'Inclusive Gateway (OR)'  }, '◇○ OR'),
-            ]),
-            row('Artifacts', [
-              e(TBtn, { key: 'an', onClick: () => addNode('annotation'), title: 'Add Annotation / Note' }, '[ Note'),
-              vsep,
-              e(TBtn, { key: 'del', onClick: deleteSelected, title: 'Delete selected (or press Delete key)', danger: true }, '✕ Delete'),
-              e('button', {
-                key: 'save',
-                className: `btn btn-sm ${dirty ? 'btn-primary' : 'btn-secondary'}`,
-                onClick: handleSave, disabled: !dirty || saving,
-                style: { opacity: dirty ? 1 : 0.5 },
-              }, saving ? 'Saving…' : dirty ? '● Save' : '✓ Saved'),
-            ]),
+            // ── Toggle header ──
+            e('div', {
+              style: {
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '4px 8px', borderBottom: toolbarOpen ? '1px solid #f3f4f6' : 'none',
+                cursor: 'pointer', userSelect: 'none',
+              },
+              onClick: () => setToolbarOpen(o => !o),
+              title: toolbarOpen ? 'Collapse toolbar' : 'Expand toolbar',
+            },
+              e('span', { style: { fontSize: 10, fontWeight: 600, color: '#6b7280' } }, 'BPMN Blocks'),
+              e('span', { style: { fontSize: 11, color: '#9ca3af' } }, toolbarOpen ? '▲' : '▼'),
+            ),
+
+            // ── Buttons (hidden when collapsed) ──
+            toolbarOpen && e('div', { style: { padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 5 } },
+              e('div', null,
+                e(SectionHdr, { label: 'Events' }),
+                e('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap' } },
+                  e(TBtn, { key: 'se', onClick: () => addNode('startEvent'),        title: 'Add Start Event'        }, '⬤ Start'),
+                  e(TBtn, { key: 'ie', onClick: () => addNode('intermediateEvent'), title: 'Add Intermediate Event' }, '◎ Interm.'),
+                  e(TBtn, { key: 'ee', onClick: () => addNode('endEvent'),          title: 'Add End Event'          }, '⬤ End'),
+                ),
+              ),
+              e('div', null,
+                e(SectionHdr, { label: 'Activities' }),
+                e('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap' } },
+                  e(TBtn, { key: 'ta', onClick: () => addNode('task'),       title: 'Add Task'        }, '▭ Task'),
+                  e(TBtn, { key: 'sp', onClick: () => addNode('subProcess'), title: 'Add Sub-Process' }, '▭⊕ Sub-Process'),
+                ),
+              ),
+              e('div', null,
+                e(SectionHdr, { label: 'Gateways' }),
+                e('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap' } },
+                  e(TBtn, { key: 'xg', onClick: () => addNode('xorGateway'), title: 'Exclusive Gateway (XOR)' }, '◇× XOR'),
+                  e(TBtn, { key: 'ag', onClick: () => addNode('andGateway'), title: 'Parallel Gateway (AND)'  }, '◇+ AND'),
+                  e(TBtn, { key: 'og', onClick: () => addNode('orGateway'),  title: 'Inclusive Gateway (OR)'  }, '◇○ OR'),
+                ),
+              ),
+              e('div', null,
+                e(SectionHdr, { label: 'Artifacts' }),
+                e('div', { style: { display: 'flex', gap: 3, flexWrap: 'wrap' } },
+                  e(TBtn, { key: 'an', onClick: () => addNode('annotation'), title: 'Add Annotation / Note' }, '[ Note'),
+                ),
+              ),
+              e('div', { style: { display: 'flex', gap: 3, alignItems: 'center', marginTop: 4, paddingTop: 6, borderTop: '1px solid #f3f4f6' } },
+                e(TBtn, { key: 'del', onClick: deleteSelected, title: 'Delete selected (or press Delete key)', danger: true }, '✕ Delete'),
+                vsep,
+                e('button', {
+                  key: 'save',
+                  className: `btn btn-sm ${dirty ? 'btn-primary' : 'btn-secondary'}`,
+                  onClick: handleSave, disabled: !dirty || saving,
+                  style: { opacity: dirty ? 1 : 0.5 },
+                }, saving ? 'Saving…' : dirty ? '● Save' : '✓ Saved'),
+              ),
+            ),
           ),
         ),
       ),
