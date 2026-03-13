@@ -6539,6 +6539,7 @@ function buildArchTableRow(item, meta, links, archType) {
       <div class="arch-col-detail arch-col-links">
         ${linkCount > 0 ? `<span class="arch-link-toggle" onclick="toggleArchLinks('${linksDetailId}')">${linkCount} link${linkCount !== 1 ? 's' : ''} <span class="arch-link-arrow" id="${linksDetailId}-arrow">&#9660;</span></span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
         ${isProcess ? `<span class="arch-link-toggle" onclick="toggleProcessKpiPanel(${item.id})" style="margin-left:8px">KPIs &amp; Objectives <span class="arch-link-arrow" id="proc-kpi-arrow-${item.id}">&#9660;</span></span>` : ''}
+        ${isProcess ? `<span class="arch-link-toggle" onclick="toggleProcessFlowchartPanel(${item.id})" style="margin-left:8px">&#128260; Flowchart <span class="arch-link-arrow" id="proc-flowchart-arrow-${item.id}">&#9660;</span></span>` : ''}
       </div>
       <div class="arch-col-actions">
         ${actionMenu([
@@ -6551,6 +6552,7 @@ function buildArchTableRow(item, meta, links, archType) {
     </div>
     ${linkCount > 0 ? `<div class="arch-links-detail collapsed" id="${linksDetailId}">${linksDetail}</div>` : ''}
     ${isProcess ? `<div class="proc-kpi-panel" id="${kpiPanelId}"></div>` : ''}
+    ${isProcess ? `<div class="proc-flowchart-panel" id="proc-flowchart-panel-${item.id}"></div>` : ''}
   </div>`;
 }
 
@@ -6585,6 +6587,7 @@ async function openArchModal(id) {
 
   let metadata = {};
   let savedOwner = '';
+  let existingFlowchart = '';
   if (id) {
     const items = await api(`/api/architecture?arch_type=${currentArchTab}`);
     const item = items.find(x => x.id === id);
@@ -6597,6 +6600,7 @@ async function openArchModal(id) {
       savedOwner = item.owner;
       document.getElementById('arch-status').value = item.status;
       try { metadata = JSON.parse(item.metadata || '{}'); } catch(e) { metadata = {}; }
+      existingFlowchart = item.flowchart || '';
     }
   }
   // Set owner after dropdown is populated
@@ -6662,6 +6666,15 @@ async function openArchModal(id) {
         </button>
         <span class="field-hint">Enter coordinates manually or click to auto-detect from address</span>
       </div>`;
+  } else if (archType === 'process') {
+    extraFields.innerHTML = `
+      <div class="form-divider"><span>Flowchart</span></div>
+      <div class="form-group">
+        <label for="arch-flowchart">Flowchart <span class="field-hint" style="font-weight:400">(Mermaid DSL – optional)</span></label>
+        <textarea id="arch-flowchart" rows="7" placeholder="flowchart TD&#10;  A[Start] --> B{Decision?}&#10;  B -->|Yes| C[Step A]&#10;  B -->|No| D[End]" oninput="previewArchFlowchart()" style="font-family:monospace;font-size:12px">${esc(existingFlowchart)}</textarea>
+      </div>
+      <div id="arch-flowchart-preview" class="arch-flowchart-preview"></div>`;
+    if (existingFlowchart) setTimeout(() => previewArchFlowchart(), 50);
   } else {
     extraFields.innerHTML = '';
   }
@@ -6721,6 +6734,8 @@ async function saveArch(e) {
     status: document.getElementById('arch-status').value,
     metadata: JSON.stringify(metadata),
   };
+  const fcEl = document.getElementById('arch-flowchart');
+  if (fcEl) body.flowchart = fcEl.value;
   // Persist assigned user for roles
   if (archType === 'role') {
     const assignedUserSel = document.getElementById('arch-assigned-user');
@@ -9876,4 +9891,66 @@ async function sendAgentMessage() {
     if (input)   { input.disabled = false; input.focus(); }
     if (sendBtn) sendBtn.disabled = false;
   }
+}
+
+// ===========================================================================
+// PROCESS FLOWCHART
+// ===========================================================================
+
+// Shared Mermaid renderer – handles async render + error display
+let _mermaidCounter = 0;
+function renderMermaidSafe(dsl, container) {
+  if (typeof mermaid === 'undefined') {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Mermaid not loaded.</span>';
+    return;
+  }
+  const id = `mermaid-render-${++_mermaidCounter}`;
+  mermaid.render(id, dsl).then(({ svg }) => {
+    container.innerHTML = svg;
+    // Make SVG responsive
+    const svgEl = container.querySelector('svg');
+    if (svgEl) { svgEl.style.maxWidth = '100%'; svgEl.style.height = 'auto'; }
+  }).catch(err => {
+    container.innerHTML = `<span style="color:var(--danger);font-size:12px">&#9888; Diagram error: ${esc(String(err?.message || err))}</span>`;
+  });
+}
+
+// Live preview inside the arch edit modal
+function previewArchFlowchart() {
+  const src = document.getElementById('arch-flowchart')?.value?.trim() || '';
+  const preview = document.getElementById('arch-flowchart-preview');
+  if (!preview) return;
+  if (!src) { preview.innerHTML = ''; return; }
+  renderMermaidSafe(src, preview);
+}
+
+// Toggle the flowchart expand panel for a process row (same pattern as KPI panel)
+function toggleProcessFlowchartPanel(processId) {
+  const panel = document.getElementById(`proc-flowchart-panel-${processId}`);
+  const arrow = document.getElementById(`proc-flowchart-arrow-${processId}`);
+  if (!panel) return;
+  const isOpen = panel.classList.toggle('open');
+  arrow.innerHTML = isOpen ? '&#9650;' : '&#9660;';
+  if (isOpen && !panel.dataset.loaded) {
+    panel.dataset.loaded = '1';
+    loadProcessFlowchartPanel(processId);
+  }
+}
+
+async function loadProcessFlowchartPanel(processId) {
+  const panel = document.getElementById(`proc-flowchart-panel-${processId}`);
+  if (!panel) return;
+  panel.innerHTML = '<div class="proc-flowchart-loading">Loading…</div>';
+  const items = await api('/api/architecture?arch_type=process');
+  const item = items.find(i => i.id === processId);
+  const dsl = item?.flowchart?.trim() || '';
+  if (!dsl) {
+    panel.innerHTML = `<div class="proc-flowchart-empty">
+      No flowchart defined yet.
+      <button class="btn btn-secondary btn-sm" onclick="openArchModal(${processId})">Add Flowchart</button>
+    </div>`;
+    return;
+  }
+  panel.innerHTML = `<div class="proc-flowchart-canvas" id="proc-flowchart-canvas-${processId}"></div>`;
+  renderMermaidSafe(dsl, document.getElementById(`proc-flowchart-canvas-${processId}`));
 }
