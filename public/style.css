@@ -392,34 +392,48 @@ body {
 .task-table tr:hover td { background: #f9fafb; }
 .task-table tr:last-child td { border-bottom: none; }
 
-/* Task management cards (Manage Tasks view) */
-.task-mgmt-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
-.task-mgmt-card {
+/* Task management list (Manage Tasks view) */
+.task-mgmt-cards { /* passthrough wrapper */ }
+.task-list-table {
   background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-left: 4px solid #e5e7eb;
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 16px 18px;
-  transition: all .15s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
 }
-.task-mgmt-card:hover { box-shadow: var(--shadow-lg); }
-.task-mgmt-card.status-overdue { border-left-color: var(--danger); background: #fff9f9; }
-.task-mgmt-card.status-due-today { border-left-color: #f59e0b; }
-.task-mgmt-card.status-upcoming { border-left-color: var(--primary); }
-.task-mgmt-card.task-inactive { opacity: .65; border-left-color: #d1d5db; }
-.task-mgmt-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-.task-mgmt-card-header-left { flex: 1; min-width: 0; }
-.task-mgmt-card-header-right { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-.task-mgmt-title { font-size: 14px; font-weight: 600; color: var(--primary); cursor: pointer; margin: 0 0 3px 0; line-height: 1.35; }
-.task-mgmt-title:hover { text-decoration: underline; }
-.task-mgmt-sub { font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; flex-wrap: wrap; }
-.task-mgmt-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
-.task-mgmt-card-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 8px; }
-.task-mgmt-footer-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.task-list-head {
+  display: grid;
+  grid-template-columns: 2fr 1.2fr 80px 100px 110px 120px 90px;
+  padding: 10px 18px;
+  background: #f9fafb;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border-bottom: 1px solid var(--border);
+}
+.task-list-row-wrap { border-bottom: 1px solid var(--border); border-left: 3px solid transparent; }
+.task-list-row-wrap:last-child { border-bottom: none; }
+.task-list-row-wrap.status-overdue { border-left-color: var(--danger); background: #fff9f9; }
+.task-list-row-wrap.status-due-today { border-left-color: #f59e0b; }
+.task-list-row-wrap.status-upcoming { border-left-color: var(--primary); }
+.task-list-row-wrap.task-inactive { opacity: .65; }
+.task-list-row {
+  display: grid;
+  grid-template-columns: 2fr 1.2fr 80px 100px 110px 120px 90px;
+  padding: 12px 18px;
+  align-items: center;
+  transition: background .1s ease;
+}
+.task-list-row:hover { background: #f9fafb; }
+.task-list-row-wrap.status-overdue .task-list-row:hover { background: #fff0f0; }
+.task-list-col-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.task-list-title { font-size: 14px; font-weight: 600; color: var(--primary); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-list-title:hover { text-decoration: underline; }
+.task-list-desc { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-list-col { font-size: 12px; }
+.task-list-col-actions { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
 .task-recurrence-badge { font-size: 11px; font-weight: 600; color: #374151; background: #f1f5f9; border: 1px solid #e2e8f0; padding: 2px 9px; border-radius: 10px; text-transform: capitalize; white-space: nowrap; }
 
 /* Badges */
@@ -1776,8 +1790,9 @@ body.has-org-banner .user-widget {
   /* Requirement table: scrollable */
   .req-table { min-width: 560px; }
 
-  /* ── Task management card: full width layout ── */
-  .task-mgmt-card { flex-direction: column; }
+  /* ── Task management list: horizontal scroll on small screens ── */
+  .task-list-table { overflow-x: auto; }
+  .task-list-head, .task-list-row { min-width: 700px; }
 
   /* ── Modals: full-screen on mobile ── */
   .modal { align-items: flex-end; }
