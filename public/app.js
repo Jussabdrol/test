@@ -885,20 +885,35 @@ function renderTaskTable() {
     return;
   }
   const recurrenceLabel = r => ({ daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[r] || r);
-  container.innerHTML = tasks.map(t => {
+  let html = `<div class="task-list-table">
+    <div class="task-list-head">
+      <div>Title</div>
+      <div>Assignee · Category</div>
+      <div>Priority</div>
+      <div>Status</div>
+      <div>Due Date</div>
+      <div>Recurrence</div>
+      <div></div>
+    </div>`;
+  html += tasks.map(t => {
     const status = !t.is_active ? 'inactive' : t.next_due < today ? 'overdue' : t.next_due === today ? 'due-today' : 'upcoming';
     const statusLabel = { inactive:'Inactive', overdue:'Overdue', 'due-today':'Due Today', upcoming:'Upcoming' }[status];
     const statusBadge = { inactive:'badge-inactive', overdue:'badge-overdue', 'due-today':'badge-due-today', upcoming:'badge-upcoming' }[status];
     const recLabel = t.recurrence === 'custom' ? `Every ${t.custom_days}d` : t.day_of_week != null && t.recurrence === 'weekly' ? `${recurrenceLabel(t.recurrence)} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][t.day_of_week]})` : t.day_of_month != null && t.recurrence === 'monthly' ? `Monthly (${t.day_of_month}th)` : recurrenceLabel(t.recurrence);
-    const metaParts = [t.assignee ? `&#128100; ${esc(t.assignee)}` : null, t.category && t.category !== 'General' ? `&#128260; ${esc(t.category)}` : null].filter(Boolean);
-    return `<div class="task-mgmt-card status-${status}${!t.is_active ? ' task-inactive' : ''}">
-      <div class="task-mgmt-card-header">
-        <div class="task-mgmt-card-header-left">
-          <h3 class="task-mgmt-title" onclick="openTaskDetailModal(${t.id})">${esc(t.title)}</h3>
-          ${metaParts.length ? `<div class="task-mgmt-sub">${metaParts.join('<span style="color:var(--border)">·</span>')}</div>` : ''}
+    const assigneeParts = [t.assignee ? esc(t.assignee) : null, t.category && t.category !== 'General' ? esc(t.category) : null].filter(Boolean);
+    return `<div class="task-list-row-wrap status-${status}${!t.is_active ? ' task-inactive' : ''}">
+      <div class="task-list-row">
+        <div class="task-list-col-title">
+          <span class="task-list-title" onclick="openTaskDetailModal(${t.id})">${esc(t.title)}</span>
+          ${t.description ? `<span class="task-list-desc">${esc(t.description)}</span>` : ''}
         </div>
-        <div class="task-mgmt-card-header-right">
-          <span class="badge badge-${t.priority.toLowerCase()}">${t.priority}</span>
+        <div class="task-list-col">${assigneeParts.length ? `<span style="font-size:12px;color:var(--text-muted)">${assigneeParts.join(' · ')}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
+        <div class="task-list-col"><span class="badge badge-${t.priority.toLowerCase()}">${t.priority}</span></div>
+        <div class="task-list-col"><span class="badge ${statusBadge}">${statusLabel}</span></div>
+        <div class="task-list-col"><span style="font-size:12px">${esc(t.next_due)}</span></div>
+        <div class="task-list-col"><span class="task-recurrence-badge">&#8635; ${recLabel}</span></div>
+        <div class="task-list-col-actions">
+          ${t.is_active ? `<button class="btn btn-primary btn-sm" style="font-size:11px" onclick="openCompleteModal(${t.id})">&#10003;</button>` : ''}
           ${actionMenu([
             { label: '&#10003; Complete', onclick: `openCompleteModal(${t.id})`, cls: 'success' },
             { label: '&#128279; Links', onclick: `toggleTaskLinks(${t.id})` },
@@ -908,18 +923,11 @@ function renderTaskTable() {
           ])}
         </div>
       </div>
-      ${t.description ? `<div class="task-mgmt-desc">${esc(t.description)}</div>` : ''}
-      <div class="task-mgmt-card-footer">
-        <div class="task-mgmt-footer-left">
-          <span class="badge ${statusBadge}">${statusLabel}</span>
-          <span class="task-recurrence-badge">&#8635; ${recLabel}</span>
-          <span style="font-size:12px;color:var(--text-muted)">Due ${esc(t.next_due)}</span>
-        </div>
-        ${t.is_active ? `<button class="btn btn-primary btn-sm" style="font-size:11px" onclick="openCompleteModal(${t.id})">&#10003; Complete</button>` : ''}
-      </div>
       <div id="task-links-${t.id}" class="task-inline-links"></div>
     </div>`;
   }).join('');
+  html += '</div>';
+  container.innerHTML = html;
 }
 
 function toggleTaskLinks(taskId) {
