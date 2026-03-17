@@ -3603,7 +3603,7 @@ async function loadRequirements() {
 
   // Sort categories: HLS chapters numerically (4→10), annex categories (A.x.x) always last
   const _clauseSortKey = clause => {
-    if (/^[A-Za-z]/.test(clause)) return 9999; // annex — always after numbered clauses
+    if (/^[A-Za-z]/.test(clause)) return 1e9; // annex — always after numbered clauses
     const parts = clause.split('.').map(Number);
     return parts[0] * 10000 + (parts[1] || 0) * 100 + (parts[2] || 0);
   };
