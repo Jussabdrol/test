@@ -1215,13 +1215,14 @@ body {
 .treat-sub-row {
   display: grid;
   grid-template-columns: 80px 1fr 90px 90px 90px 80px 44px;
-  padding: 10px 18px;
+  padding: 10px 18px 10px 21px;
   background: var(--card-bg);
   border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
   align-items: center;
   transition: all .1s ease;
 }
-.treat-sub-row:hover { background: #f9fafb; }
+.treat-sub-row:hover { background: #eef2ff; }
 .treat-sub-type, .treat-sub-ref, .treat-sub-resp, .treat-sub-due, .treat-sub-st { display: flex; justify-content: center; align-items: center; }
 .treat-sub-desc { min-width: 0; }
 .treat-sub-act { display: flex; justify-content: center; align-items: center; }

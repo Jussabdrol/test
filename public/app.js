@@ -4854,15 +4854,6 @@ async function loadRiskTreatmentView() {
 
 function buildTreatmentDetail(treatments, treatmentLinks) {
   let html = '<div class="treat-sub-table">';
-  html += `<div class="treat-sub-head">
-    <div class="treat-sub-type">Type</div>
-    <div class="treat-sub-desc">Description</div>
-    <div class="treat-sub-ref">Links</div>
-    <div class="treat-sub-resp">Responsible</div>
-    <div class="treat-sub-due">Due</div>
-    <div class="treat-sub-st">Status</div>
-    <div class="treat-sub-act"></div>
-  </div>`;
   for (const t of treatments) {
     const stBadge = t.status === 'verified' ? 'badge-low' : t.status === 'implemented' ? 'badge-low' : t.status === 'in_progress' ? 'badge-medium' : 'badge-high';
     const links = treatmentLinks[t.id] || [];
