@@ -576,7 +576,7 @@ const linkableTypes = {
   task: { label: 'Task', icon: '&#9881;', canLink: ['role','process','asset','facility','risk','document','requirement','action'] },
   action: { label: 'Action', icon: '&#9889;', canLink: ['role','process','task','risk','document','requirement'] },
   audit: { label: 'Audit', icon: '&#9998;', canLink: ['role','process','requirement','risk','document'] },
-  requirement: { label: 'Requirement', icon: '&#128220;', canLink: ['risk','task','audit','document','role','process','action'] },
+  requirement: { label: 'Requirement', icon: '&#128220;', canLink: ['process','role','document','risk','treatment','task','action','system','asset','audit'] },
   role: { label: 'Role', icon: '&#128100;', canLink: ['risk','task','audit','process','system','document','action'] },
   process: { label: 'Process', icon: '&#128260;', canLink: ['risk','task','audit','role','system','asset','document','action'] },
   system: { label: 'System', icon: '&#128187;', canLink: ['risk','process','role','asset','document'] },
@@ -3570,13 +3570,14 @@ async function loadRequirements() {
   }
 
   // Derive dynamic columns from which entity types are actually linked
-  const AUDIT_COL_TYPES = ['process', 'role', 'document', 'risk', 'treatment', 'system', 'asset'];
+  const AUDIT_COL_TYPES = ['process', 'role', 'document', 'risk', 'treatment', 'task', 'action', 'system', 'asset'];
+  const AUDIT_COL_LABELS = { process: 'Processes', role: 'Roles', document: 'Documents', risk: 'Risks', treatment: 'Treatments', task: 'Tasks', action: 'Actions', system: 'Systems', asset: 'Assets' };
   const typeLabels = Object.fromEntries(Object.entries(linkableTypes).map(([k,v]) => [k, v.label]));
   const typeIcons  = Object.fromEntries(Object.entries(linkableTypes).map(([k,v]) => [k, v.icon]));
   const _linkedTypesPresent = new Set();
   for (const ls of Object.values(allLinks)) for (const l of ls) if (AUDIT_COL_TYPES.includes(l.type)) _linkedTypesPresent.add(l.type);
   const dynamicCols = AUDIT_COL_TYPES.filter(t => _linkedTypesPresent.has(t));
-  const gridCols = `80px 1fr 100px 80px${dynamicCols.length ? ' ' + dynamicCols.map(() => '130px').join(' ') : ''} 44px`;
+  const gridCols = `80px 280px 100px 80px${dynamicCols.length ? ' ' + dynamicCols.map(() => '130px').join(' ') : ''} 44px`;
 
   // Evidence coverage: % of requirements with at least one linked document
   const withEvidence = reqs.filter(r => (allLinks[r.id] || []).some(l => l.type === 'document')).length;
@@ -3599,18 +3600,30 @@ async function loadRequirements() {
     return;
   }
 
+  // Sort categories: HLS chapters numerically (4→10), annex categories (A.x.x) always last
+  const _clauseSortKey = clause => {
+    if (/^[A-Za-z]/.test(clause)) return 9999; // annex — always after numbered clauses
+    const parts = clause.split('.').map(Number);
+    return parts[0] * 10000 + (parts[1] || 0) * 100 + (parts[2] || 0);
+  };
+  const sortedGroupEntries = Object.entries(groups).sort(([, aItems], [, bItems]) => {
+    const aMin = Math.min(...aItems.map(i => _clauseSortKey(i.clause)));
+    const bMin = Math.min(...bItems.map(i => _clauseSortKey(i.clause)));
+    return aMin - bMin;
+  });
+
   let html = '';
-  for (const [cat, items] of Object.entries(groups)) {
+  for (const [cat, items] of sortedGroupEntries) {
     items.sort((a, b) => a.clause.localeCompare(b.clause, undefined, { numeric: true }));
     html += `<div class="req-category-group">
       <div class="req-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>
-      <div class="req-table">
+      <div class="req-table-wrap"><div class="req-table">
         <div class="req-table-head" style="grid-template-columns:${gridCols}">
           <div class="req-col-clause">Clause</div>
           <div class="req-col-title">Requirement</div>
           <div class="req-col-audit">Last Audit</div>
           <div class="req-col-nc">NCs</div>
-          ${dynamicCols.map(t => `<div class="req-col-dynamic">${typeLabels[t]}s</div>`).join('')}
+          ${dynamicCols.map(t => `<div class="req-col-dynamic">${AUDIT_COL_LABELS[t] || typeLabels[t]}</div>`).join('')}
           <div class="req-col-actions"></div>
         </div>`;
     for (const r of items) {
@@ -3664,7 +3677,7 @@ async function loadRequirements() {
           </div>
         </div>`;
     }
-    html += '</div></div>';
+    html += '</div></div></div>';
   }
   list.innerHTML = html;
   } catch (err) {
