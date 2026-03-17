@@ -1561,7 +1561,8 @@ body {
 
 /* Org context banner (MSP / superadmin viewing an org) */
 #org-context-banner {
-  position: relative;
+  position: sticky;
+  top: 0;
   z-index: 9999;
   background: linear-gradient(135deg, #f59e0b, #d97706);
   color: #fff;
