@@ -647,7 +647,7 @@ function getViewForType(type, id) {
   return view ? `switchView('${view}')` : null;
 }
 
-async function openCrossLinkPicker(entityType, entityId, containerId) {
+async function openCrossLinkPicker(entityType, entityId, containerId, preselectedType) {
   const allowed = linkableTypes[entityType]?.canLink || [];
   // Build a modal dynamically
   let existing = document.getElementById('cross-link-picker-modal');
@@ -668,7 +668,7 @@ async function openCrossLinkPicker(entityType, entityId, containerId) {
         <label>Type</label>
         <select id="cl-pick-type" onchange="loadCrossLinkOptions()">
           <option value="">-- Select type --</option>
-          ${allowed.map(t => `<option value="${t}">${linkableTypes[t]?.label || t}</option>`).join('')}
+          ${allowed.map(t => `<option value="${t}"${preselectedType === t ? ' selected' : ''}>${linkableTypes[t]?.label || t}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
@@ -681,6 +681,7 @@ async function openCrossLinkPicker(entityType, entityId, containerId) {
       </div>
     </div>`;
   existing.classList.remove('hidden');
+  if (preselectedType) loadCrossLinkOptions();
 }
 
 function closeCrossLinkPicker() {
@@ -3645,11 +3646,12 @@ async function loadRequirements() {
       const collapseId = `req-cl-${r.id}`;
       const dynColsHtml = dynamicCols.map(t => {
         const tLinks = links.filter(l => l.type === t);
-        if (!tLinks.length) return `<div class="req-col-dynamic"><span class="req-no-link">-</span></div>`;
+        const addBtn = `<button class="add-link-btn" onclick="openCrossLinkPicker('requirement',${r.id},null,'${t}')" title="Add link">+</button>`;
+        if (!tLinks.length) return `<div class="req-col-dynamic"><span class="req-no-link">-</span>${addBtn}</div>`;
         return `<div class="req-col-dynamic">${tLinks.map(l => {
           const nav = getViewForType(l.type, l.id);
-          return `<span class="req-linked-chip${nav ? ' clickable' : ''}"${nav ? ` onclick="${nav}" title="${esc(l.name)}"` : ''}>${esc(l.name)}</span>`;
-        }).join('')}</div>`;
+          return `<span class="req-linked-chip${nav ? ' clickable' : ''}" title="${esc(l.name)}"><span class="chip-nav"${nav ? ` onclick="${nav}"` : ''}>${esc(l.name)}</span><button class="chip-remove" onclick="event.stopPropagation();removeCrossLink(${l.link_id},'requirement',${r.id},null)" title="Remove link">&times;</button></span>`;
+        }).join('')}${addBtn}</div>`;
       }).join('');
 
       html += `<div class="req-table-row" style="grid-template-columns:${gridCols}">
