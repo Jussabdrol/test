@@ -1300,23 +1300,6 @@ async function uploadPostCompleteEvidence() {
   await refreshCompletionEvidence(lastCompletionContext.completion_id);
 }
 
-// --- Bulk Complete ---
-async function bulkCompleteToday() {
-  const today = new Date().toISOString().split('T')[0];
-  const tasks = await api(`/api/tasks?active=true`);
-  const dueTasks = tasks.filter(t => t.next_due <= today);
-  if (dueTasks.length === 0) return alert('No tasks are due today or overdue.');
-  const completedBy = currentUser?.name || '';
-  if (!confirm(`Mark ${dueTasks.length} task(s) as complete?\n\nTasks due on or before ${today} will be completed.`)) return;
-  for (const t of dueTasks) {
-    await api(`/api/tasks/${t.id}/complete`, {
-      method: 'POST',
-      body: { completed_by: completedBy, notes: 'Bulk completed' },
-    });
-  }
-  invalidateYearlyCache();
-  refreshCurrentView();
-}
 
 // --- Delete (soft-delete: deactivates task, preserves history) ---
 async function deleteTask(id) {
@@ -1806,70 +1789,71 @@ async function loadYearlyPlan() {
 
   const priorityBadge = p => p === 'Critical' ? 'badge-critical' : p === 'High' ? 'badge-high' : p === 'Medium' ? 'badge-medium' : 'badge-low';
   const recurrenceLabel = r => ({ daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[r] || r);
-  const dayLabel = ds => {
+
+  // Merge overdue and upcoming into one sorted list, tag each with status
+  const allUpcomingItems = [
+    ...overdueItems.map(item => ({ ...item, _status: 'overdue' })),
+    ...upcomingItems.map(item => ({ ...item, _status: 'upcoming' })),
+  ];
+  allUpcomingItems.sort((a, b) => a.date.localeCompare(b.date));
+
+  const formatDueDate = (ds, isOverdue) => {
     const d = new Date(ds + 'T00:00:00');
     const diff = Math.round((d - todayDate) / 86400000);
-    if (diff === 0) return 'Today';
-    if (diff === 1) return 'Tomorrow';
-    if (diff < 7) return MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate() + ' (' + ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] + ')';
-    return MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate();
-  };
-  const overdueDayLabel = ds => {
-    const d = new Date(ds + 'T00:00:00');
-    const diff = Math.round((todayDate - d) / 86400000);
-    return MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate() + ` (${diff}d ago)`;
+    const label = MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate();
+    if (isOverdue) {
+      const daysAgo = Math.round((todayDate - d) / 86400000);
+      return `<span style="color:var(--danger);font-size:12px">${label} <span style="font-size:11px">(${daysAgo}d ago)</span></span>`;
+    }
+    if (diff === 0) return `<span style="font-weight:600;font-size:12px">Today</span>`;
+    if (diff === 1) return `<span style="font-size:12px">Tomorrow</span>`;
+    return `<span style="font-size:12px">${label}</span>`;
   };
 
-  const buildCard = (item, isOverdue) => {
-    const dateStr = isOverdue ? overdueDayLabel(item.date) : dayLabel(item.date);
-    const metaParts = [item.assignee ? esc(item.assignee) : null, item.category ? esc(item.category) : null].filter(Boolean).join(' · ');
-    return `<div class="upcoming-card${isOverdue ? ' card-overdue' : ''}">
-      <div class="upcoming-card-top">
-        <span class="upcoming-card-title" onclick="openTaskModal(${item.task_id})">${esc(item.title)}</span>
-        <div class="upcoming-card-badges">
-          <span class="badge ${priorityBadge(item.priority)}">${item.priority}</span>
-          <span class="task-recurrence-badge">&#8635; ${recurrenceLabel(item.recurrence)}</span>
-        </div>
+  const upcomingGridCols = '2fr 110px 90px 1fr 80px 100px 110px';
+  const buildTableRow = item => {
+    const isOverdue = item._status === 'overdue';
+    return `<div class="arch-table-row" style="grid-template-columns:${upcomingGridCols}${isOverdue ? ';background:var(--danger-bg,#fff5f5)' : ''}">
+      <div class="arch-col-name" style="cursor:pointer" onclick="openTaskModal(${item.task_id})">
+        <span class="arch-name" style="color:var(--primary)">${esc(item.title)}</span>
+        ${item.category ? `<span class="arch-desc">${esc(item.category)}</span>` : ''}
       </div>
-      ${metaParts ? `<div class="upcoming-card-meta">${metaParts}</div>` : ''}
-      <div class="upcoming-card-footer">
-        <span class="upcoming-date${isOverdue ? ' overdue' : ''}">${dateStr}</span>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="openTaskModal(${item.task_id})">&#9998; Edit</button>
-          <button class="btn btn-primary btn-sm" style="font-size:11px" onclick="quickComplete(${item.task_id},'${item.date}')">&#10003; Complete</button>
-        </div>
+      <div class="arch-col-detail">${formatDueDate(item.date, isOverdue)}</div>
+      <div class="arch-col-detail">
+        ${isOverdue
+          ? `<span class="badge badge-critical">Overdue</span>`
+          : `<span class="badge badge-low" style="background:var(--success-light,#e6f9ee);color:var(--success,#16a34a)">Upcoming</span>`}
+      </div>
+      <div class="arch-col-detail"><span style="font-size:12px">${item.assignee ? esc(item.assignee) : '<span style="color:var(--text-muted)">—</span>'}</span></div>
+      <div class="arch-col-detail"><span class="badge ${priorityBadge(item.priority)}">${item.priority}</span></div>
+      <div class="arch-col-detail"><span class="task-recurrence-badge">&#8635; ${recurrenceLabel(item.recurrence)}</span></div>
+      <div class="arch-col-actions" style="gap:6px">
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="openTaskModal(${item.task_id})">&#9998; Edit</button>
+        <button class="btn btn-primary btn-sm" style="font-size:11px" onclick="quickComplete(${item.task_id},'${item.date}')">&#10003;</button>
       </div>
     </div>`;
   };
 
-  let html = '';
+  const totalCount = allUpcomingItems.length;
+  const overdueCount = overdueItems.length;
+  const upcomingCount = upcomingItems.length;
 
-  // Overdue section
-  if (overdueItems.length > 0) {
-    html += `<h3 class="section-title" style="margin-top:28px;color:var(--danger)">&#9888; Overdue Tasks <span class="req-cat-count">(${overdueItems.length})</span></h3>
-    <div class="upcoming-cards">${overdueItems.map(item => buildCard(item, true)).join('')}</div>`;
-  }
+  let html = `<h3 class="section-title" style="margin-top:28px">
+    Tasks — Overdue &amp; Next 4 Weeks
+    <span class="req-cat-count" style="margin-left:6px">(${totalCount})</span>
+    ${overdueCount > 0 ? `<span class="badge badge-critical" style="margin-left:8px;font-size:11px">${overdueCount} overdue</span>` : ''}
+    ${upcomingCount > 0 ? `<span style="font-size:12px;color:var(--text-muted);margin-left:6px">${upcomingCount} upcoming</span>` : ''}
+  </h3>`;
 
-  // Coming Up section
-  html += `<h3 class="section-title" style="margin-top:28px">Coming Up — Next 4 Weeks</h3>`;
-  if (upcomingItems.length === 0) {
-    html += '<div class="empty-state">No tasks scheduled in the next 4 weeks.</div>';
+  if (allUpcomingItems.length === 0) {
+    html += '<div class="empty-state">No overdue or upcoming tasks in the next 4 weeks.</div>';
   } else {
-    // Group by week
-    const weeks = {};
-    for (const item of upcomingItems) {
-      const d = new Date(item.date + 'T00:00:00');
-      const diffDays = Math.round((d - todayDate) / 86400000);
-      const weekNum = diffDays < 7 ? 'This Week' : diffDays < 14 ? 'Next Week' : diffDays < 21 ? 'In 2 Weeks' : 'In 3 Weeks';
-      if (!weeks[weekNum]) weeks[weekNum] = [];
-      weeks[weekNum].push(item);
-    }
-    for (const [weekLabel, items] of Object.entries(weeks)) {
-      html += `<div class="upcoming-group">
-        <div class="upcoming-group-header">${weekLabel} <span class="req-cat-count">(${items.length})</span></div>
-        <div style="padding:16px"><div class="upcoming-cards">${items.map(item => buildCard(item, false)).join('')}</div></div>
-      </div>`;
-    }
+    html += `<div class="arch-table">
+      <div class="arch-table-head" style="grid-template-columns:${upcomingGridCols}">
+        <div>Task</div><div>Due Date</div><div>Status</div><div>Assignee</div><div>Priority</div><div>Recurrence</div><div></div>
+      </div>
+      <div>${allUpcomingItems.map(buildTableRow).join('')}</div>
+    </div>`;
   }
 
   upcomingEl.innerHTML = html;
