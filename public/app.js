@@ -3570,7 +3570,7 @@ async function loadRequirements() {
   }
 
   // Derive dynamic columns from which entity types are actually linked
-  const AUDIT_COL_TYPES = ['system', 'process', 'role', 'asset', 'document', 'risk', 'treatment'];
+  const AUDIT_COL_TYPES = ['process', 'role', 'document', 'risk', 'treatment', 'system', 'asset'];
   const typeLabels = Object.fromEntries(Object.entries(linkableTypes).map(([k,v]) => [k, v.label]));
   const typeIcons  = Object.fromEntries(Object.entries(linkableTypes).map(([k,v]) => [k, v.icon]));
   const _linkedTypesPresent = new Set();
@@ -3610,7 +3610,7 @@ async function loadRequirements() {
           <div class="req-col-title">Requirement</div>
           <div class="req-col-audit">Last Audit</div>
           <div class="req-col-nc">NCs</div>
-          ${dynamicCols.map(t => `<div class="req-col-dynamic">${typeIcons[t]} ${typeLabels[t]}s</div>`).join('')}
+          ${dynamicCols.map(t => `<div class="req-col-dynamic">${typeLabels[t]}s</div>`).join('')}
           <div class="req-col-actions"></div>
         </div>`;
     for (const r of items) {
