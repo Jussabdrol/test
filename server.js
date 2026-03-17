@@ -671,7 +671,7 @@ app.delete('/api/tasks/:id', requireOrgContext, async (req, res) => {
 // Get completion history
 app.get('/api/completions', requireOrgContext, async (req, res) => {
   const { task_id, limit, completed_by, from, to } = req.query;
-  let sql = `SELECT c.*, t.title as task_title,
+  let sql = `SELECT c.*, t.title as task_title, t.category as task_category,
     (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id) as action_count,
     (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id AND a.status IN ('open','in_progress')) as open_action_count
     FROM completions c JOIN tasks t ON c.task_id = t.id WHERE c.organization_id = ?`;
@@ -851,32 +851,41 @@ app.get('/api/yearly', requireOrgContext, async (req, res) => {
 
 // Get all actions with optional filters
 app.get('/api/actions', requireOrgContext, async (req, res) => {
-  const { task_id, completion_id, status } = req.query;
-  let sql = `SELECT a.*, COALESCE(t.title, 'Standalone') as task_title FROM actions a LEFT JOIN tasks t ON a.task_id = t.id WHERE a.organization_id = ?`;
+  const { task_id, completion_id, status, process_id } = req.query;
+  let sql = `SELECT a.*, COALESCE(t.title, 'Standalone') as task_title, p.name as process_name
+    FROM actions a
+    LEFT JOIN tasks t ON a.task_id = t.id
+    LEFT JOIN org_architecture p ON a.process_id = p.id
+    WHERE a.organization_id = ?`;
   const params = [req.orgId];
   if (task_id) { sql += ' AND a.task_id = ?'; params.push(task_id); }
   if (completion_id) { sql += ' AND a.completion_id = ?'; params.push(completion_id); }
   if (status) { sql += ' AND a.status = ?'; params.push(status); }
+  if (process_id) { sql += ' AND a.process_id = ?'; params.push(process_id); }
   sql += ' ORDER BY a.created_at DESC';
   res.json(await db.prepare(sql).all(...params));
 });
 
 // Get single action
 app.get('/api/actions/:id', requireOrgContext, async (req, res) => {
-  const action = await db.prepare('SELECT a.*, t.title as task_title FROM actions a LEFT JOIN tasks t ON a.task_id = t.id WHERE a.id = ? AND a.organization_id = ?').get(req.params.id, req.orgId);
+  const action = await db.prepare(`SELECT a.*, t.title as task_title, p.name as process_name
+    FROM actions a
+    LEFT JOIN tasks t ON a.task_id = t.id
+    LEFT JOIN org_architecture p ON a.process_id = p.id
+    WHERE a.id = ? AND a.organization_id = ?`).get(req.params.id, req.orgId);
   if (!action) return res.status(404).json({ error: 'Action not found' });
   res.json(action);
 });
 
-// Create action (optionally linked to a completion/task, or standalone)
+// Create action (optionally linked to a completion/task/process, or standalone)
 app.post('/api/actions', requireOrgContext, async (req, res) => {
-  const { completion_id, task_id, title, description, assignee, priority, due_date } = req.body;
+  const { completion_id, task_id, process_id, title, description, assignee, priority, due_date } = req.body;
   if (!title) return res.status(400).json({ error: 'title is required' });
 
   const result = await db.prepare(`
-    INSERT INTO actions (organization_id, completion_id, task_id, title, description, assignee, priority, due_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(req.orgId, completion_id || null, task_id || null, title, description || '', assignee || '', priority || 'Medium', due_date || null);
+    INSERT INTO actions (organization_id, completion_id, task_id, process_id, title, description, assignee, priority, due_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(req.orgId, completion_id || null, task_id || null, process_id || null, title, description || '', assignee || '', priority || 'Medium', due_date || null);
 
   const action = await db.prepare('SELECT * FROM actions WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(action);
@@ -887,7 +896,7 @@ app.put('/api/actions/:id', requireOrgContext, async (req, res) => {
   const existing = await db.prepare('SELECT * FROM actions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Action not found' });
 
-  const fields = ['title', 'description', 'assignee', 'priority', 'status', 'due_date', 'resolved_by'];
+  const fields = ['title', 'description', 'assignee', 'priority', 'status', 'due_date', 'resolved_by', 'process_id'];
   const updates = [];
   const params = [];
   for (const f of fields) {
@@ -912,6 +921,43 @@ app.put('/api/actions/:id', requireOrgContext, async (req, res) => {
 app.delete('/api/actions/:id', requireOrgContext, async (req, res) => {
   const result = await db.prepare('DELETE FROM actions WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'Action not found' });
+  res.json({ success: true });
+});
+
+// --- Plan Bundles API ---
+
+app.get('/api/plan-bundles', requireOrgContext, async (req, res) => {
+  res.json(await db.prepare('SELECT * FROM plan_bundles WHERE organization_id = ? ORDER BY sort_order, name').all(req.orgId));
+});
+
+app.post('/api/plan-bundles', requireOrgContext, async (req, res) => {
+  const { name, process_ids, color } = req.body;
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const result = await db.prepare(
+    'INSERT INTO plan_bundles (organization_id, name, process_ids, color) VALUES (?, ?, ?, ?)'
+  ).run(req.orgId, name, JSON.stringify(process_ids || []), color || '#6366f1');
+  res.status(201).json(await db.prepare('SELECT * FROM plan_bundles WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.put('/api/plan-bundles/:id', requireOrgContext, async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM plan_bundles WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Bundle not found' });
+  const { name, process_ids, color, sort_order } = req.body;
+  await db.prepare(
+    `UPDATE plan_bundles SET name = ?, process_ids = ?, color = ?, sort_order = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?`
+  ).run(
+    name ?? existing.name,
+    process_ids !== undefined ? JSON.stringify(process_ids) : existing.process_ids,
+    color ?? existing.color,
+    sort_order ?? existing.sort_order,
+    req.params.id, req.orgId
+  );
+  res.json(await db.prepare('SELECT * FROM plan_bundles WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/plan-bundles/:id', requireOrgContext, async (req, res) => {
+  const result = await db.prepare('DELETE FROM plan_bundles WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
+  if (result.changes === 0) return res.status(404).json({ error: 'Bundle not found' });
   res.json({ success: true });
 });
 

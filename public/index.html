@@ -259,6 +259,9 @@
         </div>
       </section>
 
+      <!-- Operational Planning process context bar (shared across the 4 op-plan views) -->
+      <div id="op-plan-context-bar" class="hidden"></div>
+
       <!-- Manage Tasks View -->
       <section id="view-tasks" class="view hidden">
         <div class="view-header">
@@ -315,6 +318,7 @@
             <thead>
               <tr>
                 <th>Action</th>
+                <th>Process</th>
                 <th>Source Task</th>
                 <th>Role</th>
                 <th>Priority</th>
@@ -1516,6 +1520,12 @@
           <input type="text" id="action-title" required placeholder="What needs to be done?">
         </div>
         <div class="form-group">
+          <label for="action-process-id">Process</label>
+          <select id="action-process-id">
+            <option value="">— Not linked to a process —</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label for="action-description">Description</label>
           <textarea id="action-description" rows="3" placeholder="Details about this follow-up action"></textarea>
         </div>
@@ -2661,6 +2671,36 @@
           <button type="button" class="btn btn-danger btn-sm" id="mgmt-output-delete-btn" onclick="deleteOutput()" style="margin-right:auto;display:none">Delete</button>
           <button type="button" class="btn btn-secondary" onclick="closeMgmtOutputModal()">Cancel</button>
           <button type="submit" class="btn btn-primary" id="mgmt-output-save-btn">Save Output</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Bundle modal -->
+  <div id="bundle-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeBundleModal()"></div>
+    <div class="modal-content" style="max-width:480px">
+      <div class="modal-header">
+        <h3 id="bundle-modal-title">New Process Bundle</h3>
+        <button class="modal-close" onclick="closeBundleModal()">&times;</button>
+      </div>
+      <form id="bundle-form" onsubmit="saveBundleModal(event)">
+        <input type="hidden" id="bundle-id">
+        <div class="form-group">
+          <label for="bundle-name">Bundle Name *</label>
+          <input type="text" id="bundle-name" required placeholder="e.g. Core Operations">
+        </div>
+        <div class="form-group">
+          <label>Colour</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap" id="bundle-color-swatches"></div>
+        </div>
+        <div class="form-group">
+          <label>Processes in this bundle</label>
+          <div id="bundle-process-checklist" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:8px"></div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeBundleModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Bundle</button>
         </div>
       </form>
     </div>

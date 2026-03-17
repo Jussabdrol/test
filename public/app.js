@@ -11,6 +11,12 @@ let currentUser = null;
 let isSuperadmin = false;
 let activeOrg = null; // { id, name, slug } when superadmin is inside an org
 
+// --- Operational Planning process context ---
+const OP_PLAN_VIEWS = ['tasks', 'yearly', 'actions', 'history'];
+let opPlanContext = { type: 'all', id: null }; // type: 'all' | 'process' | 'bundle'
+let opPlanProcesses = []; // cached list of processes from org_architecture
+let opPlanBundles = [];   // cached list of plan_bundles
+
 // --- Authentication ---
 async function loadCurrentUser() {
   try {
@@ -470,6 +476,17 @@ function switchView(view) {
     }
   }
 
+  // Show or hide the process context bar
+  const ctxBar = document.getElementById('op-plan-context-bar');
+  if (ctxBar) {
+    if (OP_PLAN_VIEWS.includes(view)) {
+      ctxBar.classList.remove('hidden');
+      loadOpPlanContextData().then(() => renderOpPlanContextBar());
+    } else {
+      ctxBar.classList.add('hidden');
+    }
+  }
+
   if (view === 'tasks') loadTasks();
   else if (view === 'yearly') loadYearlyPlan();
   else if (view === 'actions') loadActions();
@@ -860,12 +877,15 @@ async function renderFilters() {
 function renderTaskTable() {
   const container = document.getElementById('task-table-body');
   const today = new Date().toISOString().split('T')[0];
-  if (allTasks.length === 0) {
+  // Client-side context filter (used for bundles; single-process is already server-filtered)
+  const ctxNames = getOpPlanContextNames();
+  const tasks = ctxNames ? allTasks.filter(t => ctxNames.includes(t.category)) : allTasks;
+  if (tasks.length === 0) {
     container.innerHTML = '<div class="empty-state">No tasks found.</div>';
     return;
   }
   const recurrenceLabel = r => ({ daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[r] || r);
-  container.innerHTML = allTasks.map(t => {
+  container.innerHTML = tasks.map(t => {
     const status = !t.is_active ? 'inactive' : t.next_due < today ? 'overdue' : t.next_due === today ? 'due-today' : 'upcoming';
     const statusLabel = { inactive:'Inactive', overdue:'Overdue', 'due-today':'Due Today', upcoming:'Upcoming' }[status];
     const statusBadge = { inactive:'badge-inactive', overdue:'badge-overdue', 'due-today':'badge-due-today', upcoming:'badge-upcoming' }[status];
@@ -917,7 +937,10 @@ async function loadHistory() {
   if (historyFilters.completed_by) params.set('completed_by', historyFilters.completed_by);
   if (historyFilters.from) params.set('from', historyFilters.from);
   if (historyFilters.to) params.set('to', historyFilters.to);
-  const completions = await api(`/api/completions?${params}`);
+  let completions = await api(`/api/completions?${params}`);
+  // Apply process context filter
+  const histCtxNames = getOpPlanContextNames();
+  if (histCtxNames) completions = completions.filter(c => histCtxNames.includes(c.task_category));
   renderHistoryFilters(completions);
   const list = document.getElementById('history-list');
   if (completions.length === 0) {
@@ -1438,10 +1461,18 @@ async function addQuickAction() {
 async function loadActions() {
   const params = new URLSearchParams();
   if (actionFilters.status) params.set('status', actionFilters.status);
+  if (opPlanContext.type === 'process' && opPlanContext.id) params.set('process_id', opPlanContext.id);
 
   const actions = await api(`/api/actions?${params}`);
   renderActionFilters();
-  renderActionTable(actions);
+  // For bundle context: filter client-side by process_id membership
+  if (opPlanContext.type === 'bundle') {
+    const bundle = opPlanBundles.find(b => b.id === opPlanContext.id);
+    const ids = bundle ? JSON.parse(bundle.process_ids || '[]') : [];
+    renderActionTable(actions.filter(a => ids.includes(a.process_id)));
+  } else {
+    renderActionTable(actions);
+  }
 }
 
 function renderActionFilters() {
@@ -1461,7 +1492,7 @@ function renderActionTable(actions) {
   const tbody = document.getElementById('action-table-body');
   const today = new Date().toISOString().split('T')[0];
   if (actions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No actions found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No actions found</td></tr>';
     return;
   }
   tbody.innerHTML = actions.map(a => {
@@ -1470,6 +1501,7 @@ function renderActionTable(actions) {
     const statusLabel = a.status.replace('_', ' ');
     return `<tr>
       <td><strong style="cursor:pointer;color:var(--primary)" onclick="openActionModal(${a.id})">${esc(a.title)}</strong>${a.description ? '<br><small style="color:var(--text-muted);cursor:pointer" onclick="openActionModal(' + a.id + ')">' + esc(a.description) + '</small>' : ''}</td>
+      <td>${a.process_name ? `<span class="op-ctx-process-tag">${esc(a.process_name)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
       <td>${esc(a.task_title)}</td>
       <td>${esc(a.assignee || '-')}</td>
       <td><span class="badge badge-${a.priority.toLowerCase()}">${a.priority}</span></td>
@@ -1522,11 +1554,22 @@ async function openActionModal(id) {
   document.getElementById('action-modal-title').textContent = 'New Action';
   document.getElementById('action-resolved-by-group').classList.add('hidden');
 
-  // Populate Role dropdown from Architecture
-  const roles = await api('/api/architecture?arch_type=role');
+  // Populate Role + Process dropdowns from Architecture
+  const [roles, processes] = await Promise.all([
+    api('/api/architecture?arch_type=role'),
+    opPlanProcesses.length ? Promise.resolve(opPlanProcesses) : api('/api/architecture?arch_type=process'),
+  ]);
   const assigneeSelect = document.getElementById('action-assignee');
   assigneeSelect.innerHTML = '<option value="">-- Select Role --</option>' +
     roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+  const processSelect = document.getElementById('action-process-id');
+  processSelect.innerHTML = '<option value="">— Not linked to a process —</option>' +
+    processes.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+
+  // Pre-select process from context bar if creating new action
+  if (!id && opPlanContext.type === 'process' && opPlanContext.id) {
+    processSelect.value = opPlanContext.id;
+  }
 
   if (id) {
     const action = await api(`/api/actions/${id}`);
@@ -1541,6 +1584,7 @@ async function openActionModal(id) {
     document.getElementById('action-due-date').value = action.due_date || '';
     document.getElementById('action-status').value = action.status;
     document.getElementById('action-resolved-by').value = action.resolved_by || '';
+    processSelect.value = action.process_id || '';
     if (action.status === 'resolved' || action.status === 'closed') {
       document.getElementById('action-resolved-by-group').classList.remove('hidden');
     }
@@ -1566,6 +1610,7 @@ async function saveAction(e) {
   e.preventDefault();
   const id = document.getElementById('action-id').value;
   const assigneeName = document.getElementById('action-assignee').value;
+  const processIdVal = document.getElementById('action-process-id').value;
   const body = {
     title: document.getElementById('action-title').value,
     description: document.getElementById('action-description').value,
@@ -1574,6 +1619,7 @@ async function saveAction(e) {
     due_date: document.getElementById('action-due-date').value || null,
     status: document.getElementById('action-status').value,
     resolved_by: document.getElementById('action-resolved-by').value,
+    process_id: processIdVal ? parseInt(processIdVal) : null,
   };
 
   let actionId = id;
@@ -1650,10 +1696,29 @@ function invalidateYearlyCache() {
   yearlyData = null;
 }
 
+function filterYearlyDataByCategories(data, names) {
+  const filterEntries = obj => {
+    const out = {};
+    for (const [ds, items] of Object.entries(obj)) {
+      const filtered = items.filter(t => names.includes(t.category));
+      if (filtered.length) out[ds] = filtered;
+    }
+    return out;
+  };
+  return {
+    ...data,
+    dueDates: filterEntries(data.dueDates || {}),
+    completedDates: filterEntries(data.completedDates || {}),
+  };
+}
+
 async function loadYearlyPlan() {
   document.getElementById('yearly-title').textContent = `Yearly Plan ${yearlyYear}`;
   try {
-  const data = await api(`/api/yearly?year=${yearlyYear}`);
+  const rawData = await api(`/api/yearly?year=${yearlyYear}`);
+  // Apply process context filter to yearly data
+  const yearCtxNames = getOpPlanContextNames();
+  const data = yearCtxNames ? filterYearlyDataByCategories(rawData, yearCtxNames) : rawData;
   yearlyData = data;
   const today = new Date().toISOString().split('T')[0];
 
@@ -7743,6 +7808,181 @@ function renderMyTasksContent(data) {
 }
 
 // --- Helpers ---
+// ─── Op-Plan Process Context Bar ─────────────────────────────────────────────
+
+const BUNDLE_COLORS = ['#6366f1','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
+
+async function loadOpPlanContextData() {
+  try {
+    const [procs, bundles] = await Promise.all([
+      api('/api/architecture?arch_type=process'),
+      api('/api/plan-bundles'),
+    ]);
+    opPlanProcesses = procs;
+    opPlanBundles = bundles;
+  } catch(e) { /* silently ignore */ }
+}
+
+function getOpPlanContextNames() {
+  // Returns array of process names matching current context, or null for 'all'
+  if (opPlanContext.type === 'all') return null;
+  if (opPlanContext.type === 'process') {
+    const p = opPlanProcesses.find(p => p.id === opPlanContext.id);
+    return p ? [p.name] : null;
+  }
+  if (opPlanContext.type === 'bundle') {
+    const bundle = opPlanBundles.find(b => b.id === opPlanContext.id);
+    if (!bundle) return null;
+    const ids = JSON.parse(bundle.process_ids || '[]');
+    return opPlanProcesses.filter(p => ids.includes(p.id)).map(p => p.name);
+  }
+  return null;
+}
+
+function renderOpPlanContextBar() {
+  const bar = document.getElementById('op-plan-context-bar');
+  if (!bar) return;
+
+  const allPill = `<button class="op-ctx-pill${opPlanContext.type==='all'?' active':''}" onclick="setOpPlanContext('all',null)">All Processes</button>`;
+
+  const procPills = opPlanProcesses.map(p =>
+    `<button class="op-ctx-pill${opPlanContext.type==='process'&&opPlanContext.id===p.id?' active':''}"
+      onclick="setOpPlanContext('process',${p.id})">${esc(p.name)}</button>`
+  ).join('');
+
+  const bundlePills = opPlanBundles.map(b => {
+    const active = opPlanContext.type === 'bundle' && opPlanContext.id === b.id;
+    return `<button class="op-ctx-bundle-pill${active?' active':''}" style="--bundle-color:${esc(b.color||'#6366f1')}"
+      onclick="setOpPlanContext('bundle',${b.id})"
+      title="Edit bundle" ondblclick="openBundleModal(${b.id})">&#128230; ${esc(b.name)}</button>`;
+  }).join('');
+
+  bar.innerHTML = `
+    <div class="op-plan-ctx-bar">
+      <div class="op-ctx-pills">
+        ${allPill}
+        ${procPills}
+        ${opPlanBundles.length > 0 ? '<span class="op-ctx-sep"></span>' : ''}
+        ${bundlePills}
+        <button class="op-ctx-add-btn" onclick="openBundleModal()" title="Create bundle">&#43; Bundle</button>
+      </div>
+    </div>`;
+}
+
+async function setOpPlanContext(type, id) {
+  opPlanContext = { type, id };
+  // For single-process context, mirror into task category filter (server-side)
+  if (type === 'process') {
+    const p = opPlanProcesses.find(p => p.id === id);
+    filters.category = p ? p.name : '';
+  } else {
+    filters.category = '';
+  }
+  renderOpPlanContextBar();
+  // Reload the current view with the new context applied
+  if (currentView === 'tasks') loadTasks();
+  else if (currentView === 'yearly') loadYearlyPlan();
+  else if (currentView === 'actions') loadActions();
+  else if (currentView === 'history') loadHistory();
+}
+
+// ─── Bundle modal ─────────────────────────────────────────────────────────────
+
+async function openBundleModal(id) {
+  await loadOpPlanContextData();
+  const modal = document.getElementById('bundle-modal');
+  document.getElementById('bundle-id').value = id || '';
+  document.getElementById('bundle-modal-title').textContent = id ? 'Edit Bundle' : 'New Process Bundle';
+
+  let selectedColor = '#6366f1';
+  let selectedIds = [];
+
+  if (id) {
+    const bundle = opPlanBundles.find(b => b.id === id);
+    if (bundle) {
+      document.getElementById('bundle-name').value = bundle.name;
+      selectedColor = bundle.color || '#6366f1';
+      try { selectedIds = JSON.parse(bundle.process_ids || '[]'); } catch(e) {}
+    }
+  } else {
+    document.getElementById('bundle-name').value = '';
+  }
+
+  // Colour swatches
+  const swatchEl = document.getElementById('bundle-color-swatches');
+  swatchEl.innerHTML = BUNDLE_COLORS.map(c =>
+    `<span class="bundle-color-swatch${c===selectedColor?' selected':''}" style="background:${c}" data-color="${c}" onclick="selectBundleColor('${c}')"></span>`
+  ).join('');
+
+  // Process checklist
+  const listEl = document.getElementById('bundle-process-checklist');
+  if (opPlanProcesses.length === 0) {
+    listEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px">No processes defined in Architecture yet.</div>';
+  } else {
+    listEl.innerHTML = opPlanProcesses.map(p =>
+      `<label class="bundle-proc-item">
+        <input type="checkbox" value="${p.id}" ${selectedIds.includes(p.id)?'checked':''}>
+        ${esc(p.name)}
+      </label>`
+    ).join('');
+  }
+
+  // Delete button (edit mode only)
+  const existing = document.getElementById('bundle-delete-btn');
+  if (existing) existing.remove();
+  if (id) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'bundle-delete-btn';
+    btn.className = 'btn btn-danger';
+    btn.textContent = 'Delete Bundle';
+    btn.onclick = () => deletePlanBundle(id);
+    document.querySelector('#bundle-form .form-actions').prepend(btn);
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function selectBundleColor(color) {
+  document.querySelectorAll('.bundle-color-swatch').forEach(s => s.classList.toggle('selected', s.dataset.color === color));
+}
+
+function closeBundleModal() {
+  document.getElementById('bundle-modal').classList.add('hidden');
+}
+
+async function saveBundleModal(e) {
+  e.preventDefault();
+  const id = document.getElementById('bundle-id').value;
+  const name = document.getElementById('bundle-name').value.trim();
+  const color = document.querySelector('.bundle-color-swatch.selected')?.dataset.color || '#6366f1';
+  const process_ids = [...document.querySelectorAll('#bundle-process-checklist input:checked')].map(cb => parseInt(cb.value));
+
+  if (!name) return;
+  if (id) {
+    await api(`/api/plan-bundles/${id}`, { method: 'PUT', body: { name, color, process_ids } });
+  } else {
+    await api('/api/plan-bundles', { method: 'POST', body: { name, color, process_ids } });
+  }
+  closeBundleModal();
+  await loadOpPlanContextData();
+  renderOpPlanContextBar();
+}
+
+async function deletePlanBundle(id) {
+  if (!confirm('Delete this bundle?')) return;
+  await api(`/api/plan-bundles/${id}`, { method: 'DELETE' });
+  if (opPlanContext.type === 'bundle' && opPlanContext.id === id) {
+    opPlanContext = { type: 'all', id: null };
+    filters.category = '';
+  }
+  closeBundleModal();
+  await loadOpPlanContextData();
+  renderOpPlanContextBar();
+}
+
+// ─── End context bar ──────────────────────────────────────────────────────────
+
 function refreshCurrentView() {
   switchView(currentView);
 }
