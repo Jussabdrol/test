@@ -1008,7 +1008,7 @@ body {
 .req-col-audit, .req-col-rating, .req-col-nc { display: flex; justify-content: center; align-items: center; }
 .req-col-links { display: flex; align-items: center; min-width: 0; overflow: hidden; }
 .req-col-dynamic { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; min-width: 0; padding: 3px 0; font-weight: 600; font-size: 11px; color: var(--text-muted); }
-.req-linked-chip { display: inline-flex; align-items: center; gap: 2px; padding: 2px 5px 2px 7px; border-radius: 10px; background: #e8f0fe; color: var(--primary); font-size: 11px; font-weight: 500; max-width: 120px; }
+.req-linked-chip { display: inline-flex; align-items: center; gap: 2px; padding: 2px 5px 2px 7px; border-radius: 10px; background: #f1f5f9; color: var(--text); border: 1px solid #e2e8f0; font-size: 11px; font-weight: 500; max-width: 120px; }
 .req-linked-chip .chip-nav { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .req-linked-chip.clickable .chip-nav { cursor: pointer; }
 .req-linked-chip.clickable:hover { background: var(--primary); color: #fff; }
@@ -1019,7 +1019,28 @@ body {
 .add-link-btn:hover { opacity: 1; background: var(--primary); color: #fff; border-style: solid; }
 .req-col-dynamic:hover .add-link-btn { display: inline-flex; }
 .req-no-link { color: var(--text-muted); font-size: 11px; }
-.req-col-actions { display: flex; justify-content: center; align-items: center; }
+.req-col-actions { display: flex; justify-content: center; align-items: center; position: sticky; right: 0; z-index: 3; }
+.req-table-head .req-col-actions { background: #f9fafb; }
+.req-table-row .req-col-actions { background: var(--card-bg); }
+.req-table-row:hover .req-col-actions { background: #f9fafb; }
+.req-col-actions::before { content: ''; position: absolute; top: 0; left: -8px; bottom: 0; width: 8px; background: linear-gradient(to left, rgba(0,0,0,0.05), transparent); pointer-events: none; }
+/* Column resize handles */
+.req-table-head > div { position: relative; }
+.req-col-clause, .req-col-title { position: sticky; } /* preserve sticky; relative is implicit */
+.req-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 4;
+  border-right: 2px solid transparent;
+  transition: border-color 0.15s;
+}
+.req-resize-handle:hover, .req-resize-handle.dragging { border-right-color: var(--primary); }
+
 .req-expand-row { background: #f9fafb; }
 .req-links-detail { padding: 12px 18px 16px 18px; border-bottom: 1px solid var(--border); }
 .req-links-detail.collapsed { display: none; }
