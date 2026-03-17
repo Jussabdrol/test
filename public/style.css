@@ -247,6 +247,7 @@ body {
   margin-left: 260px;
   padding: 32px 36px;
   max-width: 1400px;
+  overflow-x: hidden;
   transition: margin-left .3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .sidebar.collapsed ~ .content { margin-left: 64px; }
