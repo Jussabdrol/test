@@ -1025,8 +1025,12 @@ body {
 .req-table-row:hover .req-col-actions { background: #f9fafb; }
 .req-col-actions::before { content: ''; position: absolute; top: 0; left: -8px; bottom: 0; width: 8px; background: linear-gradient(to left, rgba(0,0,0,0.05), transparent); pointer-events: none; }
 /* Column resize handles */
-.req-table-head > div { position: relative; }
-.req-col-clause, .req-col-title { position: sticky; } /* preserve sticky; relative is implicit */
+/* Only non-sticky header cells need position:relative for the resize handle.
+   Sticky cells (.req-col-clause, .req-col-title) already create a containing
+   block via their own position:sticky, so they work without position:relative. */
+.req-table-head .req-col-audit,
+.req-table-head .req-col-nc,
+.req-table-head .req-col-dynamic { position: relative; }
 .req-resize-handle {
   position: absolute;
   right: 0;

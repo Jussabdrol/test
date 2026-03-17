@@ -3569,6 +3569,12 @@ function _initReqResize(dynCols) {
         document.querySelectorAll('.req-table-head, .req-table-row').forEach(el => {
           el.style.gridTemplateColumns = cols;
         });
+        // Keep the sticky 'Requirement' column's left offset in sync with clause width
+        if (colKey === 'clause') {
+          document.querySelectorAll('.req-col-title').forEach(el => {
+            el.style.left = newW + 'px';
+          });
+        }
       };
       const onUp = () => {
         handle.classList.remove('dragging');
