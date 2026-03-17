@@ -3539,6 +3539,47 @@ function ratingLabel(rating) {
 }
 
 let reqFilters = { standard: '' };
+let reqColWidths = {}; // persists resize state across re-renders
+
+function _getReqGridCols(dynCols) {
+  const w = reqColWidths;
+  return [
+    (w.clause || 80) + 'px',
+    (w.title  || 280) + 'px',
+    (w.audit  || 100) + 'px',
+    (w.nc     || 80)  + 'px',
+    ...dynCols.map(t => (w['dyn_' + t] || 130) + 'px'),
+    '44px', // actions — always fixed
+  ].join(' ');
+}
+
+function _initReqResize(dynCols) {
+  document.querySelectorAll('.req-resize-handle').forEach(handle => {
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      const colKey = handle.dataset.col;
+      const startX = e.clientX;
+      const startW = reqColWidths[colKey] || parseInt(handle.dataset.default, 10) || 130;
+      handle.classList.add('dragging');
+
+      const onMove = ev => {
+        const newW = Math.max(50, startW + ev.clientX - startX);
+        reqColWidths[colKey] = newW;
+        const cols = _getReqGridCols(dynCols);
+        document.querySelectorAll('.req-table-head, .req-table-row').forEach(el => {
+          el.style.gridTemplateColumns = cols;
+        });
+      };
+      const onUp = () => {
+        handle.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+}
 
 async function loadRequirements() {
   try {
@@ -3578,7 +3619,7 @@ async function loadRequirements() {
   const _linkedTypesPresent = new Set();
   for (const ls of Object.values(allLinks)) for (const l of ls) if (AUDIT_COL_TYPES.includes(l.type)) _linkedTypesPresent.add(l.type);
   const dynamicCols = AUDIT_COL_TYPES.filter(t => _linkedTypesPresent.has(t));
-  const gridCols = `80px 280px 100px 80px${dynamicCols.length ? ' ' + dynamicCols.map(() => '130px').join(' ') : ''} 44px`;
+  const gridCols = _getReqGridCols(dynamicCols);
 
   // Evidence coverage: % of requirements with at least one linked document
   const withEvidence = reqs.filter(r => (allLinks[r.id] || []).some(l => l.type === 'document')).length;
@@ -3620,11 +3661,11 @@ async function loadRequirements() {
       <div class="req-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>
       <div class="req-table-wrap"><div class="req-table">
         <div class="req-table-head" style="grid-template-columns:${gridCols}">
-          <div class="req-col-clause">Clause</div>
-          <div class="req-col-title">Requirement</div>
-          <div class="req-col-audit">Last Audit</div>
-          <div class="req-col-nc">NCs</div>
-          ${dynamicCols.map(t => `<div class="req-col-dynamic">${AUDIT_COL_LABELS[t] || typeLabels[t]}</div>`).join('')}
+          <div class="req-col-clause">Clause<div class="req-resize-handle" data-col="clause" data-default="80"></div></div>
+          <div class="req-col-title">Requirement<div class="req-resize-handle" data-col="title" data-default="280"></div></div>
+          <div class="req-col-audit">Last Audit<div class="req-resize-handle" data-col="audit" data-default="100"></div></div>
+          <div class="req-col-nc">NCs<div class="req-resize-handle" data-col="nc" data-default="80"></div></div>
+          ${dynamicCols.map(t => `<div class="req-col-dynamic">${AUDIT_COL_LABELS[t] || typeLabels[t]}<div class="req-resize-handle" data-col="dyn_${t}" data-default="130"></div></div>`).join('')}
           <div class="req-col-actions"></div>
         </div>`;
     for (const r of items) {
@@ -3682,6 +3723,7 @@ async function loadRequirements() {
     html += '</div></div></div>';
   }
   list.innerHTML = html;
+  _initReqResize(dynamicCols);
   } catch (err) {
     console.error('[loadRequirements] Failed:', err);
     const list = document.getElementById('req-list');
