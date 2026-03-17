@@ -3950,3 +3950,105 @@ body.has-org-banner .user-widget {
   .agent-msg-row   { max-width: 95%; }
   .agent-messages  { padding: 16px 12px; }
 }
+
+/* ─── Operational Planning Context Bar ─────────────────────────────────── */
+.op-plan-ctx-bar {
+  padding: 10px 0 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.op-ctx-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.op-ctx-pill {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+  white-space: nowrap;
+}
+.op-ctx-pill:hover { background: var(--hover); border-color: var(--primary); }
+.op-ctx-pill.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.op-ctx-bundle-pill {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 2px solid var(--bundle-color, #6366f1);
+  background: var(--bg);
+  color: var(--bundle-color, #6366f1);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+  white-space: nowrap;
+}
+.op-ctx-bundle-pill:hover,
+.op-ctx-bundle-pill.active {
+  background: var(--bundle-color, #6366f1);
+  color: #fff;
+}
+.op-ctx-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  display: inline-block;
+  margin: 0 4px;
+}
+.op-ctx-add-btn {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.op-ctx-add-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+/* Process tag in actions table */
+.op-ctx-process-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(99,102,241,.1);
+  color: #6366f1;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Bundle modal */
+.bundle-color-swatch {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-block;
+  border: 3px solid transparent;
+  transition: transform .1s, border-color .1s;
+}
+.bundle-color-swatch:hover  { transform: scale(1.15); }
+.bundle-color-swatch.selected { border-color: #fff; box-shadow: 0 0 0 2px #374151; }
+
+.bundle-proc-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background .1s;
+}
+.bundle-proc-item:hover { background: var(--hover); }
+.bundle-proc-item input[type="checkbox"] { cursor: pointer; }
