@@ -3569,6 +3569,19 @@ async function loadRequirements() {
     groups[cat].push(r);
   }
 
+  // Derive dynamic columns from which entity types are actually linked
+  const AUDIT_COL_TYPES = ['system', 'process', 'role', 'asset', 'document', 'risk', 'treatment'];
+  const typeLabels = Object.fromEntries(Object.entries(linkableTypes).map(([k,v]) => [k, v.label]));
+  const typeIcons  = Object.fromEntries(Object.entries(linkableTypes).map(([k,v]) => [k, v.icon]));
+  const _linkedTypesPresent = new Set();
+  for (const ls of Object.values(allLinks)) for (const l of ls) if (AUDIT_COL_TYPES.includes(l.type)) _linkedTypesPresent.add(l.type);
+  const dynamicCols = AUDIT_COL_TYPES.filter(t => _linkedTypesPresent.has(t));
+  const gridCols = `80px 1fr 100px 80px${dynamicCols.length ? ' ' + dynamicCols.map(() => '130px').join(' ') : ''} 44px`;
+
+  // Evidence coverage: % of requirements with at least one linked document
+  const withEvidence = reqs.filter(r => (allLinks[r.id] || []).some(l => l.type === 'document')).length;
+  const evPct = reqs.length ? Math.round(withEvidence / reqs.length * 100) : 0;
+
   // Stats
   const statsEl = document.getElementById('req-stats');
   statsEl.innerHTML = `
@@ -3576,6 +3589,7 @@ async function loadRequirements() {
       <div class="stat-card"><div class="stat-value">${reqs.length}</div><div class="stat-label">Total Requirements</div></div>
       <div class="stat-card"><div class="stat-value">${standards.length}</div><div class="stat-label">Standards</div></div>
       <div class="stat-card"><div class="stat-value">${Object.keys(groups).length}</div><div class="stat-label">Categories</div></div>
+      <div class="stat-card" title="${withEvidence} of ${reqs.length} requirements have linked evidence documents"><div class="stat-value" style="color:${evPct>=80?'var(--success)':evPct>=40?'var(--warning)':'var(--danger)'}">${evPct}%</div><div class="stat-label">Evidence Coverage</div></div>
     </div>`;
 
   // List
@@ -3591,12 +3605,12 @@ async function loadRequirements() {
     html += `<div class="req-category-group">
       <div class="req-category-header">${esc(cat)} <span class="req-cat-count">(${items.length})</span></div>
       <div class="req-table">
-        <div class="req-table-head">
+        <div class="req-table-head" style="grid-template-columns:${gridCols}">
           <div class="req-col-clause">Clause</div>
           <div class="req-col-title">Requirement</div>
           <div class="req-col-audit">Last Audit</div>
           <div class="req-col-nc">NCs</div>
-          <div class="req-col-links">Links</div>
+          ${dynamicCols.map(t => `<div class="req-col-dynamic">${typeIcons[t]} ${typeLabels[t]}s</div>`).join('')}
           <div class="req-col-actions"></div>
         </div>`;
     for (const r of items) {
@@ -3613,23 +3627,19 @@ async function loadRequirements() {
         }
       }
 
-      // Build links column — show linked process name(s) inline
+      // Dynamic entity-type columns — one column per linked entity type present across all requirements
       const links = allLinks[r.id] || [];
-      const processLinks = links.filter(l => l.type === 'process');
-      const otherLinks = links.filter(l => l.type !== 'process');
       const collapseId = `req-cl-${r.id}`;
-      let linksHtml;
-      if (links.length === 0) {
-        linksHtml = '<span style="color:var(--text-muted);font-size:11px">-</span>';
-      } else {
-        const procLabel = processLinks.map(l => esc(l.name)).join(', ');
-        let toggleLabel = procLabel || '';
-        if (otherLinks.length > 0) toggleLabel += `${procLabel ? ' ' : ''}<span style="color:var(--text-muted);font-size:11px">(+${otherLinks.length})</span>`;
-        if (!toggleLabel) toggleLabel = `${links.length} link${links.length !== 1 ? 's' : ''}`;
-        linksHtml = `<span class="arch-link-toggle" onclick="toggleArchLinks('${collapseId}')">${toggleLabel} <span class="arch-link-arrow" id="${collapseId}-arrow">&#9660;</span></span>`;
-      }
+      const dynColsHtml = dynamicCols.map(t => {
+        const tLinks = links.filter(l => l.type === t);
+        if (!tLinks.length) return `<div class="req-col-dynamic"><span class="req-no-link">-</span></div>`;
+        return `<div class="req-col-dynamic">${tLinks.map(l => {
+          const nav = getViewForType(l.type, l.id);
+          return `<span class="req-linked-chip${nav ? ' clickable' : ''}"${nav ? ` onclick="${nav}" title="${esc(l.name)}"` : ''}>${esc(l.name)}</span>`;
+        }).join('')}</div>`;
+      }).join('');
 
-      html += `<div class="req-table-row">
+      html += `<div class="req-table-row" style="grid-template-columns:${gridCols}">
           <div class="req-col-clause" style="cursor:pointer" onclick="openRequirementModal(${r.id})"><span class="req-clause">${esc(r.clause)}</span></div>
           <div class="req-col-title" style="cursor:pointer" onclick="openRequirementModal(${r.id})">
             <span class="req-title" style="color:var(--primary)">${esc(r.title)}</span>
@@ -3637,9 +3647,10 @@ async function loadRequirements() {
           </div>
           <div class="req-col-audit">${lastAuditLabel}</div>
           <div class="req-col-nc">${ncBadge}</div>
-          <div class="req-col-links">${linksHtml}</div>
+          ${dynColsHtml}
           <div class="req-col-actions">
             ${actionMenu([
+              ...(links.length > 0 ? [{ label: `&#128279; All Links (${links.length})`, onclick: `toggleArchLinks('${collapseId}')` }] : []),
               { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('requirement',${r.id},'req-expand-${r.id}')` },
               { label: '&#9998; Edit', onclick: `openRequirementModal(${r.id})` },
               'sep',
