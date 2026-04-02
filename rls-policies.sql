@@ -1,6 +1,7 @@
 -- =============================================================================
 -- Row-Level Security (RLS) Policies – Multi-Tenant Isolation
 -- Run this in your Supabase project's SQL Editor AFTER the main migration.
+-- IDEMPOTENT: safe to re-run; existing policies are dropped and recreated.
 --
 -- Prerequisites:
 --   1. The schema from schema.js / supabase-migration.sql must already exist
@@ -48,6 +49,11 @@ $$;
 -- ---------------------------------------------------------------------------
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "org_select" ON organizations;
+DROP POLICY IF EXISTS "org_insert" ON organizations;
+DROP POLICY IF EXISTS "org_update" ON organizations;
+DROP POLICY IF EXISTS "org_delete" ON organizations;
+
 CREATE POLICY "org_select" ON organizations
   FOR SELECT USING (
     is_superadmin() OR id = current_user_org_id()
@@ -67,6 +73,11 @@ CREATE POLICY "org_delete" ON organizations
 -- ---------------------------------------------------------------------------
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "tasks_select" ON tasks;
+DROP POLICY IF EXISTS "tasks_insert" ON tasks;
+DROP POLICY IF EXISTS "tasks_update" ON tasks;
+DROP POLICY IF EXISTS "tasks_delete" ON tasks;
+
 CREATE POLICY "tasks_select" ON tasks
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -83,6 +94,11 @@ CREATE POLICY "tasks_delete" ON tasks
 -- 3. completions
 -- ---------------------------------------------------------------------------
 ALTER TABLE completions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "completions_select" ON completions;
+DROP POLICY IF EXISTS "completions_insert" ON completions;
+DROP POLICY IF EXISTS "completions_update" ON completions;
+DROP POLICY IF EXISTS "completions_delete" ON completions;
 
 CREATE POLICY "completions_select" ON completions
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -101,6 +117,11 @@ CREATE POLICY "completions_delete" ON completions
 -- ---------------------------------------------------------------------------
 ALTER TABLE actions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "actions_select" ON actions;
+DROP POLICY IF EXISTS "actions_insert" ON actions;
+DROP POLICY IF EXISTS "actions_update" ON actions;
+DROP POLICY IF EXISTS "actions_delete" ON actions;
+
 CREATE POLICY "actions_select" ON actions
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -117,6 +138,11 @@ CREATE POLICY "actions_delete" ON actions
 -- 5. audits
 -- ---------------------------------------------------------------------------
 ALTER TABLE audits ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "audits_select" ON audits;
+DROP POLICY IF EXISTS "audits_insert" ON audits;
+DROP POLICY IF EXISTS "audits_update" ON audits;
+DROP POLICY IF EXISTS "audits_delete" ON audits;
 
 CREATE POLICY "audits_select" ON audits
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -135,6 +161,11 @@ CREATE POLICY "audits_delete" ON audits
 -- ---------------------------------------------------------------------------
 ALTER TABLE audit_checklist ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "audit_checklist_select" ON audit_checklist;
+DROP POLICY IF EXISTS "audit_checklist_insert" ON audit_checklist;
+DROP POLICY IF EXISTS "audit_checklist_update" ON audit_checklist;
+DROP POLICY IF EXISTS "audit_checklist_delete" ON audit_checklist;
+
 CREATE POLICY "audit_checklist_select" ON audit_checklist
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -151,6 +182,11 @@ CREATE POLICY "audit_checklist_delete" ON audit_checklist
 -- 7. non_conformities
 -- ---------------------------------------------------------------------------
 ALTER TABLE non_conformities ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "non_conformities_select" ON non_conformities;
+DROP POLICY IF EXISTS "non_conformities_insert" ON non_conformities;
+DROP POLICY IF EXISTS "non_conformities_update" ON non_conformities;
+DROP POLICY IF EXISTS "non_conformities_delete" ON non_conformities;
 
 CREATE POLICY "non_conformities_select" ON non_conformities
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -169,6 +205,11 @@ CREATE POLICY "non_conformities_delete" ON non_conformities
 -- ---------------------------------------------------------------------------
 ALTER TABLE standard_requirements ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "standard_requirements_select" ON standard_requirements;
+DROP POLICY IF EXISTS "standard_requirements_insert" ON standard_requirements;
+DROP POLICY IF EXISTS "standard_requirements_update" ON standard_requirements;
+DROP POLICY IF EXISTS "standard_requirements_delete" ON standard_requirements;
+
 CREATE POLICY "standard_requirements_select" ON standard_requirements
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -185,6 +226,11 @@ CREATE POLICY "standard_requirements_delete" ON standard_requirements
 -- 9. risks
 -- ---------------------------------------------------------------------------
 ALTER TABLE risks ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "risks_select" ON risks;
+DROP POLICY IF EXISTS "risks_insert" ON risks;
+DROP POLICY IF EXISTS "risks_update" ON risks;
+DROP POLICY IF EXISTS "risks_delete" ON risks;
 
 CREATE POLICY "risks_select" ON risks
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -203,6 +249,11 @@ CREATE POLICY "risks_delete" ON risks
 -- ---------------------------------------------------------------------------
 ALTER TABLE risk_treatments ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "risk_treatments_select" ON risk_treatments;
+DROP POLICY IF EXISTS "risk_treatments_insert" ON risk_treatments;
+DROP POLICY IF EXISTS "risk_treatments_update" ON risk_treatments;
+DROP POLICY IF EXISTS "risk_treatments_delete" ON risk_treatments;
+
 CREATE POLICY "risk_treatments_select" ON risk_treatments
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -219,6 +270,11 @@ CREATE POLICY "risk_treatments_delete" ON risk_treatments
 -- 11. soa_entries
 -- ---------------------------------------------------------------------------
 ALTER TABLE soa_entries ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "soa_entries_select" ON soa_entries;
+DROP POLICY IF EXISTS "soa_entries_insert" ON soa_entries;
+DROP POLICY IF EXISTS "soa_entries_update" ON soa_entries;
+DROP POLICY IF EXISTS "soa_entries_delete" ON soa_entries;
 
 CREATE POLICY "soa_entries_select" ON soa_entries
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -237,6 +293,11 @@ CREATE POLICY "soa_entries_delete" ON soa_entries
 -- ---------------------------------------------------------------------------
 ALTER TABLE org_mission ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "org_mission_select" ON org_mission;
+DROP POLICY IF EXISTS "org_mission_insert" ON org_mission;
+DROP POLICY IF EXISTS "org_mission_update" ON org_mission;
+DROP POLICY IF EXISTS "org_mission_delete" ON org_mission;
+
 CREATE POLICY "org_mission_select" ON org_mission
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -253,6 +314,11 @@ CREATE POLICY "org_mission_delete" ON org_mission
 -- 13. org_kpis
 -- ---------------------------------------------------------------------------
 ALTER TABLE org_kpis ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "org_kpis_select" ON org_kpis;
+DROP POLICY IF EXISTS "org_kpis_insert" ON org_kpis;
+DROP POLICY IF EXISTS "org_kpis_update" ON org_kpis;
+DROP POLICY IF EXISTS "org_kpis_delete" ON org_kpis;
 
 CREATE POLICY "org_kpis_select" ON org_kpis
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -271,6 +337,11 @@ CREATE POLICY "org_kpis_delete" ON org_kpis
 -- ---------------------------------------------------------------------------
 ALTER TABLE org_kpi_values ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "org_kpi_values_select" ON org_kpi_values;
+DROP POLICY IF EXISTS "org_kpi_values_insert" ON org_kpi_values;
+DROP POLICY IF EXISTS "org_kpi_values_update" ON org_kpi_values;
+DROP POLICY IF EXISTS "org_kpi_values_delete" ON org_kpi_values;
+
 CREATE POLICY "org_kpi_values_select" ON org_kpi_values
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -287,6 +358,11 @@ CREATE POLICY "org_kpi_values_delete" ON org_kpi_values
 -- 15. org_architecture
 -- ---------------------------------------------------------------------------
 ALTER TABLE org_architecture ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "org_architecture_select" ON org_architecture;
+DROP POLICY IF EXISTS "org_architecture_insert" ON org_architecture;
+DROP POLICY IF EXISTS "org_architecture_update" ON org_architecture;
+DROP POLICY IF EXISTS "org_architecture_delete" ON org_architecture;
 
 CREATE POLICY "org_architecture_select" ON org_architecture
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -305,6 +381,11 @@ CREATE POLICY "org_architecture_delete" ON org_architecture
 -- ---------------------------------------------------------------------------
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "documents_select" ON documents;
+DROP POLICY IF EXISTS "documents_insert" ON documents;
+DROP POLICY IF EXISTS "documents_update" ON documents;
+DROP POLICY IF EXISTS "documents_delete" ON documents;
+
 CREATE POLICY "documents_select" ON documents
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -321,6 +402,11 @@ CREATE POLICY "documents_delete" ON documents
 -- 17. cross_links
 -- ---------------------------------------------------------------------------
 ALTER TABLE cross_links ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "cross_links_select" ON cross_links;
+DROP POLICY IF EXISTS "cross_links_insert" ON cross_links;
+DROP POLICY IF EXISTS "cross_links_update" ON cross_links;
+DROP POLICY IF EXISTS "cross_links_delete" ON cross_links;
 
 CREATE POLICY "cross_links_select" ON cross_links
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -339,6 +425,11 @@ CREATE POLICY "cross_links_delete" ON cross_links
 -- ---------------------------------------------------------------------------
 ALTER TABLE threat_feeds ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "threat_feeds_select" ON threat_feeds;
+DROP POLICY IF EXISTS "threat_feeds_insert" ON threat_feeds;
+DROP POLICY IF EXISTS "threat_feeds_update" ON threat_feeds;
+DROP POLICY IF EXISTS "threat_feeds_delete" ON threat_feeds;
+
 CREATE POLICY "threat_feeds_select" ON threat_feeds
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -355,6 +446,11 @@ CREATE POLICY "threat_feeds_delete" ON threat_feeds
 -- 19. threat_items
 -- ---------------------------------------------------------------------------
 ALTER TABLE threat_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "threat_items_select" ON threat_items;
+DROP POLICY IF EXISTS "threat_items_insert" ON threat_items;
+DROP POLICY IF EXISTS "threat_items_update" ON threat_items;
+DROP POLICY IF EXISTS "threat_items_delete" ON threat_items;
 
 CREATE POLICY "threat_items_select" ON threat_items
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -373,6 +469,11 @@ CREATE POLICY "threat_items_delete" ON threat_items
 -- ---------------------------------------------------------------------------
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "api_keys_select" ON api_keys;
+DROP POLICY IF EXISTS "api_keys_insert" ON api_keys;
+DROP POLICY IF EXISTS "api_keys_update" ON api_keys;
+DROP POLICY IF EXISTS "api_keys_delete" ON api_keys;
+
 CREATE POLICY "api_keys_select" ON api_keys
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -389,6 +490,11 @@ CREATE POLICY "api_keys_delete" ON api_keys
 -- 21. webhooks
 -- ---------------------------------------------------------------------------
 ALTER TABLE webhooks ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "webhooks_select" ON webhooks;
+DROP POLICY IF EXISTS "webhooks_insert" ON webhooks;
+DROP POLICY IF EXISTS "webhooks_update" ON webhooks;
+DROP POLICY IF EXISTS "webhooks_delete" ON webhooks;
 
 CREATE POLICY "webhooks_select" ON webhooks
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -407,6 +513,11 @@ CREATE POLICY "webhooks_delete" ON webhooks
 -- ---------------------------------------------------------------------------
 ALTER TABLE backups ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "backups_select" ON backups;
+DROP POLICY IF EXISTS "backups_insert" ON backups;
+DROP POLICY IF EXISTS "backups_update" ON backups;
+DROP POLICY IF EXISTS "backups_delete" ON backups;
+
 CREATE POLICY "backups_select" ON backups
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -423,6 +534,11 @@ CREATE POLICY "backups_delete" ON backups
 -- 23. users  (special: nullable org_id; users can see themselves)
 -- ---------------------------------------------------------------------------
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "users_select" ON users;
+DROP POLICY IF EXISTS "users_insert" ON users;
+DROP POLICY IF EXISTS "users_update" ON users;
+DROP POLICY IF EXISTS "users_delete" ON users;
 
 CREATE POLICY "users_select" ON users
   FOR SELECT USING (
@@ -452,6 +568,11 @@ CREATE POLICY "users_delete" ON users
 -- ---------------------------------------------------------------------------
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "system_settings_select" ON system_settings;
+DROP POLICY IF EXISTS "system_settings_insert" ON system_settings;
+DROP POLICY IF EXISTS "system_settings_update" ON system_settings;
+DROP POLICY IF EXISTS "system_settings_delete" ON system_settings;
+
 CREATE POLICY "system_settings_select" ON system_settings
   FOR SELECT USING (
     is_superadmin()
@@ -479,6 +600,9 @@ CREATE POLICY "system_settings_delete" ON system_settings
 -- ---------------------------------------------------------------------------
 ALTER TABLE admin_audit_log ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "admin_audit_log_select" ON admin_audit_log;
+DROP POLICY IF EXISTS "admin_audit_log_insert" ON admin_audit_log;
+
 CREATE POLICY "admin_audit_log_select" ON admin_audit_log
   FOR SELECT USING (
     is_superadmin()
@@ -498,6 +622,9 @@ CREATE POLICY "admin_audit_log_insert" ON admin_audit_log
 -- ---------------------------------------------------------------------------
 ALTER TABLE saml_config ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "saml_config_select" ON saml_config;
+DROP POLICY IF EXISTS "saml_config_update" ON saml_config;
+
 CREATE POLICY "saml_config_select" ON saml_config
   FOR SELECT USING (
     is_superadmin()
@@ -511,6 +638,10 @@ CREATE POLICY "saml_config_update" ON saml_config
 -- 27. saml_sessions  (scoped via user_id → users.organization_id)
 -- ---------------------------------------------------------------------------
 ALTER TABLE saml_sessions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "saml_sessions_select" ON saml_sessions;
+DROP POLICY IF EXISTS "saml_sessions_insert" ON saml_sessions;
+DROP POLICY IF EXISTS "saml_sessions_delete" ON saml_sessions;
 
 CREATE POLICY "saml_sessions_select" ON saml_sessions
   FOR SELECT USING (
@@ -568,13 +699,17 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_org_id ON system_settings(organiz
 -- =============================================================================
 -- Improvement 14: RLS policies for tables added after initial migration
 -- These 4 tables had no Row Level Security — a full multi-tenant isolation breach.
--- Run this file in the Supabase SQL Editor to apply all policies.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
 -- management_reviews
 -- ---------------------------------------------------------------------------
 ALTER TABLE management_reviews ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "management_reviews_select" ON management_reviews;
+DROP POLICY IF EXISTS "management_reviews_insert" ON management_reviews;
+DROP POLICY IF EXISTS "management_reviews_update" ON management_reviews;
+DROP POLICY IF EXISTS "management_reviews_delete" ON management_reviews;
 
 CREATE POLICY "management_reviews_select" ON management_reviews
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
@@ -593,6 +728,11 @@ CREATE POLICY "management_reviews_delete" ON management_reviews
 -- ---------------------------------------------------------------------------
 ALTER TABLE management_review_inputs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "management_review_inputs_select" ON management_review_inputs;
+DROP POLICY IF EXISTS "management_review_inputs_insert" ON management_review_inputs;
+DROP POLICY IF EXISTS "management_review_inputs_update" ON management_review_inputs;
+DROP POLICY IF EXISTS "management_review_inputs_delete" ON management_review_inputs;
+
 CREATE POLICY "management_review_inputs_select" ON management_review_inputs
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -610,6 +750,11 @@ CREATE POLICY "management_review_inputs_delete" ON management_review_inputs
 -- ---------------------------------------------------------------------------
 ALTER TABLE management_review_outputs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "management_review_outputs_select" ON management_review_outputs;
+DROP POLICY IF EXISTS "management_review_outputs_insert" ON management_review_outputs;
+DROP POLICY IF EXISTS "management_review_outputs_update" ON management_review_outputs;
+DROP POLICY IF EXISTS "management_review_outputs_delete" ON management_review_outputs;
+
 CREATE POLICY "management_review_outputs_select" ON management_review_outputs
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
@@ -626,6 +771,11 @@ CREATE POLICY "management_review_outputs_delete" ON management_review_outputs
 -- suppliers
 -- ---------------------------------------------------------------------------
 ALTER TABLE suppliers ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "suppliers_select" ON suppliers;
+DROP POLICY IF EXISTS "suppliers_insert" ON suppliers;
+DROP POLICY IF EXISTS "suppliers_update" ON suppliers;
+DROP POLICY IF EXISTS "suppliers_delete" ON suppliers;
 
 CREATE POLICY "suppliers_select" ON suppliers
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
