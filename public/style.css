@@ -4166,3 +4166,21 @@ body.has-org-banner .user-widget {
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* Nav overdue badge — shown on "Manage Tasks" link when tasks are overdue */
+.nav-overdue-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--danger, #dc2626);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  margin-left: 6px;
+  vertical-align: middle;
+}
