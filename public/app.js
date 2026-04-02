@@ -2,11 +2,14 @@
 let currentView = 'mission-control';
 let allTasks = [];
 let meta = { assignees: [], categories: [] };
-let filters = { active: 'true', assignee: '', category: '', priority: '' };
-let actionFilters = { status: 'open' };
+let filters = { active: 'true', assignee: '', category: '', priority: '', search: '' };
+let actionFilters = { status: '', priority: '', assignee: '' };
+let yearlyFilters = { priority: '', overdue_only: false, search: '' };
+let historySearch = '';
 let yearlyYear = new Date().getFullYear();
 let lastCompletionContext = null; // { completion_id, task_id }
 let yearlyData = null; // cached yearly API data
+let yearlyUpcomingCache = []; // raw overdue+upcoming items for filter re-renders
 let currentUser = null;
 let isSuperadmin = false;
 let activeOrg = null; // { id, name, slug } when superadmin is inside an org
@@ -859,15 +862,19 @@ async function loadTasks() {
 
   allTasks = await api(`/api/tasks?${params}`);
   renderTaskTable();
+  updateOverdueBadge();
 }
 
 async function renderFilters() {
   const bar = document.getElementById('filters-bar');
-  // Fetch roles and processes from Architecture for filters
   const roles = await api('/api/architecture?arch_type=role');
   const processes = await api('/api/architecture?arch_type=process');
+  // Only show process dropdown when context is "All" — context bar handles it otherwise
+  const showProcessFilter = opPlanContext.type === 'all';
 
   bar.innerHTML = `
+    <input type="search" placeholder="Search tasks..." value="${esc(filters.search)}"
+      style="min-width:180px" oninput="filters.search=this.value;renderTaskTable()">
     <select onchange="filters.active=this.value;loadTasks()">
       <option value="true" ${filters.active==='true'?'selected':''}>Active</option>
       <option value="false" ${filters.active==='false'?'selected':''}>Inactive</option>
@@ -885,11 +892,11 @@ async function renderFilters() {
       ${roles.map(r => `<option value="${esc(r.name)}" ${filters.assignee===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}
       ${meta.assignees.filter(a => !roles.find(r => r.name === a)).map(a => `<option value="${esc(a)}" ${filters.assignee===a?'selected':''}>${esc(a)}</option>`).join('')}
     </select>
-    <select onchange="filters.category=this.value;loadTasks()">
+    ${showProcessFilter ? `<select onchange="filters.category=this.value;loadTasks()">
       <option value="">All Processes</option>
       ${processes.map(p => `<option value="${esc(p.name)}" ${filters.category===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}
       ${meta.categories.filter(c => !processes.find(p => p.name === c)).map(c => `<option value="${esc(c)}" ${filters.category===c?'selected':''}>${esc(c)}</option>`).join('')}
-    </select>
+    </select>` : ''}
   `;
 }
 
@@ -898,7 +905,11 @@ function renderTaskTable() {
   const today = new Date().toISOString().split('T')[0];
   // Client-side context filter (used for bundles; single-process is already server-filtered)
   const ctxNames = getOpPlanContextNames();
-  const tasks = ctxNames ? allTasks.filter(t => ctxNames.includes(t.category)) : allTasks;
+  let tasks = ctxNames ? allTasks.filter(t => ctxNames.includes(t.category)) : allTasks;
+  if (filters.search) {
+    const q = filters.search.toLowerCase();
+    tasks = tasks.filter(t => t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
+  }
   if (tasks.length === 0) {
     container.innerHTML = '<div class="empty-state">No tasks found.</div>';
     return;
@@ -949,6 +960,17 @@ function renderTaskTable() {
   container.innerHTML = html;
 }
 
+function updateOverdueBadge() {
+  const today = new Date().toISOString().split('T')[0];
+  const count = allTasks.filter(t => t.is_active && t.next_due < today).length;
+  const link = document.querySelector('.nav-link[data-view="tasks"]');
+  if (!link) return;
+  let badge = link.querySelector('.nav-overdue-badge');
+  if (count === 0) { if (badge) badge.remove(); return; }
+  if (!badge) { badge = document.createElement('span'); badge.className = 'nav-overdue-badge'; link.appendChild(badge); }
+  badge.textContent = count;
+}
+
 function toggleTaskLinks(taskId) {
   const el = document.getElementById(`task-links-${taskId}`);
   if (el.innerHTML) { el.innerHTML = ''; return; }
@@ -968,6 +990,15 @@ async function loadHistory() {
   // Apply process context filter
   const histCtxNames = getOpPlanContextNames();
   if (histCtxNames) completions = completions.filter(c => histCtxNames.includes(c.task_category));
+  // Apply client-side search
+  if (historySearch) {
+    const q = historySearch.toLowerCase();
+    completions = completions.filter(c =>
+      (c.task_title || '').toLowerCase().includes(q) ||
+      (c.completed_by || '').toLowerCase().includes(q) ||
+      (c.notes || '').toLowerCase().includes(q)
+    );
+  }
   renderHistoryFilters(completions);
   const list = document.getElementById('history-list');
   if (completions.length === 0) {
@@ -980,6 +1011,7 @@ async function loadHistory() {
     return `<div class="history-item">
       <div class="hi-info">
         <strong style="cursor:pointer;color:var(--primary)" onclick="openTaskDetailModal(${c.task_id})">${esc(c.task_title)}</strong>
+        ${c.task_category && c.task_category !== 'General' ? `<span class="op-ctx-process-tag" style="margin-left:6px">${esc(c.task_category)}</span>` : ''}
         <div class="hi-meta">${c.completed_by ? 'by ' + esc(c.completed_by) : 'Unknown'}${c.notes ? ' — ' + esc(c.notes) : ''}</div>
         ${evidenceFiles.length > 0 ? `<div class="hi-meta">${evidenceFiles.map(ef => `<span style="font-size:11px;cursor:pointer;text-decoration:underline;margin-right:8px" onclick="window.open('/api/completions/${c.id}/evidence/${ef.id}/download','_blank')">&#128206; ${esc(ef.name)}</span>`).join('')}</div>` : ''}
         ${c.action_count > 0 ? `<div class="hi-meta"><span class="badge badge-${c.open_action_count > 0 ? 'high' : 'low'}">${c.open_action_count} open / ${c.action_count} actions</span></div>` : ''}
@@ -996,13 +1028,18 @@ async function loadHistory() {
 
 function renderHistoryFilters(completions) {
   const bar = document.getElementById('history-filters-bar');
-  // Derive unique tasks and completers from data
-  const tasks = [...new Map(completions.map(c => [c.task_id, c.task_title])).entries()];
+  // Use allTasks (stable list) for task dropdown so options don't disappear when other filters narrow results
+  const taskOptions = allTasks.length
+    ? allTasks.map(t => `<option value="${t.id}" ${historyFilters.task_id == t.id ? 'selected' : ''}>${esc(t.title)}</option>`).join('')
+    : [...new Map(completions.map(c => [c.task_id, c.task_title])).entries()]
+        .map(([id, title]) => `<option value="${id}" ${historyFilters.task_id == id ? 'selected' : ''}>${esc(title)}</option>`).join('');
   const completers = [...new Set(completions.map(c => c.completed_by).filter(Boolean))];
   bar.innerHTML = `
+    <input type="search" placeholder="Search completions..." value="${esc(historySearch)}"
+      style="min-width:180px" oninput="historySearch=this.value;loadHistory()">
     <select onchange="historyFilters.task_id=this.value;loadHistory()">
       <option value="">All Tasks</option>
-      ${tasks.map(([id, title]) => `<option value="${id}" ${historyFilters.task_id == id ? 'selected' : ''}>${esc(title)}</option>`).join('')}
+      ${taskOptions}
     </select>
     <select onchange="historyFilters.completed_by=this.value;loadHistory()">
       <option value="">All Completers</option>
@@ -1473,27 +1510,43 @@ async function loadActions() {
   if (actionFilters.status) params.set('status', actionFilters.status);
   if (opPlanContext.type === 'process' && opPlanContext.id) params.set('process_id', opPlanContext.id);
 
-  const actions = await api(`/api/actions?${params}`);
-  renderActionFilters();
+  const [actions, roles] = await Promise.all([
+    api(`/api/actions?${params}`),
+    api('/api/architecture?arch_type=role'),
+  ]);
+  renderActionFilters(roles);
   // For bundle context: filter client-side by process_id membership
+  let filtered = actions;
   if (opPlanContext.type === 'bundle') {
     const bundle = opPlanBundles.find(b => b.id === opPlanContext.id);
     const ids = bundle ? JSON.parse(bundle.process_ids || '[]') : [];
-    renderActionTable(actions.filter(a => ids.includes(a.process_id)));
-  } else {
-    renderActionTable(actions);
+    filtered = actions.filter(a => ids.includes(a.process_id));
   }
+  if (actionFilters.priority) filtered = filtered.filter(a => a.priority === actionFilters.priority);
+  if (actionFilters.assignee) filtered = filtered.filter(a => a.assignee === actionFilters.assignee);
+  renderActionTable(filtered);
 }
 
-function renderActionFilters() {
+function renderActionFilters(roles = []) {
   const bar = document.getElementById('action-filters-bar');
   bar.innerHTML = `
     <select onchange="actionFilters.status=this.value;loadActions()">
+      <option value="" ${actionFilters.status===''?'selected':''}>All Statuses</option>
       <option value="open" ${actionFilters.status==='open'?'selected':''}>Open</option>
       <option value="in_progress" ${actionFilters.status==='in_progress'?'selected':''}>In Progress</option>
       <option value="resolved" ${actionFilters.status==='resolved'?'selected':''}>Resolved</option>
       <option value="closed" ${actionFilters.status==='closed'?'selected':''}>Closed</option>
-      <option value="" ${actionFilters.status===''?'selected':''}>All</option>
+    </select>
+    <select onchange="actionFilters.priority=this.value;loadActions()">
+      <option value="">All Priorities</option>
+      <option value="Low" ${actionFilters.priority==='Low'?'selected':''}>Low</option>
+      <option value="Medium" ${actionFilters.priority==='Medium'?'selected':''}>Medium</option>
+      <option value="High" ${actionFilters.priority==='High'?'selected':''}>High</option>
+      <option value="Critical" ${actionFilters.priority==='Critical'?'selected':''}>Critical</option>
+    </select>
+    <select onchange="actionFilters.assignee=this.value;loadActions()">
+      <option value="">All Assignees</option>
+      ${roles.map(r => `<option value="${esc(r.name)}" ${actionFilters.assignee===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}
     </select>
   `;
 }
@@ -1722,8 +1775,102 @@ function filterYearlyDataByCategories(data, names) {
   };
 }
 
+function renderYearlyUpcoming() {
+  const upcomingEl = document.getElementById('yearly-upcoming');
+  if (!upcomingEl) return;
+  const today = new Date().toISOString().split('T')[0];
+  const todayDate = new Date(today);
+  const priorityBadge = p => p === 'Critical' ? 'badge-critical' : p === 'High' ? 'badge-high' : p === 'Medium' ? 'badge-medium' : 'badge-low';
+  const recurrenceLabel = r => ({ daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[r] || r);
+  const formatDueDate = (ds, isOverdue) => {
+    const d = new Date(ds + 'T00:00:00');
+    const diff = Math.round((d - todayDate) / 86400000);
+    const label = MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate();
+    if (isOverdue) {
+      const daysAgo = Math.round((todayDate - d) / 86400000);
+      return `<span style="color:var(--danger);font-size:12px">${label} · <span style="font-size:11px">${daysAgo}d ago</span></span>`;
+    }
+    if (diff === 0) return `<span style="font-weight:600;font-size:12px">Today</span>`;
+    if (diff === 1) return `<span style="font-size:12px">Tomorrow</span>`;
+    return `<span style="font-size:12px">${label} · <span style="color:var(--text-muted);font-size:11px">in ${diff}d</span></span>`;
+  };
+
+  let items = yearlyUpcomingCache;
+  if (yearlyFilters.overdue_only) items = items.filter(i => i._status === 'overdue');
+  if (yearlyFilters.priority) items = items.filter(i => i.priority === yearlyFilters.priority);
+  if (yearlyFilters.search) {
+    const q = yearlyFilters.search.toLowerCase();
+    items = items.filter(i => i.title.toLowerCase().includes(q) || (i.category || '').toLowerCase().includes(q));
+  }
+
+  const overdueCount = items.filter(i => i._status === 'overdue').length;
+  const upcomingCount = items.filter(i => i._status === 'upcoming').length;
+  const upcomingGridCols = '2fr 140px 90px 1fr 80px 100px 110px';
+  const buildTableRow = item => {
+    const isOverdue = item._status === 'overdue';
+    return `<div class="arch-table-row" style="grid-template-columns:${upcomingGridCols}${isOverdue ? ';background:var(--danger-bg,#fff5f5)' : ''}">
+      <div class="arch-col-name" style="cursor:pointer" onclick="openTaskModal(${item.task_id})">
+        <span class="arch-name" style="color:var(--primary)">${esc(item.title)}</span>
+        ${item.category ? `<span class="arch-desc">${esc(item.category)}</span>` : ''}
+      </div>
+      <div class="arch-col-detail">${formatDueDate(item.date, isOverdue)}</div>
+      <div class="arch-col-detail">
+        ${isOverdue
+          ? `<span class="badge badge-critical">Overdue</span>`
+          : `<span class="badge badge-low" style="background:var(--success-light,#e6f9ee);color:var(--success,#16a34a)">Upcoming</span>`}
+      </div>
+      <div class="arch-col-detail"><span style="font-size:12px">${item.assignee ? esc(item.assignee) : '<span style="color:var(--text-muted)">—</span>'}</span></div>
+      <div class="arch-col-detail"><span class="badge ${priorityBadge(item.priority)}">${item.priority}</span></div>
+      <div class="arch-col-detail"><span class="task-recurrence-badge">&#8635; ${recurrenceLabel(item.recurrence)}</span></div>
+      <div class="arch-col-actions" style="gap:6px">
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="openTaskModal(${item.task_id})">&#9998; Edit</button>
+        <button class="btn btn-primary btn-sm" style="font-size:11px" onclick="quickComplete(${item.task_id},'${item.date}')">&#10003;</button>
+      </div>
+    </div>`;
+  };
+
+  let html = `<h3 class="section-title" style="margin-top:28px">
+    Tasks — Overdue &amp; Next 4 Weeks
+    <span class="req-cat-count" style="margin-left:6px">(${items.length})</span>
+    ${overdueCount > 0 ? `<span class="badge badge-critical" style="margin-left:8px;font-size:11px">${overdueCount} overdue</span>` : ''}
+    ${upcomingCount > 0 ? `<span style="font-size:12px;color:var(--text-muted);margin-left:6px">${upcomingCount} upcoming</span>` : ''}
+  </h3>`;
+  if (items.length === 0) {
+    html += '<div class="empty-state">No overdue or upcoming tasks match the filters.</div>';
+  } else {
+    html += `<div class="arch-table">
+      <div class="arch-table-head" style="grid-template-columns:${upcomingGridCols}">
+        <div>Task</div><div>Due Date</div><div>Status</div><div>Assignee</div><div>Priority</div><div>Recurrence</div><div></div>
+      </div>
+      <div>${items.map(buildTableRow).join('')}</div>
+    </div>`;
+  }
+  upcomingEl.innerHTML = html;
+}
+
+function renderYearlyFilters() {
+  const bar = document.getElementById('yearly-filters-bar');
+  if (!bar) return;
+  bar.innerHTML = `
+    <input type="search" placeholder="Search tasks..." value="${esc(yearlyFilters.search)}"
+      style="min-width:160px" oninput="yearlyFilters.search=this.value;renderYearlyUpcoming()">
+    <select onchange="yearlyFilters.priority=this.value;renderYearlyUpcoming()">
+      <option value="">All Priorities</option>
+      <option value="Low" ${yearlyFilters.priority==='Low'?'selected':''}>Low</option>
+      <option value="Medium" ${yearlyFilters.priority==='Medium'?'selected':''}>Medium</option>
+      <option value="High" ${yearlyFilters.priority==='High'?'selected':''}>High</option>
+      <option value="Critical" ${yearlyFilters.priority==='Critical'?'selected':''}>Critical</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+      <input type="checkbox" ${yearlyFilters.overdue_only?'checked':''} onchange="yearlyFilters.overdue_only=this.checked;renderYearlyUpcoming()">
+      Overdue only
+    </label>
+  `;
+}
+
 async function loadYearlyPlan() {
   document.getElementById('yearly-title').textContent = `Yearly Plan ${yearlyYear}`;
+  renderYearlyFilters();
   try {
   const rawData = await api(`/api/yearly?year=${yearlyYear}`);
   // Apply process context filter to yearly data
@@ -1779,103 +1926,30 @@ async function loadYearlyPlan() {
   // Render Gantt chart
   renderGanttChart(data, monthStats, today);
 
-  // Render Coming Up & Overdue section
-  const upcomingEl = document.getElementById('yearly-upcoming');
+  // Collect all overdue+upcoming items and store for filter re-render
   const todayDate = new Date(today);
   const fourWeeksOut = new Date(todayDate);
   fourWeeksOut.setDate(fourWeeksOut.getDate() + 28);
   const fourWeeksStr = fourWeeksOut.toISOString().split('T')[0];
 
-  // Collect overdue tasks
   const overdueItems = [];
   const upcomingItems = [];
   for (const [dateStr, tasks] of Object.entries(data.dueDates)) {
     for (const t of tasks) {
       if (dateStr < today) {
-        // Check if completed on this date
         const completedOnDate = data.completedDates[dateStr] && data.completedDates[dateStr].some(c => c.task_id === t.task_id);
-        if (!completedOnDate) {
-          overdueItems.push({ ...t, date: dateStr });
-        }
+        if (!completedOnDate) overdueItems.push({ ...t, date: dateStr, _status: 'overdue' });
       } else if (dateStr >= today && dateStr <= fourWeeksStr) {
-        upcomingItems.push({ ...t, date: dateStr });
+        upcomingItems.push({ ...t, date: dateStr, _status: 'upcoming' });
       }
     }
   }
-
   overdueItems.sort((a, b) => a.date.localeCompare(b.date));
   upcomingItems.sort((a, b) => a.date.localeCompare(b.date));
+  // Cache raw items for filter re-renders
+  yearlyUpcomingCache = [...overdueItems, ...upcomingItems];
 
-  const priorityBadge = p => p === 'Critical' ? 'badge-critical' : p === 'High' ? 'badge-high' : p === 'Medium' ? 'badge-medium' : 'badge-low';
-  const recurrenceLabel = r => ({ daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[r] || r);
-
-  // Merge overdue and upcoming into one sorted list, tag each with status
-  const allUpcomingItems = [
-    ...overdueItems.map(item => ({ ...item, _status: 'overdue' })),
-    ...upcomingItems.map(item => ({ ...item, _status: 'upcoming' })),
-  ];
-  allUpcomingItems.sort((a, b) => a.date.localeCompare(b.date));
-
-  const formatDueDate = (ds, isOverdue) => {
-    const d = new Date(ds + 'T00:00:00');
-    const diff = Math.round((d - todayDate) / 86400000);
-    const label = MONTH_NAMES[d.getMonth()].substring(0, 3) + ' ' + d.getDate();
-    if (isOverdue) {
-      const daysAgo = Math.round((todayDate - d) / 86400000);
-      return `<span style="color:var(--danger);font-size:12px">${label} <span style="font-size:11px">(${daysAgo}d ago)</span></span>`;
-    }
-    if (diff === 0) return `<span style="font-weight:600;font-size:12px">Today</span>`;
-    if (diff === 1) return `<span style="font-size:12px">Tomorrow</span>`;
-    return `<span style="font-size:12px">${label}</span>`;
-  };
-
-  const upcomingGridCols = '2fr 110px 90px 1fr 80px 100px 110px';
-  const buildTableRow = item => {
-    const isOverdue = item._status === 'overdue';
-    return `<div class="arch-table-row" style="grid-template-columns:${upcomingGridCols}${isOverdue ? ';background:var(--danger-bg,#fff5f5)' : ''}">
-      <div class="arch-col-name" style="cursor:pointer" onclick="openTaskModal(${item.task_id})">
-        <span class="arch-name" style="color:var(--primary)">${esc(item.title)}</span>
-        ${item.category ? `<span class="arch-desc">${esc(item.category)}</span>` : ''}
-      </div>
-      <div class="arch-col-detail">${formatDueDate(item.date, isOverdue)}</div>
-      <div class="arch-col-detail">
-        ${isOverdue
-          ? `<span class="badge badge-critical">Overdue</span>`
-          : `<span class="badge badge-low" style="background:var(--success-light,#e6f9ee);color:var(--success,#16a34a)">Upcoming</span>`}
-      </div>
-      <div class="arch-col-detail"><span style="font-size:12px">${item.assignee ? esc(item.assignee) : '<span style="color:var(--text-muted)">—</span>'}</span></div>
-      <div class="arch-col-detail"><span class="badge ${priorityBadge(item.priority)}">${item.priority}</span></div>
-      <div class="arch-col-detail"><span class="task-recurrence-badge">&#8635; ${recurrenceLabel(item.recurrence)}</span></div>
-      <div class="arch-col-actions" style="gap:6px">
-        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="openTaskModal(${item.task_id})">&#9998; Edit</button>
-        <button class="btn btn-primary btn-sm" style="font-size:11px" onclick="quickComplete(${item.task_id},'${item.date}')">&#10003;</button>
-      </div>
-    </div>`;
-  };
-
-  const totalCount = allUpcomingItems.length;
-  const overdueCount = overdueItems.length;
-  const upcomingCount = upcomingItems.length;
-
-  let html = `<h3 class="section-title" style="margin-top:28px">
-    Tasks — Overdue &amp; Next 4 Weeks
-    <span class="req-cat-count" style="margin-left:6px">(${totalCount})</span>
-    ${overdueCount > 0 ? `<span class="badge badge-critical" style="margin-left:8px;font-size:11px">${overdueCount} overdue</span>` : ''}
-    ${upcomingCount > 0 ? `<span style="font-size:12px;color:var(--text-muted);margin-left:6px">${upcomingCount} upcoming</span>` : ''}
-  </h3>`;
-
-  if (allUpcomingItems.length === 0) {
-    html += '<div class="empty-state">No overdue or upcoming tasks in the next 4 weeks.</div>';
-  } else {
-    html += `<div class="arch-table">
-      <div class="arch-table-head" style="grid-template-columns:${upcomingGridCols}">
-        <div>Task</div><div>Due Date</div><div>Status</div><div>Assignee</div><div>Priority</div><div>Recurrence</div><div></div>
-      </div>
-      <div>${allUpcomingItems.map(buildTableRow).join('')}</div>
-    </div>`;
-  }
-
-  upcomingEl.innerHTML = html;
+  renderYearlyUpcoming();
   } catch (err) {
     console.error('[loadYearlyPlan] Failed:', err);
     const el = document.getElementById('yearly-summary');
