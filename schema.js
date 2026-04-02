@@ -270,6 +270,19 @@ const POSTGRES_SCHEMA_SQL = `
     UNIQUE(organization_id, source_type, source_id, target_type, target_id)
   );
 
+  CREATE TABLE IF NOT EXISTS use_cases (
+    id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    actor TEXT DEFAULT '',
+    status TEXT DEFAULT 'draft' CHECK(status IN ('draft','proposed','active','deprecated')),
+    priority TEXT DEFAULT 'medium' CHECK(priority IN ('low','medium','high','critical')),
+    category TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+  );
+
   CREATE TABLE IF NOT EXISTS threat_feeds (
     id SERIAL PRIMARY KEY,
     organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

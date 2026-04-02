@@ -946,7 +946,7 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .req-cat-count { font-weight: 500; color: var(--text-muted); font-size: 12px; background: #e5e7eb; padding: 2px 8px; border-radius: 10px; margin-left: 8px; }
-.req-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 0 0 var(--radius) var(--radius); }
+.req-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 0 0 var(--radius) var(--radius); background: var(--card-bg); }
 .req-table { width: 100%; min-width: 660px; }
 .req-table-head {
   display: grid;
@@ -994,15 +994,17 @@ body {
 .req-table-head .req-col-title { background: #f9fafb; }
 .req-table-row .req-col-title { background: var(--card-bg); }
 .req-table-row:hover .req-col-title { background: #f9fafb; }
-/* Subtle right-edge shadow on frozen columns to indicate scrollability */
+/* Clean 1 px divider on frozen columns — stays inside the cell so it
+   never bleeds over scrolling content and doesn't create stripe artefacts */
+.req-col-clause::after,
 .req-col-title::after {
   content: '';
   position: absolute;
   top: 0;
-  right: -8px;
+  right: 0;
   bottom: 0;
-  width: 8px;
-  background: linear-gradient(to right, rgba(0,0,0,0.06), transparent);
+  width: 1px;
+  background: var(--border);
   pointer-events: none;
 }
 .req-col-audit, .req-col-rating, .req-col-nc { display: flex; justify-content: center; align-items: center; }
@@ -1023,7 +1025,9 @@ body {
 .req-table-head .req-col-actions { background: #f9fafb; }
 .req-table-row .req-col-actions { background: var(--card-bg); }
 .req-table-row:hover .req-col-actions { background: #f9fafb; }
-.req-col-actions::before { content: ''; position: absolute; top: 0; left: -8px; bottom: 0; width: 8px; background: linear-gradient(to left, rgba(0,0,0,0.05), transparent); pointer-events: none; }
+/* No left-bleed shadow on gear column — it was darkening whichever dynamic
+   column happened to be at the right edge (Tasks / Systems) and making them
+   look different from the rest */
 /* Column resize handles */
 /* Only non-sticky header cells need position:relative for the resize handle.
    Sticky cells (.req-col-clause, .req-col-title) already create a containing

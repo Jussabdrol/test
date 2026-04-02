@@ -2105,6 +2105,12 @@ app.get('/api/kpis/auto', requireOrgContext, async (req, res) => {
     arch_roles: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'role'").get(oid)).v,
     arch_systems: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'system'").get(oid)).v,
     arch_facilities: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'facility'").get(oid)).v,
+    // Use Cases
+    usecases_total: (await db.prepare('SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ?').get(oid)).v,
+    usecases_active: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'active'").get(oid)).v,
+    usecases_draft: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'draft'").get(oid)).v,
+    usecases_proposed: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'proposed'").get(oid)).v,
+    usecases_deprecated: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'deprecated'").get(oid)).v,
   };
   res.json(auto);
 });
@@ -2153,6 +2159,52 @@ app.delete('/api/kpis/:id/values/:valueId', requireOrgContext, async (req, res) 
   await db.prepare(
     'DELETE FROM org_kpi_values WHERE id = ? AND kpi_id = ? AND organization_id = ?'
   ).run(req.params.valueId, req.params.id, req.orgId);
+  res.json({ success: true });
+});
+
+// Use Cases
+app.get('/api/use-cases', requireOrgContext, async (req, res) => {
+  const { status, priority, category } = req.query;
+  let sql = 'SELECT * FROM use_cases WHERE organization_id = ?';
+  const params = [req.orgId];
+  if (status) { sql += ' AND status = ?'; params.push(status); }
+  if (priority) { sql += ' AND priority = ?'; params.push(priority); }
+  if (category) { sql += ' AND category = ?'; params.push(category); }
+  sql += ' ORDER BY priority DESC, title';
+  res.json(await db.prepare(sql).all(...params));
+});
+
+app.get('/api/use-cases/:id', requireOrgContext, async (req, res) => {
+  const uc = await db.prepare('SELECT * FROM use_cases WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!uc) return res.status(404).json({ error: 'Not found' });
+  res.json(uc);
+});
+
+app.post('/api/use-cases', requireOrgContext, async (req, res) => {
+  const { title, description, actor, status, priority, category } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title is required' });
+  const result = await db.prepare(
+    'INSERT INTO use_cases (organization_id, title, description, actor, status, priority, category) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(req.orgId, title, description || '', actor || '', status || 'draft', priority || 'medium', category || '');
+  res.status(201).json(await db.prepare('SELECT * FROM use_cases WHERE id = ?').get(result.lastInsertRowid));
+});
+
+app.put('/api/use-cases/:id', requireOrgContext, async (req, res) => {
+  const fields = ['title', 'description', 'actor', 'status', 'priority', 'category'];
+  const updates = [];
+  const params = [];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  updates.push("updated_at = datetime('now')");
+  params.push(req.params.id, req.orgId);
+  await db.prepare(`UPDATE use_cases SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params);
+  res.json(await db.prepare('SELECT * FROM use_cases WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+});
+
+app.delete('/api/use-cases/:id', requireOrgContext, async (req, res) => {
+  await db.prepare('DELETE FROM use_cases WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   res.json({ success: true });
 });
 
@@ -2396,6 +2448,7 @@ const entityResolvers = {
   facility: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'facility'", id),
   document: async (id) => await db.get('SELECT id, title as name FROM documents WHERE id = ?', id),
   treatment: async (id) => { const t = await db.get('SELECT id, description FROM risk_treatments WHERE id = ?', id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
+  usecase: async (id) => await db.get('SELECT id, title as name FROM use_cases WHERE id = ?', id),
 };
 
 // Bulk cross-links: fetch all cross-links for multiple items of the same type in one shot.
@@ -2448,6 +2501,7 @@ app.get('/api/cross-links/batch/:type', requireOrgContext, async (req, res) => {
       .map(t => ({ id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` }));
     else if (['role','process','system','asset','facility'].includes(eType))
       rows = await db.prepare(`SELECT id, name FROM org_architecture WHERE arch_type = ? AND id IN (${eph})`).all(eType, ...idArr);
+    else if (eType === 'usecase') rows = await db.prepare(`SELECT id, title as name FROM use_cases WHERE id IN (${eph})`).all(...idArr);
     for (const r of rows) nameCache[`${eType}:${r.id}`] = r.name;
   }
 
@@ -2526,6 +2580,7 @@ app.get('/api/linkable/:type', requireOrgContext, async (req, res) => {
   else if (type === 'ncr') items = await db.prepare("SELECT id, clause || ' - ' || substr(description, 1, 60) as name FROM non_conformities WHERE organization_id = ? ORDER BY id DESC").all(oid);
   else if (type === 'treatment') items = await db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments WHERE organization_id = ? ORDER BY id DESC").all(oid);
   else if (type === 'action') items = await db.prepare('SELECT id, title as name FROM actions WHERE organization_id = ? ORDER BY id DESC').all(oid);
+  else if (type === 'usecase') items = await db.prepare('SELECT id, title as name FROM use_cases WHERE organization_id = ? ORDER BY title').all(oid);
   res.json(items);
 });
 
