@@ -513,6 +513,56 @@ const POSTGRES_SCHEMA_SQL = `
 
   -- Migrations: add flowchart DSL column to org_architecture (for process flowcharts)
   ALTER TABLE org_architecture ADD COLUMN IF NOT EXISTS flowchart TEXT DEFAULT NULL;
+
+  -- Performance indexes: FK columns and common filter columns that were missing.
+  -- All use IF NOT EXISTS so they are safe to re-run on every startup.
+
+  -- completions: task lookups and dashboard date range queries
+  CREATE INDEX IF NOT EXISTS idx_completions_task_id        ON completions (task_id);
+  CREATE INDEX IF NOT EXISTS idx_completions_org_completed  ON completions (organization_id, completed_at);
+
+  -- actions: linked entity lookups
+  CREATE INDEX IF NOT EXISTS idx_actions_completion_id  ON actions (completion_id);
+  CREATE INDEX IF NOT EXISTS idx_actions_task_id        ON actions (task_id);
+  CREATE INDEX IF NOT EXISTS idx_actions_process_id     ON actions (process_id);
+  CREATE INDEX IF NOT EXISTS idx_actions_org_status     ON actions (organization_id, status);
+
+  -- audit_checklist: per-audit checklist fetches
+  CREATE INDEX IF NOT EXISTS idx_audit_checklist_audit_id ON audit_checklist (audit_id);
+
+  -- non_conformities: per-audit NC fetches and open NC counts
+  CREATE INDEX IF NOT EXISTS idx_non_conformities_audit_id    ON non_conformities (audit_id);
+  CREATE INDEX IF NOT EXISTS idx_non_conformities_org_status  ON non_conformities (organization_id, status);
+
+  -- risk_treatments: per-risk treatment fetches
+  CREATE INDEX IF NOT EXISTS idx_risk_treatments_risk_id     ON risk_treatments (risk_id);
+  CREATE INDEX IF NOT EXISTS idx_risk_treatments_org_status  ON risk_treatments (organization_id, status);
+
+  -- soa_entries: per-requirement lookups
+  CREATE INDEX IF NOT EXISTS idx_soa_entries_requirement_id ON soa_entries (requirement_id);
+
+  -- org_kpi_values: per-KPI value fetches and period range queries
+  CREATE INDEX IF NOT EXISTS idx_org_kpi_values_kpi_id  ON org_kpi_values (kpi_id);
+  CREATE INDEX IF NOT EXISTS idx_org_kpi_values_period  ON org_kpi_values (kpi_id, period);
+
+  -- documents: org-scoped document listing
+  CREATE INDEX IF NOT EXISTS idx_documents_org_id     ON documents (organization_id);
+  CREATE INDEX IF NOT EXISTS idx_documents_org_status ON documents (organization_id, status);
+
+  -- users: login lookup (email is UNIQUE but explicit index ensures fast lookup)
+  CREATE INDEX IF NOT EXISTS idx_users_org_id ON users (organization_id);
+
+  -- cross_links: bidirectional relationship lookups
+  CREATE INDEX IF NOT EXISTS idx_cross_links_source ON cross_links (organization_id, source_type, source_id);
+  CREATE INDEX IF NOT EXISTS idx_cross_links_target ON cross_links (organization_id, target_type, target_id);
+
+  -- tasks: overdue + date range queries
+  CREATE INDEX IF NOT EXISTS idx_tasks_org_next_due ON tasks (organization_id, next_due);
+  CREATE INDEX IF NOT EXISTS idx_tasks_org_active   ON tasks (organization_id, is_active);
+
+  -- threat items: per-feed lookups
+  CREATE INDEX IF NOT EXISTS idx_threat_items_feed_id ON threat_items (feed_id);
+  CREATE INDEX IF NOT EXISTS idx_threat_items_status  ON threat_items (feed_id, status);
 `;
 
 // Default threat feeds to seed per organization

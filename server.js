@@ -1,3 +1,6 @@
+// Patch Express to forward async errors to the error handler automatically (must be first)
+require('express-async-errors');
+
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
@@ -8,6 +11,8 @@ const XLSX = require('xlsx');
 const db = require('./db');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -69,6 +74,24 @@ app.use(express.json());
 
 // Trust proxy (needed for secure cookies behind Railway / load balancer)
 app.set('trust proxy', 1);
+
+// Security headers (Helmet)
+// CSP disabled for now to avoid breaking the existing vanilla JS frontend;
+// enable and tighten once a nonce/hash strategy is defined.
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
+
+// Rate limiting – brute force protection for auth endpoints
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15-minute window
+  max: 20,                    // max 20 attempts per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Please try again in 15 minutes.' },
+  skipSuccessfulRequests: true, // only count failed attempts toward the limit
+});
 
 // ---------------------------------------------------------------------------
 // Stateless JWT-like token helpers (HMAC-SHA256, no external dependency)
@@ -273,7 +296,7 @@ app.get('/api/auth/check', async (req, res) => {
 });
 
 // Login – authenticates via Supabase Auth first (if available), falls back to local bcrypt
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authRateLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -972,30 +995,70 @@ app.get('/api/audits', requireOrgContext, async (req, res) => {
   sql += ' ORDER BY planned_date DESC, created_at DESC';
   const parentAudits = await db.prepare(sql).all(...params);
 
-  // Helper function to get audit stats
-  const getAuditStats = async (auditId) => {
-    const checklist_count = (await db.prepare('SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ?').get(auditId)).c;
-    const assessed_count = (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating != 'not_assessed'").get(auditId)).c;
-    const nc_count = (await db.prepare("SELECT COUNT(*) as c FROM audit_checklist WHERE audit_id = ? AND rating IN ('minor_nc','major_nc')").get(auditId)).c;
-    const ncr_count = (await db.prepare('SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ?').get(auditId)).c;
-    const open_nc_count = (await db.prepare("SELECT COUNT(*) as c FROM non_conformities WHERE audit_id = ? AND status IN ('open','in_progress')").get(auditId)).c;
-    return { checklist_count, assessed_count, nc_count, ncr_count, open_nc_count };
-  };
+  // Fetch all child audits for the returned parents in one query
+  const parentIds = parentAudits.map(a => a.id);
+  let allChildAudits = [];
+  if (parentIds.length > 0) {
+    const childRows = await db.getConnection().query(
+      'SELECT * FROM audits WHERE parent_audit_id = ANY($1) ORDER BY instance_number, planned_date',
+      [parentIds]
+    );
+    allChildAudits = childRows.rows;
+  }
 
-  // Attach counts and ALL events (including parent as event #1) for each parent
+  // Collect every audit ID (parents + children) and fetch stats in 2 aggregate queries
+  const allAuditIds = [...parentIds, ...allChildAudits.map(c => c.id)];
+  let checklistStats = {};
+  let ncStats = {};
+  if (allAuditIds.length > 0) {
+    const clRows = await db.getConnection().query(
+      `SELECT audit_id,
+              COUNT(*) AS checklist_count,
+              COUNT(*) FILTER (WHERE rating != 'not_assessed') AS assessed_count,
+              COUNT(*) FILTER (WHERE rating IN ('minor_nc','major_nc')) AS nc_count
+       FROM audit_checklist WHERE audit_id = ANY($1) GROUP BY audit_id`,
+      [allAuditIds]
+    );
+    for (const r of clRows.rows) checklistStats[r.audit_id] = r;
+
+    const ncRows = await db.getConnection().query(
+      `SELECT audit_id,
+              COUNT(*) AS ncr_count,
+              COUNT(*) FILTER (WHERE status IN ('open','in_progress')) AS open_nc_count
+       FROM non_conformities WHERE audit_id = ANY($1) GROUP BY audit_id`,
+      [allAuditIds]
+    );
+    for (const r of ncRows.rows) ncStats[r.audit_id] = r;
+  }
+
+  function getStats(auditId) {
+    const cl = checklistStats[auditId] || {};
+    const nc = ncStats[auditId] || {};
+    return {
+      checklist_count: parseInt(cl.checklist_count) || 0,
+      assessed_count: parseInt(cl.assessed_count) || 0,
+      nc_count: parseInt(cl.nc_count) || 0,
+      ncr_count: parseInt(nc.ncr_count) || 0,
+      open_nc_count: parseInt(nc.open_nc_count) || 0,
+    };
+  }
+
+  // Group children by parent_id
+  const childrenByParent = {};
+  for (const c of allChildAudits) {
+    if (!childrenByParent[c.parent_audit_id]) childrenByParent[c.parent_audit_id] = [];
+    childrenByParent[c.parent_audit_id].push(c);
+  }
+
+  // Assemble response
   for (const a of parentAudits) {
-    const parentStats = await getAuditStats(a.id);
+    const parentStats = getStats(a.id);
     Object.assign(a, parentStats);
 
-    // Get child events for recurring audits
-    const childAudits = await db.prepare('SELECT * FROM audits WHERE parent_audit_id = ? ORDER BY instance_number, planned_date').all(a.id);
-    for (const c of childAudits) {
-      Object.assign(c, await getAuditStats(c.id));
-    }
+    const childAudits = childrenByParent[a.id] || [];
+    for (const c of childAudits) Object.assign(c, getStats(c.id));
     a.child_events = childAudits;
 
-    // Create all_events array that includes the parent as event #1 PLUS all children
-    // This allows a proper mother-child relationship where all instances are in the events list
     const parentAsEvent = {
       id: a.id,
       title: a.title,
@@ -1006,7 +1069,7 @@ app.get('/api/audits', requireOrgContext, async (req, res) => {
       instance_number: a.instance_number || 1,
       lead_auditor: a.lead_auditor,
       auditee: a.auditee,
-      ...parentStats
+      ...parentStats,
     };
     a.all_events = [parentAsEvent, ...childAudits];
     a.total_instances = a.all_events.length;
@@ -1783,10 +1846,27 @@ app.get('/api/risks', requireOrgContext, async (req, res) => {
   if (category) { sql += ' AND category = ?'; params.push(category); }
   sql += ' ORDER BY inherent_score DESC, created_at DESC';
   const risks = await db.prepare(sql).all(...params);
-  // Attach treatment count
-  for (const r of risks) {
-    r.treatment_count = (await db.prepare('SELECT COUNT(*) as c FROM risk_treatments WHERE risk_id = ?').get(r.id)).c;
-    r.open_treatments = (await db.prepare("SELECT COUNT(*) as c FROM risk_treatments WHERE risk_id = ? AND status IN ('planned','in_progress')").get(r.id)).c;
+  // Attach treatment counts via single aggregate query (avoids N+1)
+  if (risks.length > 0) {
+    const riskIds = risks.map(r => r.id);
+    const treatmentCounts = await db.getConnection().query(
+      `SELECT risk_id,
+              COUNT(*) AS treatment_count,
+              COUNT(*) FILTER (WHERE status IN ('planned','in_progress')) AS open_treatments
+       FROM risk_treatments
+       WHERE risk_id = ANY($1)
+       GROUP BY risk_id`,
+      [riskIds]
+    );
+    const countMap = {};
+    for (const row of treatmentCounts.rows) {
+      countMap[row.risk_id] = row;
+    }
+    for (const r of risks) {
+      const c = countMap[r.id] || {};
+      r.treatment_count = parseInt(c.treatment_count) || 0;
+      r.open_treatments = parseInt(c.open_treatments) || 0;
+    }
   }
   res.json(risks);
 });
@@ -1803,8 +1883,11 @@ app.get('/api/risks/:id', requireOrgContext, async (req, res) => {
 app.post('/api/risks', requireOrgContext, async (req, res) => {
   const { title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
-  const result = await db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, risk_owner, status, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', likelihood || 3, impact || 3, risk_owner || '', status || 'identified', req.orgId
+  const l = parseInt(likelihood) || 3;
+  const i = parseInt(impact) || 3;
+  const inherent_score = l * i;
+  const result = await db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, inherent_score, risk_owner, status, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', l, i, inherent_score, risk_owner || '', status || 'identified', req.orgId
   );
   res.status(201).json(await db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid));
 });
@@ -1818,6 +1901,13 @@ app.put('/api/risks/:id', requireOrgContext, async (req, res) => {
   const params = [];
   for (const f of fields) {
     if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  }
+  // Auto-recalculate inherent_score whenever likelihood or impact changes
+  if (req.body.likelihood !== undefined || req.body.impact !== undefined) {
+    const newL = parseInt(req.body.likelihood !== undefined ? req.body.likelihood : existing.likelihood) || 1;
+    const newI = parseInt(req.body.impact !== undefined ? req.body.impact : existing.impact) || 1;
+    updates.push('inherent_score = ?');
+    params.push(newL * newI);
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
