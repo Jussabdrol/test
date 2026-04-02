@@ -54,6 +54,7 @@
           <ul class="module-submenu open">
             <li><a href="#" class="nav-link active" data-view="mission-control">Mission Control</a></li>
             <li><a href="#" class="nav-link" data-view="architecture">Architecture</a></li>
+            <li><a href="#" class="nav-link" data-view="use-cases">Use Cases</a></li>
             <li><a href="#" class="nav-link" data-view="document-control">Document Control</a></li>
             <li><a href="#" class="nav-link" data-view="management-reviews">Management Reviews</a></li>
           </ul>
@@ -330,6 +331,84 @@
           </table>
         </div>
       </section>
+
+      <!-- Use Cases View -->
+      <section id="view-use-cases" class="view hidden">
+        <div class="view-header">
+          <h2>&#128221; Use Cases</h2>
+          <button class="btn btn-primary" onclick="openUseCaseModal()">+ New Use Case</button>
+        </div>
+        <div class="filters" id="usecase-filters-bar"></div>
+        <div class="task-table-wrap">
+          <table class="task-table" id="usecase-table">
+            <thead>
+              <tr>
+                <th>Title / Description</th>
+                <th>Actor</th>
+                <th>Category</th>
+                <th>Priority</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="usecase-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Use Case Modal -->
+      <div id="usecase-modal" class="modal hidden">
+        <div class="modal-overlay" onclick="closeUseCaseModal()"></div>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="usecase-modal-title">New Use Case</h3>
+            <button class="modal-close" onclick="closeUseCaseModal()">&times;</button>
+          </div>
+          <form id="usecase-form" onsubmit="saveUseCase(event)">
+            <input type="hidden" id="usecase-id">
+            <div class="form-group">
+              <label>Title <span style="color:var(--danger)">*</span></label>
+              <input type="text" id="usecase-title" required placeholder="Use case title">
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <textarea id="usecase-description" rows="3" placeholder="Describe the use case"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Actor</label>
+              <input type="text" id="usecase-actor" placeholder="Who initiates this use case?">
+            </div>
+            <div class="form-group">
+              <label>Category</label>
+              <input type="text" id="usecase-category" placeholder="e.g. Functional, Security, Business">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Priority</label>
+                <select id="usecase-priority">
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Status</label>
+                <select id="usecase-status">
+                  <option value="draft" selected>Draft</option>
+                  <option value="proposed">Proposed</option>
+                  <option value="active">Active</option>
+                  <option value="deprecated">Deprecated</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" onclick="closeUseCaseModal()">Cancel</button>
+              <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       <!-- Completion Log View -->
       <section id="view-history" class="view hidden">

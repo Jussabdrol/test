@@ -504,6 +504,7 @@ function switchView(view) {
   else if (view === 'document-control') loadDocumentControl();
   else if (view === 'my-tasks') loadMyTasks();
   else if (view === 'management-reviews') loadManagementReviews();
+  else if (view === 'use-cases') loadUseCases();
   // Admin views
   else if (view === 'admin-users') loadAdminUsers();
   else if (view === 'admin-audit-log') loadAdminAuditLog();
@@ -572,20 +573,21 @@ async function batchAll(items, fn, concurrency = 6) {
 
 // --- Cross-Link System ---
 const linkableTypes = {
-  risk: { label: 'Risk', icon: '&#9888;', canLink: ['role','process','system','asset','facility','requirement','document','task','action'] },
-  task: { label: 'Task', icon: '&#9881;', canLink: ['role','process','asset','facility','risk','document','requirement','action'] },
-  action: { label: 'Action', icon: '&#9889;', canLink: ['role','process','task','risk','document','requirement'] },
-  audit: { label: 'Audit', icon: '&#9998;', canLink: ['role','process','requirement','risk','document'] },
-  requirement: { label: 'Requirement', icon: '&#128220;', canLink: ['process','role','document','risk','treatment','task','action','system','asset','audit'] },
-  role: { label: 'Role', icon: '&#128100;', canLink: ['risk','task','audit','process','system','document','action'] },
-  process: { label: 'Process', icon: '&#128260;', canLink: ['risk','task','audit','role','system','asset','document','action'] },
-  system: { label: 'System', icon: '&#128187;', canLink: ['risk','process','role','asset','document'] },
-  asset: { label: 'Asset', icon: '&#128230;', canLink: ['risk','task','process','facility','document'] },
-  facility: { label: 'Facility', icon: '&#127970;', canLink: ['risk','task','asset','document'] },
-  document: { label: 'Document', icon: '&#128196;', canLink: ['risk','task','audit','requirement','role','process','system','asset','facility','action'] },
-  ncr: { label: 'NCR', icon: '&#9888;', canLink: ['risk','requirement','document','role','action'] },
-  treatment: { label: 'Treatment', icon: '&#128737;', canLink: ['requirement','document','role','process','system','asset'] },
-  checklist: { label: 'Checklist Item', icon: '&#9745;', canLink: ['document','process','system','asset'] },
+  risk: { label: 'Risk', icon: '&#9888;', canLink: ['role','process','system','asset','facility','requirement','document','task','action','usecase'] },
+  task: { label: 'Task', icon: '&#9881;', canLink: ['role','process','asset','facility','risk','document','requirement','action','usecase'] },
+  action: { label: 'Action', icon: '&#9889;', canLink: ['role','process','task','risk','document','requirement','usecase'] },
+  audit: { label: 'Audit', icon: '&#9998;', canLink: ['role','process','requirement','risk','document','usecase'] },
+  requirement: { label: 'Requirement', icon: '&#128220;', canLink: ['process','role','document','risk','treatment','task','action','system','asset','audit','usecase'] },
+  role: { label: 'Role', icon: '&#128100;', canLink: ['risk','task','audit','process','system','document','action','usecase'] },
+  process: { label: 'Process', icon: '&#128260;', canLink: ['risk','task','audit','role','system','asset','document','action','usecase'] },
+  system: { label: 'System', icon: '&#128187;', canLink: ['risk','process','role','asset','document','usecase'] },
+  asset: { label: 'Asset', icon: '&#128230;', canLink: ['risk','task','process','facility','document','usecase'] },
+  facility: { label: 'Facility', icon: '&#127970;', canLink: ['risk','task','asset','document','usecase'] },
+  document: { label: 'Document', icon: '&#128196;', canLink: ['risk','task','audit','requirement','role','process','system','asset','facility','action','usecase'] },
+  ncr: { label: 'NCR', icon: '&#9888;', canLink: ['risk','requirement','document','role','action','usecase'] },
+  treatment: { label: 'Treatment', icon: '&#128737;', canLink: ['requirement','document','role','process','system','asset','usecase'] },
+  checklist: { label: 'Checklist Item', icon: '&#9745;', canLink: ['document','process','system','asset','usecase'] },
+  usecase: { label: 'Use Case', icon: '&#128221;', canLink: ['risk','task','action','requirement','document','role','process','system','asset','audit','ncr','treatment'] },
 };
 
 async function renderCrossLinks(entityType, entityId, containerId) {
@@ -641,7 +643,7 @@ function getViewForType(type, id) {
   const viewMap = {
     risk: 'risk-identification', task: 'tasks', audit: 'audit-plan',
     requirement: 'audit-requirements', document: 'document-control', ncr: 'audit-ncrs',
-    action: 'actions',
+    action: 'actions', usecase: 'use-cases',
   };
   const view = viewMap[type];
   return view ? `switchView('${view}')` : null;
@@ -5512,6 +5514,126 @@ function showSoADocControlDialog(doc, blob, filename) {
   };
 }
 
+// --- Use Cases ---
+const ucStatusLabels = { draft: 'Draft', proposed: 'Proposed', active: 'Active', deprecated: 'Deprecated' };
+const ucStatusBadge = { draft: 'badge-medium', proposed: 'badge-high', active: 'badge-low', deprecated: 'badge-closed' };
+const ucPriorityBadge = { low: 'badge-low', medium: 'badge-medium', high: 'badge-high', critical: 'badge-critical' };
+
+let ucFilters = { status: '', priority: '' };
+
+async function loadUseCases() {
+  const params = new URLSearchParams();
+  if (ucFilters.status) params.set('status', ucFilters.status);
+  if (ucFilters.priority) params.set('priority', ucFilters.priority);
+  const usecases = await api(`/api/use-cases?${params}`);
+  renderUseCaseFilters();
+  renderUseCaseTable(usecases);
+}
+
+function renderUseCaseFilters() {
+  const bar = document.getElementById('usecase-filters-bar');
+  if (!bar) return;
+  bar.innerHTML = `
+    <select onchange="ucFilters.status=this.value;loadUseCases()">
+      <option value="" ${ucFilters.status===''?'selected':''}>All Statuses</option>
+      <option value="draft" ${ucFilters.status==='draft'?'selected':''}>Draft</option>
+      <option value="proposed" ${ucFilters.status==='proposed'?'selected':''}>Proposed</option>
+      <option value="active" ${ucFilters.status==='active'?'selected':''}>Active</option>
+      <option value="deprecated" ${ucFilters.status==='deprecated'?'selected':''}>Deprecated</option>
+    </select>
+    <select onchange="ucFilters.priority=this.value;loadUseCases()">
+      <option value="" ${ucFilters.priority===''?'selected':''}>All Priorities</option>
+      <option value="critical" ${ucFilters.priority==='critical'?'selected':''}>Critical</option>
+      <option value="high" ${ucFilters.priority==='high'?'selected':''}>High</option>
+      <option value="medium" ${ucFilters.priority==='medium'?'selected':''}>Medium</option>
+      <option value="low" ${ucFilters.priority==='low'?'selected':''}>Low</option>
+    </select>
+  `;
+}
+
+function renderUseCaseTable(usecases) {
+  const tbody = document.getElementById('usecase-table-body');
+  if (!tbody) return;
+  if (usecases.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No use cases found. Click "+ New Use Case" to create one.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = usecases.map(uc => `<tr>
+    <td>
+      <strong style="cursor:pointer;color:var(--primary)" onclick="openUseCaseModal(${uc.id})">${esc(uc.title)}</strong>
+      ${uc.description ? `<br><small style="color:var(--text-muted)">${esc(uc.description.substring(0,80))}${uc.description.length>80?'…':''}</small>` : ''}
+    </td>
+    <td>${uc.actor ? esc(uc.actor) : '<span style="color:var(--text-muted)">—</span>'}</td>
+    <td>${uc.category ? `<span class="badge badge-info">${esc(uc.category)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+    <td><span class="badge ${ucPriorityBadge[uc.priority]||'badge-medium'}">${uc.priority}</span></td>
+    <td><span class="badge ${ucStatusBadge[uc.status]||'badge-medium'}">${ucStatusLabels[uc.status]||uc.status}</span></td>
+    <td>
+      <button class="btn btn-secondary btn-sm" onclick="toggleUseCaseLinks(${uc.id})" title="Linked Items">&#128279;</button>
+      <button class="btn btn-secondary btn-sm" onclick="openUseCaseModal(${uc.id})" title="Edit">&#9998;</button>
+      <button class="btn btn-secondary btn-sm" style="color:var(--danger)" onclick="deleteUseCase(${uc.id})" title="Delete">&#128465;</button>
+    </td>
+  </tr>
+  <tr id="uc-links-row-${uc.id}" class="hidden"><td colspan="6"><div id="uc-links-${uc.id}" style="padding:8px 16px"></div></td></tr>`).join('');
+}
+
+async function toggleUseCaseLinks(id) {
+  const row = document.getElementById(`uc-links-row-${id}`);
+  if (!row) return;
+  if (!row.classList.contains('hidden')) { row.classList.add('hidden'); document.getElementById(`uc-links-${id}`).innerHTML = ''; return; }
+  row.classList.remove('hidden');
+  renderCrossLinks('usecase', id, `uc-links-${id}`);
+}
+
+async function openUseCaseModal(id) {
+  const modal = document.getElementById('usecase-modal');
+  document.getElementById('usecase-form').reset();
+  document.getElementById('usecase-id').value = '';
+  document.getElementById('usecase-modal-title').textContent = 'New Use Case';
+  if (id) {
+    const uc = await api(`/api/use-cases/${id}`);
+    document.getElementById('usecase-modal-title').textContent = 'Edit Use Case';
+    document.getElementById('usecase-id').value = uc.id;
+    document.getElementById('usecase-title').value = uc.title;
+    document.getElementById('usecase-description').value = uc.description || '';
+    document.getElementById('usecase-actor').value = uc.actor || '';
+    document.getElementById('usecase-category').value = uc.category || '';
+    document.getElementById('usecase-priority').value = uc.priority || 'medium';
+    document.getElementById('usecase-status').value = uc.status || 'draft';
+  }
+  modal.classList.remove('hidden');
+}
+
+function closeUseCaseModal() {
+  document.getElementById('usecase-modal').classList.add('hidden');
+}
+
+async function saveUseCase(e) {
+  e.preventDefault();
+  const id = document.getElementById('usecase-id').value;
+  const body = {
+    title: document.getElementById('usecase-title').value.trim(),
+    description: document.getElementById('usecase-description').value.trim(),
+    actor: document.getElementById('usecase-actor').value.trim(),
+    category: document.getElementById('usecase-category').value.trim(),
+    priority: document.getElementById('usecase-priority').value,
+    status: document.getElementById('usecase-status').value,
+  };
+  if (!body.title) { alert('Title is required'); return; }
+  if (id) {
+    await api(`/api/use-cases/${id}`, { method: 'PUT', body });
+  } else {
+    await api('/api/use-cases', { method: 'POST', body });
+  }
+  closeUseCaseModal();
+  loadUseCases();
+}
+
+async function deleteUseCase(id) {
+  if (!confirm('Delete this use case?')) return;
+  await api(`/api/use-cases/${id}`, { method: 'DELETE' });
+  loadUseCases();
+}
+
 // --- Organizational Planning: Mission Control ---
 async function loadMissionControl() {
   const mission = await api('/api/mission');
@@ -5638,6 +5760,16 @@ async function loadMissionControl() {
         ${kpiStat(d.arch_roles, 'Roles', '')}
         ${kpiStat(d.arch_systems, 'Systems', '')}
         ${kpiStat(d.arch_facilities, 'Facilities', '')}
+      </div>
+    </div>
+    <div class="kpi-tile" onclick="switchView('use-cases')">
+      <h4 class="kpi-tile-title">&#128221; Use Cases</h4>
+      <div class="kpi-tile-stats">
+        ${kpiStat(d.usecases_total, 'Total', '')}
+        ${kpiStat(d.usecases_active, 'Active', d.usecases_active > 0 ? 'kpi-ok' : '')}
+        ${kpiStat(d.usecases_proposed, 'Proposed', '')}
+        ${kpiStat(d.usecases_draft, 'Draft', '')}
+        ${kpiStat(d.usecases_deprecated, 'Deprecated', d.usecases_deprecated > 0 ? 'kpi-danger' : '')}
       </div>
     </div>`;
 
