@@ -2061,16 +2061,20 @@ app.delete('/api/treatments/:id', requireOrgContext, async (req, res) => {
 // --- Statement of Applicability API ---
 
 app.get('/api/soa', requireOrgContext, async (req, res) => {
-  // Improvement 3: multi-standard SoA — accept ?standard= param, default to all standards
+  // SoA is Annex A controls only — HLS clauses (4-10) are requirements, not SoA items.
+  // Optionally filter to a specific Annex A standard via ?standard= param.
   const { standard } = req.query;
   let soaSql = `
     SELECT sr.*, soa.id as soa_id, soa.applicable, soa.justification,
            soa.implementation_status, soa.notes as soa_notes, soa.linked_processes, soa.regulatory
     FROM standard_requirements sr
     LEFT JOIN soa_entries soa ON sr.id = soa.requirement_id
-    WHERE sr.organization_id = ?`;
+    WHERE sr.organization_id = ? AND sr.standard LIKE '%Annex A%'`;
   const soaParams = [req.orgId];
-  if (standard) { soaSql += ' AND sr.standard = ?'; soaParams.push(standard); }
+  if (standard && standard.includes('Annex A')) {
+    soaSql += ' AND sr.standard = ?';
+    soaParams.push(standard);
+  }
   soaSql += ' ORDER BY sr.standard, sr.sort_order, sr.clause';
   const reqs = await db.prepare(soaSql).all(...soaParams);
 
