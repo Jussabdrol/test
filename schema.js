@@ -514,6 +514,71 @@ const POSTGRES_SCHEMA_SQL = `
   -- Migrations: add flowchart DSL column to org_architecture (for process flowcharts)
   ALTER TABLE org_architecture ADD COLUMN IF NOT EXISTS flowchart TEXT DEFAULT NULL;
 
+  -- =========================================================================
+  -- Improvement 1: relationship_type on cross_links (ArchiMate semantics)
+  -- =========================================================================
+  ALTER TABLE cross_links ADD COLUMN IF NOT EXISTS relationship_type TEXT NOT NULL DEFAULT 'association';
+  ALTER TABLE cross_links ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+  -- Note: the UNIQUE constraint update (to include relationship_type) must be
+  -- run manually in the Supabase SQL Editor — see rls-policies.sql for instructions.
+
+  -- =========================================================================
+  -- Improvement 2: org_architecture_versions (EA change history)
+  -- =========================================================================
+  CREATE TABLE IF NOT EXISTS org_architecture_versions (
+    id                  SERIAL PRIMARY KEY,
+    arch_id             INTEGER NOT NULL REFERENCES org_architecture(id) ON DELETE CASCADE,
+    organization_id     INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    changed_by_user_id  INTEGER DEFAULT NULL,
+    change_reason       TEXT DEFAULT '',
+    arch_type           TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    description         TEXT DEFAULT '',
+    parent_id           INTEGER DEFAULT NULL,
+    owner               TEXT DEFAULT '',
+    status              TEXT DEFAULT 'active',
+    metadata            TEXT DEFAULT '{}',
+    sort_order          INTEGER DEFAULT 0,
+    version_number      INTEGER NOT NULL DEFAULT 1,
+    changed_at          TIMESTAMP DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_arch_versions_arch_id ON org_architecture_versions (arch_id);
+  CREATE INDEX IF NOT EXISTS idx_arch_versions_org_id  ON org_architecture_versions (organization_id);
+
+  -- =========================================================================
+  -- Improvement 5: residual_score on risk_treatments
+  -- =========================================================================
+  ALTER TABLE risk_treatments ADD COLUMN IF NOT EXISTS residual_score INTEGER DEFAULT NULL;
+  CREATE INDEX IF NOT EXISTS idx_risk_treatments_residual_score ON risk_treatments (risk_id, residual_score);
+
+  -- =========================================================================
+  -- Improvement 6: threat feed health monitoring columns
+  -- =========================================================================
+  ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS last_success TEXT DEFAULT NULL;
+  ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS last_error   TEXT DEFAULT NULL;
+  ALTER TABLE threat_feeds ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER DEFAULT 0;
+
+  -- =========================================================================
+  -- Improvement 7: process_events event log (process mining foundation)
+  -- =========================================================================
+  CREATE TABLE IF NOT EXISTS process_events (
+    id               SERIAL PRIMARY KEY,
+    organization_id  INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    process_id       INTEGER REFERENCES org_architecture(id) ON DELETE SET NULL,
+    case_id          TEXT NOT NULL,
+    case_type        TEXT NOT NULL,
+    activity         TEXT NOT NULL,
+    actor            TEXT DEFAULT '',
+    timestamp        TIMESTAMP NOT NULL DEFAULT NOW(),
+    duration_ms      INTEGER DEFAULT NULL,
+    resource         TEXT DEFAULT '',
+    attributes       TEXT DEFAULT '{}'
+  );
+  CREATE INDEX IF NOT EXISTS idx_process_events_org_case  ON process_events (organization_id, case_id);
+  CREATE INDEX IF NOT EXISTS idx_process_events_process   ON process_events (process_id);
+  CREATE INDEX IF NOT EXISTS idx_process_events_timestamp ON process_events (timestamp);
+  CREATE INDEX IF NOT EXISTS idx_process_events_case_type ON process_events (organization_id, case_type);
+
   -- Performance indexes: FK columns and common filter columns that were missing.
   -- All use IF NOT EXISTS so they are safe to re-run on every startup.
 
