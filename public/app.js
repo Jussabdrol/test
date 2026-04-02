@@ -126,7 +126,7 @@ function renderMSPPortalHTML() {
           <p style="color: #6b7280; font-size: 14px;">Manage all organizations from a single dashboard</p>
         </div>
         <div style="display: flex; gap: 12px; align-items: center;">
-          <span style="color: #6b7280; font-size: 13px;">Logged in as <strong>${currentUser?.name || 'Superadmin'}</strong></span>
+          <span style="color: #6b7280; font-size: 13px;">Logged in as <strong>${esc(currentUser?.name || 'Superadmin')}</strong></span>
           <button onclick="logout()" style="padding: 8px 16px; background: #dc2626; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px;">Logout</button>
         </div>
       </div>
@@ -450,12 +450,28 @@ function hasPermissionForView(view) {
   return perms.includes(requiredPerm);
 }
 
+function showViewLoadingState(viewId) {
+  const panel = document.getElementById(`view-${viewId}`);
+  if (!panel) return;
+  const body = panel.querySelector('.view-body');
+  if (!body) return;
+  body.innerHTML = `
+    <div class="loading-skeleton" aria-label="Loading" role="status">
+      <div class="skeleton-row"></div>
+      <div class="skeleton-row skeleton-row--short"></div>
+      <div class="skeleton-row"></div>
+      <div class="skeleton-row skeleton-row--short"></div>
+      <div class="skeleton-row"></div>
+    </div>`;
+}
+
 function switchView(view) {
   if (!hasPermissionForView(view)) return;
   currentView = view;
   closeDayDetail();
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
   document.getElementById(`view-${view}`).classList.remove('hidden');
+  showViewLoadingState(view);
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   const activeLink = document.querySelector(`[data-view="${view}"]`);
   if (activeLink) activeLink.classList.add('active');

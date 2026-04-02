@@ -4144,3 +4144,25 @@ body.has-org-banner .user-widget {
 }
 .bundle-proc-item:hover { background: var(--hover); }
 .bundle-proc-item input[type="checkbox"] { cursor: pointer; }
+
+/* ── Loading skeleton (improvement 12) ── */
+.loading-skeleton {
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.skeleton-row {
+  height: 18px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--border, #e5e7eb) 25%, #f3f4f6 50%, var(--border, #e5e7eb) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s infinite;
+  width: 100%;
+}
+.skeleton-row--short { width: 60%; }
+
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

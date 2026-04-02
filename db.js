@@ -251,13 +251,10 @@ async function get(sql, ...params) {
 async function run(sql, ...params) {
   const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
   let pgSql = convertSQL(sql);
-
-  // For INSERTs, add RETURNING id so we can get lastInsertRowid
   const isInsert = pgSql.trim().toUpperCase().startsWith('INSERT');
   if (isInsert && !pgSql.toUpperCase().includes('RETURNING')) {
     pgSql = pgSql.replace(/;?\s*$/, ' RETURNING id;');
   }
-
   const result = await pool.query(pgSql, flatParams);
   return {
     lastInsertRowid: result.rows[0]?.id || 0,
@@ -270,11 +267,47 @@ async function exec(sql) {
   await pool.query(pgSql);
 }
 
+// Build a client-bound query set that routes queries through a single connection
+// (used inside transaction() so all queries share the same BEGIN/COMMIT session)
+function makeClientDB(client) {
+  function clientRun(sql, ...params) {
+    const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+    let pgSql = convertSQL(sql);
+    const isInsert = pgSql.trim().toUpperCase().startsWith('INSERT');
+    if (isInsert && !pgSql.toUpperCase().includes('RETURNING')) {
+      pgSql = pgSql.replace(/;?\s*$/, ' RETURNING id;');
+    }
+    return client.query(pgSql, flatParams).then(r => ({
+      lastInsertRowid: r.rows[0]?.id || 0,
+      changes: r.rowCount,
+    }));
+  }
+  function clientGet(sql, ...params) {
+    const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+    return client.query(convertSQL(sql), flatParams).then(r => r.rows[0]);
+  }
+  function clientAll(sql, ...params) {
+    const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+    return client.query(convertSQL(sql), flatParams).then(r => r.rows);
+  }
+  return {
+    run: clientRun,
+    get: clientGet,
+    all: clientAll,
+    prepare: (sql) => ({
+      run: (...p) => clientRun(sql, ...p),
+      get: (...p) => clientGet(sql, ...p),
+      all: (...p) => clientAll(sql, ...p),
+    }),
+  };
+}
+
 async function transaction(fn) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await fn();
+    const clientDB = makeClientDB(client);
+    const result = await fn(clientDB);
     await client.query('COMMIT');
     return result;
   } catch (err) {

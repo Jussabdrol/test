@@ -564,3 +564,87 @@ CREATE INDEX IF NOT EXISTS idx_webhooks_org_id ON webhooks(organization_id);
 CREATE INDEX IF NOT EXISTS idx_backups_org_id ON backups(organization_id);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_log_org_id ON admin_audit_log(organization_id);
 CREATE INDEX IF NOT EXISTS idx_system_settings_org_id ON system_settings(organization_id);
+
+-- =============================================================================
+-- Improvement 14: RLS policies for tables added after initial migration
+-- These 4 tables had no Row Level Security — a full multi-tenant isolation breach.
+-- Run this file in the Supabase SQL Editor to apply all policies.
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- management_reviews
+-- ---------------------------------------------------------------------------
+ALTER TABLE management_reviews ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "management_reviews_select" ON management_reviews
+  FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "management_reviews_insert" ON management_reviews
+  FOR INSERT WITH CHECK (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "management_reviews_update" ON management_reviews
+  FOR UPDATE USING (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "management_reviews_delete" ON management_reviews
+  FOR DELETE USING (is_superadmin() OR organization_id = current_user_org_id());
+
+-- ---------------------------------------------------------------------------
+-- management_review_inputs
+-- ---------------------------------------------------------------------------
+ALTER TABLE management_review_inputs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "management_review_inputs_select" ON management_review_inputs
+  FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "management_review_inputs_insert" ON management_review_inputs
+  FOR INSERT WITH CHECK (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "management_review_inputs_update" ON management_review_inputs
+  FOR UPDATE USING (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "management_review_inputs_delete" ON management_review_inputs
+  FOR DELETE USING (is_superadmin() OR organization_id = current_user_org_id());
+
+-- ---------------------------------------------------------------------------
+-- management_review_outputs
+-- ---------------------------------------------------------------------------
+ALTER TABLE management_review_outputs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "management_review_outputs_select" ON management_review_outputs
+  FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "management_review_outputs_insert" ON management_review_outputs
+  FOR INSERT WITH CHECK (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "management_review_outputs_update" ON management_review_outputs
+  FOR UPDATE USING (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "management_review_outputs_delete" ON management_review_outputs
+  FOR DELETE USING (is_superadmin() OR organization_id = current_user_org_id());
+
+-- ---------------------------------------------------------------------------
+-- suppliers
+-- ---------------------------------------------------------------------------
+ALTER TABLE suppliers ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "suppliers_select" ON suppliers
+  FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "suppliers_insert" ON suppliers
+  FOR INSERT WITH CHECK (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "suppliers_update" ON suppliers
+  FOR UPDATE USING (is_superadmin() OR organization_id = current_user_org_id());
+
+CREATE POLICY "suppliers_delete" ON suppliers
+  FOR DELETE USING (is_superadmin() OR organization_id = current_user_org_id());
+
+-- =============================================================================
+-- Improvement 1: cross_links UNIQUE constraint update (relationship_type added)
+-- The application layer already defaults relationship_type to 'association'.
+-- This updates the constraint so the same entity pair can have multiple
+-- relationship types (e.g., a role can both ASSIGN to and INFLUENCE a process).
+-- =============================================================================
+ALTER TABLE cross_links DROP CONSTRAINT IF EXISTS cross_links_organization_id_source_type_source_id_target_type_target_id_key;
+ALTER TABLE cross_links ADD CONSTRAINT cross_links_unique
+  UNIQUE (organization_id, source_type, source_id, target_type, target_id, relationship_type);
