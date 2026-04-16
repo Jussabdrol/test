@@ -592,21 +592,24 @@ async function batchAll(items, fn, concurrency = 6) {
 
 // --- Cross-Link System ---
 const linkableTypes = {
-  risk: { label: 'Risk', icon: '&#9888;', canLink: ['role','process','system','asset','facility','requirement','document','task','action','usecase'] },
+  risk: { label: 'Risk', icon: '&#9888;', canLink: ['role','process','system','asset','facility','requirement','document','task','action','usecase','ai_model','ai_dataset','ai_usecase'] },
   task: { label: 'Task', icon: '&#9881;', canLink: ['role','process','asset','facility','risk','document','requirement','action','usecase'] },
   action: { label: 'Action', icon: '&#9889;', canLink: ['role','process','task','risk','document','requirement','usecase'] },
-  audit: { label: 'Audit', icon: '&#9998;', canLink: ['role','process','requirement','risk','document','usecase'] },
-  requirement: { label: 'Requirement', icon: '&#128220;', canLink: ['process','role','document','risk','treatment','task','action','system','asset','audit','usecase'] },
-  role: { label: 'Role', icon: '&#128100;', canLink: ['risk','task','audit','process','system','document','action','usecase'] },
-  process: { label: 'Process', icon: '&#128260;', canLink: ['risk','task','audit','role','system','asset','document','action','usecase'] },
-  system: { label: 'System', icon: '&#128187;', canLink: ['risk','process','role','asset','document','usecase'] },
+  audit: { label: 'Audit', icon: '&#9998;', canLink: ['role','process','requirement','risk','document','usecase','ai_usecase'] },
+  requirement: { label: 'Requirement', icon: '&#128220;', canLink: ['process','role','document','risk','treatment','task','action','system','asset','audit','usecase','ai_model','ai_usecase'] },
+  role: { label: 'Role', icon: '&#128100;', canLink: ['risk','task','audit','process','system','document','action','usecase','ai_model','ai_dataset','ai_usecase'] },
+  process: { label: 'Process', icon: '&#128260;', canLink: ['risk','task','audit','role','system','asset','document','action','usecase','ai_model','ai_usecase'] },
+  system: { label: 'System', icon: '&#128187;', canLink: ['risk','process','role','asset','document','usecase','ai_model','ai_dataset'] },
   asset: { label: 'Asset', icon: '&#128230;', canLink: ['risk','task','process','facility','document','usecase'] },
   facility: { label: 'Facility', icon: '&#127970;', canLink: ['risk','task','asset','document','usecase'] },
-  document: { label: 'Document', icon: '&#128196;', canLink: ['risk','task','audit','requirement','role','process','system','asset','facility','action','usecase'] },
+  document: { label: 'Document', icon: '&#128196;', canLink: ['risk','task','audit','requirement','role','process','system','asset','facility','action','usecase','ai_model','ai_dataset','ai_usecase'] },
   ncr: { label: 'NCR', icon: '&#9888;', canLink: ['risk','requirement','document','role','action','usecase'] },
   treatment: { label: 'Treatment', icon: '&#128737;', canLink: ['requirement','document','role','process','system','asset','usecase'] },
   checklist: { label: 'Checklist Item', icon: '&#9745;', canLink: ['document','process','system','asset','usecase'] },
   usecase: { label: 'Use Case', icon: '&#128221;', canLink: ['risk','task','action','requirement','document','role','process','system','asset','audit','ncr','treatment'] },
+  ai_model:   { label: 'AI Model',   icon: '&#129302;', canLink: ['system','process','role','risk','document','ai_dataset','ai_usecase','requirement'] },
+  ai_dataset: { label: 'Dataset',    icon: '&#128202;', canLink: ['ai_model','system','process','role','risk','document','supplier'] },
+  ai_usecase: { label: 'AI Use Case',icon: '&#127919;', canLink: ['ai_model','ai_dataset','process','role','risk','document','system','audit','requirement'] },
 };
 
 async function renderCrossLinks(entityType, entityId, containerId) {
@@ -655,7 +658,7 @@ async function renderCrossLinks(entityType, entityId, containerId) {
 }
 
 function getViewForType(type, id) {
-  const archTypes = ['role','process','system','asset','facility'];
+  const archTypes = ['role','process','system','asset','facility','ai_model','ai_dataset','ai_usecase'];
   if (archTypes.includes(type)) {
     return `currentArchTab='${type}';switchView('architecture')`;
   }
@@ -6022,7 +6025,7 @@ async function saveKpiValue(e) {
 
 // --- Organizational Planning: Architecture ---
 let currentArchTab = 'role';
-const archTypeLabels = { role: 'Roles & Responsibilities', process: 'Processes', system: 'Systems / Data', asset: 'Assets', facility: 'Facilities', supplier: 'Suppliers' };
+const archTypeLabels = { role: 'Roles & Responsibilities', process: 'Processes', system: 'Systems / Data', asset: 'Assets', facility: 'Facilities', supplier: 'Suppliers', ai_model: 'AI Model Inventory', ai_dataset: 'Data Catalog', ai_usecase: 'AI Use Cases' };
 
 function switchArchTab(type) {
   currentArchTab = type;
@@ -6078,7 +6081,7 @@ async function loadArchitecture() {
   if (signal.aborted || loadId !== _archLoadId) return;
 
   // Update Add button label to match current tab
-  const archSingular = { role: 'Role', process: 'Process', system: 'System', asset: 'Asset', facility: 'Facility' };
+  const archSingular = { role: 'Role', process: 'Process', system: 'System', asset: 'Asset', facility: 'Facility', ai_model: 'AI Model', ai_dataset: 'Dataset', ai_usecase: 'AI Use Case' };
   const addBtn = document.querySelector('#view-architecture .view-header button.btn-primary');
   if (addBtn) addBtn.textContent = '+ Add ' + (archSingular[currentArchTab] || 'Item');
 
@@ -6804,11 +6807,14 @@ async function geocodeFacilityAddress() {
 
 function buildArchTableHeader(archType) {
   const headers = {
-    role: ['Name', 'Contact', 'Reports to', 'Status', 'Links', ''],
-    process: ['Name', 'Description', 'Owner', 'Status', 'Links', ''],
-    system: ['Name', 'Criticality', 'Owner', 'Status', 'Links', ''],
-    asset: ['Name', 'Description', 'Owner', 'Status', 'Links', ''],
-    facility: ['Name', 'Address', 'Owner', 'Status', 'Links', ''],
+    role:       ['Name', 'Contact', 'Reports to', 'Status', 'Links', ''],
+    process:    ['Name', 'Description', 'Owner', 'Status', 'Links', ''],
+    system:     ['Name', 'Criticality', 'Owner', 'Status', 'Links', ''],
+    asset:      ['Name', 'Description', 'Owner', 'Status', 'Links', ''],
+    facility:   ['Name', 'Address', 'Owner', 'Status', 'Links', ''],
+    ai_model:   ['Name', 'Type / Provider', 'Owner', 'Status', 'Links', ''],
+    ai_dataset: ['Name', 'Classification', 'Owner', 'Status', 'Links', ''],
+    ai_usecase: ['Name', 'Domain / Approach', 'Owner', 'Status', 'Links', ''],
   };
   const cols = headers[archType] || headers.role;
   return `<div class="arch-table-head">
@@ -6838,6 +6844,19 @@ function buildArchTableRow(item, meta, links, archType) {
     }
   } else if (archType === 'facility') {
     detailCol = meta.address ? `<span style="font-size:12px">${esc(meta.address.substring(0, 40))}${meta.address.length > 40 ? '...' : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>';
+  } else if (archType === 'ai_model') {
+    const tierBadge = { Minimal: 'badge-low', Limited: 'badge-medium', High: 'badge-high', Unacceptable: 'badge-critical' }[meta.risk_tier] || '';
+    const parts = [meta.model_type, meta.provider].filter(Boolean);
+    detailCol = `<span style="font-size:12px">${parts.length ? esc(parts.join(' · ')) : ''}</span>${meta.risk_tier ? ` <span class="badge ${tierBadge}" style="margin-left:4px">${esc(meta.risk_tier)}</span>` : ''}` || '<span style="color:var(--text-muted);font-size:11px">-</span>';
+  } else if (archType === 'ai_dataset') {
+    const clsBadge = { Public: 'badge-low', Internal: 'badge-medium', Confidential: 'badge-high', Restricted: 'badge-critical' }[meta.classification] || '';
+    detailCol = meta.classification
+      ? `<span class="badge ${clsBadge}">${esc(meta.classification)}</span>${meta.contains_pii === 'Yes' ? ' <span class="badge badge-high" style="margin-left:4px">PII</span>' : ''}`
+      : '<span style="color:var(--text-muted);font-size:11px">-</span>';
+  } else if (archType === 'ai_usecase') {
+    const tierBadge = { Minimal: 'badge-low', Limited: 'badge-medium', High: 'badge-high', Unacceptable: 'badge-critical' }[meta.risk_tier] || '';
+    const parts = [meta.domain, meta.ai_approach].filter(Boolean);
+    detailCol = `<span style="font-size:12px">${parts.length ? esc(parts.join(' · ')) : ''}</span>${meta.risk_tier ? ` <span class="badge ${tierBadge}" style="margin-left:4px">${esc(meta.risk_tier)}</span>` : ''}` || '<span style="color:var(--text-muted);font-size:11px">-</span>';
   } else {
     detailCol = item.description ? `<span style="font-size:12px">${esc(item.description.substring(0, 50))}${item.description.length > 50 ? '...' : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>';
   }
@@ -6846,7 +6865,7 @@ function buildArchTableRow(item, meta, links, archType) {
   const linksDetailId = `arch-links-${archType}-${item.id}`;
   let linksDetail = '';
   if (linkCount > 0) {
-    const typeIcons = { role: '&#128100;', process: '&#9881;', system: '&#128187;', asset: '&#128230;', facility: '&#127970;', document: '&#128196;', risk: '&#9888;', task: '&#9745;', requirement: '&#128203;' };
+    const typeIcons = { role: '&#128100;', process: '&#9881;', system: '&#128187;', asset: '&#128230;', facility: '&#127970;', document: '&#128196;', risk: '&#9888;', task: '&#9745;', requirement: '&#128203;', ai_model: '&#129302;', ai_dataset: '&#128202;', ai_usecase: '&#127919;' };
     const grouped = {};
     for (const l of links) {
       if (!grouped[l.type]) grouped[l.type] = [];
@@ -7002,6 +7021,234 @@ async function openArchModal(id) {
         </button>
         <span class="field-hint">Enter coordinates manually or click to auto-detect from address</span>
       </div>`;
+  } else if (archType === 'ai_model') {
+    const regFlags = Array.isArray(metadata.regulatory_flags) ? metadata.regulatory_flags : [];
+    extraFields.innerHTML = `
+      <div class="form-divider"><span>AI Model Details</span></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Provider / Vendor</label>
+          <input type="text" id="arch-ai-provider" value="${esc(metadata.provider || '')}" placeholder="e.g. Anthropic, OpenAI, Internal">
+        </div>
+        <div class="form-group">
+          <label>Version</label>
+          <input type="text" id="arch-ai-version" value="${esc(metadata.version || '')}" placeholder="e.g. gpt-4o, claude-3-opus">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Model Type</label>
+          <select id="arch-ai-model-type">
+            <option value="">-- Select --</option>
+            ${['LLM','Classification','Regression','Computer Vision','NLP','Recommendation','Multimodal','Other'].map(v => `<option value="${v}" ${metadata.model_type===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Deployment Environment</label>
+          <select id="arch-ai-deploy-env">
+            <option value="">-- Select --</option>
+            ${['SaaS / API','Cloud (self-hosted)','On-premise','Hybrid'].map(v => `<option value="${v}" ${metadata.deployment_env===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-divider"><span>AI Governance &amp; Risk</span></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Risk Tier (EU AI Act)</label>
+          <select id="arch-ai-risk-tier">
+            <option value="">-- Select --</option>
+            ${['Minimal','Limited','High','Unacceptable'].map(v => `<option value="${v}" ${metadata.risk_tier===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Explainability</label>
+          <select id="arch-ai-explainability">
+            <option value="">-- Select --</option>
+            ${['Black box','Interpretable','Fully explainable'].map(v => `<option value="${v}" ${metadata.explainability===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Bias Assessment</label>
+          <select id="arch-ai-bias">
+            <option value="">-- Select --</option>
+            ${['Not done','In progress','Passed','Failed'].map(v => `<option value="${v}" ${metadata.bias_assessment===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Last Evaluated</label>
+          <input type="date" id="arch-ai-last-evaluated" value="${esc(metadata.last_evaluated || '')}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Regulatory Frameworks</label>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:6px">
+          ${['EU AI Act','NIST AI RMF','ISO 42001'].map(f => `<label style="font-weight:400;display:flex;align-items:center;gap:6px"><input type="checkbox" class="arch-ai-reg-flag" value="${f}" ${regFlags.includes(f)?'checked':''}> ${f}</label>`).join('')}
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Performance &amp; Notes</label>
+        <textarea id="arch-ai-perf-notes" rows="2" placeholder="Accuracy metrics, known limitations, monitoring approach…">${esc(metadata.performance_notes || '')}</textarea>
+      </div>`;
+  } else if (archType === 'ai_dataset') {
+    extraFields.innerHTML = `
+      <div class="form-divider"><span>Dataset Details</span></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Classification</label>
+          <select id="arch-ds-classification">
+            <option value="">-- Select --</option>
+            ${['Public','Internal','Confidential','Restricted'].map(v => `<option value="${v}" ${metadata.classification===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Data Type</label>
+          <select id="arch-ds-data-type">
+            <option value="">-- Select --</option>
+            ${['Structured','Unstructured','Semi-structured','Time-series','Image','Audio','Video'].map(v => `<option value="${v}" ${metadata.data_type===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Contains Personal Data (PII)</label>
+          <select id="arch-ds-pii">
+            <option value="">-- Select --</option>
+            <option value="No" ${metadata.contains_pii==='No'?'selected':''}>No</option>
+            <option value="Yes" ${metadata.contains_pii==='Yes'?'selected':''}>Yes</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Special Categories (GDPR Art. 9)</label>
+          <input type="text" id="arch-ds-special-cats" value="${esc(metadata.special_categories || '')}" placeholder="e.g. Health, Biometric, Financial">
+        </div>
+      </div>
+      <div class="form-divider"><span>Data Governance</span></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Legal Basis for Processing</label>
+          <select id="arch-ds-legal-basis">
+            <option value="">-- Select --</option>
+            ${['Consent','Contract','Legal obligation','Legitimate interest','Vital interests','Not applicable'].map(v => `<option value="${v}" ${metadata.legal_basis===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Jurisdiction</label>
+          <input type="text" id="arch-ds-jurisdiction" value="${esc(metadata.jurisdiction || '')}" placeholder="e.g. EU, US, Global">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Retention Period</label>
+          <input type="text" id="arch-ds-retention" value="${esc(metadata.retention_period || '')}" placeholder="e.g. 3 years, Until model retirement">
+        </div>
+        <div class="form-group">
+          <label>Access Level</label>
+          <select id="arch-ds-access-level">
+            <option value="">-- Select --</option>
+            ${['Open','Restricted','Need-to-know'].map(v => `<option value="${v}" ${metadata.access_level===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Format</label>
+          <input type="text" id="arch-ds-format" value="${esc(metadata.format || '')}" placeholder="e.g. CSV, Parquet, JSON, Unstructured">
+        </div>
+        <div class="form-group">
+          <label>Approximate Volume</label>
+          <input type="text" id="arch-ds-volume" value="${esc(metadata.volume_approx || '')}" placeholder="e.g. ~5M rows, 2 TB">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Data Quality Score (1–5)</label>
+          <select id="arch-ds-quality">
+            <option value="">-- Select --</option>
+            ${['1','2','3','4','5'].map(v => `<option value="${v}" ${metadata.data_quality_score===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Last Reviewed</label>
+          <input type="date" id="arch-ds-last-reviewed" value="${esc(metadata.last_reviewed || '')}">
+        </div>
+      </div>`;
+  } else if (archType === 'ai_usecase') {
+    extraFields.innerHTML = `
+      <div class="form-divider"><span>Use Case Details</span></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Business Domain</label>
+          <select id="arch-uc-domain">
+            <option value="">-- Select --</option>
+            ${['HR','Finance','Operations','Customer Service','Legal','IT','R&D','Marketing','Other'].map(v => `<option value="${v}" ${metadata.domain===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>AI Approach</label>
+          <select id="arch-uc-approach">
+            <option value="">-- Select --</option>
+            ${['Generative AI','Supervised Learning','Unsupervised Learning','Reinforcement Learning','RPA','Rules-based','Other'].map(v => `<option value="${v}" ${metadata.ai_approach===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-divider"><span>AI Governance &amp; Risk</span></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Risk Tier (EU AI Act)</label>
+          <select id="arch-uc-risk-tier">
+            <option value="">-- Select --</option>
+            ${['Minimal','Limited','High','Unacceptable'].map(v => `<option value="${v}" ${metadata.risk_tier===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Human Oversight</label>
+          <select id="arch-uc-oversight">
+            <option value="">-- Select --</option>
+            ${['Required','Optional','None'].map(v => `<option value="${v}" ${metadata.human_oversight===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Governance Approval</label>
+          <select id="arch-uc-approval">
+            <option value="">-- Select --</option>
+            ${['Not started','Pending','Approved','Rejected'].map(v => `<option value="${v}" ${metadata.governance_approval===v?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Incident Reporting in Place</label>
+          <select id="arch-uc-incident">
+            <option value="">-- Select --</option>
+            <option value="Yes" ${metadata.incident_reporting==='Yes'?'selected':''}>Yes</option>
+            <option value="No" ${metadata.incident_reporting==='No'?'selected':''}>No</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Approval Date</label>
+          <input type="date" id="arch-uc-approval-date" value="${esc(metadata.approval_date || '')}">
+        </div>
+        <div class="form-group">
+          <label>Next Review Date</label>
+          <input type="date" id="arch-uc-review-date" value="${esc(metadata.next_review_date || '')}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Business Value</label>
+        <textarea id="arch-uc-value" rows="2" placeholder="What benefit does this AI use case deliver?">${esc(metadata.business_value || '')}</textarea>
+      </div>
+      <div class="form-group">
+        <label>Success KPIs</label>
+        <textarea id="arch-uc-kpis" rows="2" placeholder="How is success measured?">${esc(metadata.success_kpis || '')}</textarea>
+      </div>
+      <div class="form-group">
+        <label>Fallback Process</label>
+        <textarea id="arch-uc-fallback" rows="2" placeholder="What happens if the AI system fails or is unavailable?">${esc(metadata.fallback_process || '')}</textarea>
+      </div>`;
   } else {
     extraFields.innerHTML = '';
   }
@@ -7052,6 +7299,45 @@ async function saveArch(e) {
     if (addr) metadata.address = addr.value;
     if (lat && lat.value) metadata.latitude = parseFloat(lat.value);
     if (lng && lng.value) metadata.longitude = parseFloat(lng.value);
+  } else if (archType === 'ai_model') {
+    const f = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+    metadata.provider         = f('arch-ai-provider');
+    metadata.version          = f('arch-ai-version');
+    metadata.model_type       = f('arch-ai-model-type');
+    metadata.deployment_env   = f('arch-ai-deploy-env');
+    metadata.risk_tier        = f('arch-ai-risk-tier');
+    metadata.explainability   = f('arch-ai-explainability');
+    metadata.bias_assessment  = f('arch-ai-bias');
+    metadata.last_evaluated   = f('arch-ai-last-evaluated');
+    metadata.performance_notes = f('arch-ai-perf-notes');
+    metadata.regulatory_flags = Array.from(document.querySelectorAll('.arch-ai-reg-flag:checked')).map(cb => cb.value);
+  } else if (archType === 'ai_dataset') {
+    const f = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+    metadata.classification    = f('arch-ds-classification');
+    metadata.data_type         = f('arch-ds-data-type');
+    metadata.contains_pii      = f('arch-ds-pii');
+    metadata.special_categories = f('arch-ds-special-cats');
+    metadata.legal_basis       = f('arch-ds-legal-basis');
+    metadata.jurisdiction      = f('arch-ds-jurisdiction');
+    metadata.retention_period  = f('arch-ds-retention');
+    metadata.access_level      = f('arch-ds-access-level');
+    metadata.format            = f('arch-ds-format');
+    metadata.volume_approx     = f('arch-ds-volume');
+    metadata.data_quality_score = f('arch-ds-quality');
+    metadata.last_reviewed     = f('arch-ds-last-reviewed');
+  } else if (archType === 'ai_usecase') {
+    const f = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+    metadata.domain              = f('arch-uc-domain');
+    metadata.ai_approach         = f('arch-uc-approach');
+    metadata.risk_tier           = f('arch-uc-risk-tier');
+    metadata.human_oversight     = f('arch-uc-oversight');
+    metadata.governance_approval = f('arch-uc-approval');
+    metadata.incident_reporting  = f('arch-uc-incident');
+    metadata.approval_date       = f('arch-uc-approval-date');
+    metadata.next_review_date    = f('arch-uc-review-date');
+    metadata.business_value      = f('arch-uc-value');
+    metadata.success_kpis        = f('arch-uc-kpis');
+    metadata.fallback_process    = f('arch-uc-fallback');
   }
   const body = {
     arch_type: archType,

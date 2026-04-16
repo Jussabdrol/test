@@ -286,6 +286,7 @@ const ALLOWED_ENTITY_TYPES = new Set([
   'risk', 'task', 'action', 'requirement', 'audit', 'ncr',
   'role', 'process', 'system', 'asset', 'facility',
   'document', 'treatment', 'usecase',
+  'ai_model', 'ai_dataset', 'ai_usecase',
 ]);
 
 // Improvement 7: fire-and-forget process event emitter (never throws into caller)
@@ -2724,6 +2725,9 @@ const entityResolvers = {
   document: async (id) => await db.get('SELECT id, title as name FROM documents WHERE id = ?', id),
   treatment: async (id) => { const t = await db.get('SELECT id, description FROM risk_treatments WHERE id = ?', id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
   usecase: async (id) => await db.get('SELECT id, title as name FROM use_cases WHERE id = ?', id),
+  ai_model:   async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_model'", id),
+  ai_dataset: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_dataset'", id),
+  ai_usecase: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_usecase'", id),
 };
 
 // Bulk cross-links: fetch all cross-links for multiple items of the same type in one shot.
@@ -2777,7 +2781,7 @@ app.get('/api/cross-links/batch/:type', requireOrgContext, async (req, res) => {
       .map(n => ({ id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` }));
     else if (eType === 'treatment') rows = (await db.prepare(`SELECT id, description FROM risk_treatments WHERE id IN (${eph})`).all(...idArr))
       .map(t => ({ id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` }));
-    else if (['role','process','system','asset','facility'].includes(eType))
+    else if (['role','process','system','asset','facility','ai_model','ai_dataset','ai_usecase'].includes(eType))
       rows = await db.prepare(`SELECT id, name FROM org_architecture WHERE arch_type = ? AND id IN (${eph})`).all(eType, ...idArr);
     else if (eType === 'usecase') rows = await db.prepare(`SELECT id, title as name FROM use_cases WHERE id IN (${eph})`).all(...idArr);
     for (const r of rows) nameCache[`${eType}:${r.id}`] = r.name;
@@ -2868,6 +2872,9 @@ app.get('/api/linkable/:type', requireOrgContext, async (req, res) => {
   else if (type === 'treatment') items = await db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments WHERE organization_id = ? ORDER BY id DESC").all(oid);
   else if (type === 'action') items = await db.prepare('SELECT id, title as name FROM actions WHERE organization_id = ? ORDER BY id DESC').all(oid);
   else if (type === 'usecase') items = await db.prepare('SELECT id, title as name FROM use_cases WHERE organization_id = ? ORDER BY title').all(oid);
+  else if (type === 'ai_model')   items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_model' ORDER BY name").all(oid);
+  else if (type === 'ai_dataset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_dataset' ORDER BY name").all(oid);
+  else if (type === 'ai_usecase') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_usecase' ORDER BY name").all(oid);
   res.json(items);
 });
 
