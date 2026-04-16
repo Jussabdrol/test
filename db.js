@@ -96,6 +96,77 @@ async function runMigrations() {
       console.warn('[migration] saml_config constraint tweak failed (non-fatal):', err.message);
     }
   }
+
+  // Migration: redesign use_cases to Kanban-based AI use case management schema.
+  // If the old table has the 'actor' column it's the pre-redesign schema — drop and recreate.
+  try {
+    const oldCol = await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'use_cases' AND column_name = 'actor'
+    `);
+    if (oldCol.rows.length > 0) {
+      console.log('[migration] Rebuilding use_cases table to new AI Use Cases schema...');
+      await pool.query('DROP TABLE IF EXISTS use_case_members CASCADE');
+      await pool.query('DROP TABLE IF EXISTS use_case_approvals CASCADE');
+      await pool.query('DROP TABLE IF EXISTS use_cases CASCADE');
+      // Tables will be recreated by initSchema on the next startup cycle, but since
+      // initSchema already ran, we create them explicitly here.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS use_cases (
+          id SERIAL PRIMARY KEY,
+          organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          description TEXT DEFAULT '',
+          category TEXT DEFAULT 'AI' CHECK(category IN ('AI','Process Automation','Analytics','Integration','Other')),
+          business_domain TEXT DEFAULT '',
+          ai_approach TEXT DEFAULT '',
+          risk_tier TEXT DEFAULT '' CHECK(risk_tier IN ('','Minimal','Limited','High','Unacceptable')),
+          human_oversight TEXT DEFAULT '' CHECK(human_oversight IN ('','Required','Optional','None')),
+          priority TEXT DEFAULT 'medium' CHECK(priority IN ('low','medium','high','critical')),
+          status TEXT DEFAULT 'new' CHECK(status IN ('new','assessment','approved','development','production','retired')),
+          business_value TEXT DEFAULT '',
+          success_kpis TEXT DEFAULT '',
+          fallback_process TEXT DEFAULT '',
+          retirement_reason TEXT DEFAULT '',
+          target_go_live DATE,
+          go_live_date DATE,
+          next_review_date DATE,
+          performance_notes TEXT DEFAULT '',
+          incident_reporting INTEGER DEFAULT 0,
+          owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          implementation_owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          approved_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          approval_date DATE,
+          sort_order INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS use_case_approvals (
+          id SERIAL PRIMARY KEY,
+          use_case_id INTEGER NOT NULL REFERENCES use_cases(id) ON DELETE CASCADE,
+          organization_id INTEGER NOT NULL,
+          approved_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          decision TEXT NOT NULL CHECK(decision IN ('approved','rejected','pending')),
+          notes TEXT DEFAULT '',
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS use_case_members (
+          id SERIAL PRIMARY KEY,
+          use_case_id INTEGER NOT NULL REFERENCES use_cases(id) ON DELETE CASCADE,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          created_at TIMESTAMP DEFAULT NOW(),
+          UNIQUE(use_case_id, user_id)
+        )
+      `);
+      console.log('[migration] use_cases rebuild complete.');
+    }
+  } catch (err) {
+    console.warn('[migration] use_cases rebuild failed (non-fatal):', err.message);
+  }
 }
 
 async function initSchema() {

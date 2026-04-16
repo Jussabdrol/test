@@ -2292,12 +2292,12 @@ app.get('/api/kpis/auto', requireOrgContext, async (req, res) => {
     arch_roles: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'role'").get(oid)).v,
     arch_systems: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'system'").get(oid)).v,
     arch_facilities: (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'facility'").get(oid)).v,
-    // Use Cases
+    // AI Use Cases
     usecases_total: (await db.prepare('SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ?').get(oid)).v,
-    usecases_active: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'active'").get(oid)).v,
-    usecases_draft: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'draft'").get(oid)).v,
-    usecases_proposed: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'proposed'").get(oid)).v,
-    usecases_deprecated: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'deprecated'").get(oid)).v,
+    usecases_active: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'production'").get(oid)).v,
+    usecases_draft: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'new'").get(oid)).v,
+    usecases_proposed: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status IN ('assessment','approved')").get(oid)).v,
+    usecases_deprecated: (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'retired'").get(oid)).v,
   };
   res.json(auto);
 });
@@ -2337,7 +2337,7 @@ app.post('/api/kpis/auto/persist', requireOrgContext, async (req, res) => {
     arch_systems:           (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'system'").get(oid)).v,
     arch_facilities:        (await db.prepare("SELECT COUNT(*) as v FROM org_architecture WHERE organization_id = ? AND arch_type = 'facility'").get(oid)).v,
     usecases_total:         (await db.prepare('SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ?').get(oid)).v,
-    usecases_active:        (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'active'").get(oid)).v,
+    usecases_active:        (await db.prepare("SELECT COUNT(*) as v FROM use_cases WHERE organization_id = ? AND status = 'production'").get(oid)).v,
   };
   auto.soa_coverage_pct = auto.soa_applicable > 0 ? Math.round((auto.soa_implemented / auto.soa_applicable) * 100) : 0;
   auto.task_completion_rate = auto.tasks_active > 0 ? Math.round((auto.completions_this_month / auto.tasks_active) * 100) : 0;
@@ -2407,50 +2407,167 @@ app.delete('/api/kpis/:id/values/:valueId', requireOrgContext, async (req, res) 
   res.json({ success: true });
 });
 
-// Use Cases
+// Org users listing (for smart user pickers – accessible to any org member)
+app.get('/api/org-users', requireOrgContext, async (req, res) => {
+  const users = await db.prepare(
+    "SELECT id, name, email, role, department FROM users WHERE organization_id = ? AND status = 'active' ORDER BY name"
+  ).all(req.orgId);
+  res.json(users);
+});
+
+// AI Use Cases – Kanban board management
+const UC_FIELDS = [
+  'title','description','category','business_domain','ai_approach','risk_tier','human_oversight',
+  'priority','status','business_value','success_kpis','fallback_process','retirement_reason',
+  'target_go_live','go_live_date','next_review_date','performance_notes','incident_reporting',
+  'owner_id','implementation_owner_id','approved_by_id','approval_date','sort_order'
+];
+
+async function fetchUseCaseWithUsers(db, id) {
+  return await db.prepare(`
+    SELECT uc.*,
+      o.name  AS owner_name,  o.email  AS owner_email,
+      io.name AS implementation_owner_name, io.email AS implementation_owner_email,
+      ab.name AS approved_by_name
+    FROM use_cases uc
+    LEFT JOIN users o  ON uc.owner_id = o.id
+    LEFT JOIN users io ON uc.implementation_owner_id = io.id
+    LEFT JOIN users ab ON uc.approved_by_id = ab.id
+    WHERE uc.id = ?
+  `).get(id);
+}
+
 app.get('/api/use-cases', requireOrgContext, async (req, res) => {
-  const { status, priority, category } = req.query;
-  let sql = 'SELECT * FROM use_cases WHERE organization_id = ?';
+  const { status, priority, category, domain } = req.query;
+  let sql = `
+    SELECT uc.*,
+      o.name  AS owner_name,
+      io.name AS implementation_owner_name,
+      ab.name AS approved_by_name
+    FROM use_cases uc
+    LEFT JOIN users o  ON uc.owner_id = o.id
+    LEFT JOIN users io ON uc.implementation_owner_id = io.id
+    LEFT JOIN users ab ON uc.approved_by_id = ab.id
+    WHERE uc.organization_id = ?`;
   const params = [req.orgId];
-  if (status) { sql += ' AND status = ?'; params.push(status); }
-  if (priority) { sql += ' AND priority = ?'; params.push(priority); }
-  if (category) { sql += ' AND category = ?'; params.push(category); }
-  sql += ' ORDER BY priority DESC, title';
+  if (status)   { sql += ' AND uc.status = ?';          params.push(status); }
+  if (priority) { sql += ' AND uc.priority = ?';        params.push(priority); }
+  if (category) { sql += ' AND uc.category = ?';        params.push(category); }
+  if (domain)   { sql += ' AND uc.business_domain = ?'; params.push(domain); }
+  sql += ' ORDER BY uc.sort_order, uc.created_at DESC';
   res.json(await db.prepare(sql).all(...params));
 });
 
 app.get('/api/use-cases/:id', requireOrgContext, async (req, res) => {
-  const uc = await db.prepare('SELECT * FROM use_cases WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  if (!uc) return res.status(404).json({ error: 'Not found' });
+  const uc = await fetchUseCaseWithUsers(db, req.params.id);
+  if (!uc || uc.organization_id !== req.orgId) return res.status(404).json({ error: 'Not found' });
   res.json(uc);
 });
 
 app.post('/api/use-cases', requireOrgContext, async (req, res) => {
-  const { title, description, actor, status, priority, category } = req.body;
+  const { title } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
-  const result = await db.prepare(
-    'INSERT INTO use_cases (organization_id, title, description, actor, status, priority, category) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(req.orgId, title, description || '', actor || '', status || 'draft', priority || 'medium', category || '');
-  res.status(201).json(await db.prepare('SELECT * FROM use_cases WHERE id = ?').get(result.lastInsertRowid));
+  const cols = ['organization_id', 'title'];
+  const vals = [req.orgId, title];
+  for (const f of UC_FIELDS) {
+    if (f !== 'title' && req.body[f] !== undefined) { cols.push(f); vals.push(req.body[f]); }
+  }
+  const ph = vals.map(() => '?').join(', ');
+  const result = await db.prepare(`INSERT INTO use_cases (${cols.join(', ')}) VALUES (${ph})`).run(...vals);
+  res.status(201).json(await fetchUseCaseWithUsers(db, result.lastInsertRowid));
 });
 
 app.put('/api/use-cases/:id', requireOrgContext, async (req, res) => {
-  const fields = ['title', 'description', 'actor', 'status', 'priority', 'category'];
+  const existing = await db.prepare('SELECT id FROM use_cases WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
   const updates = [];
   const params = [];
-  for (const f of fields) {
-    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
+  for (const f of UC_FIELDS) {
+    if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f] === '' ? null : req.body[f]); }
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
-  updates.push("updated_at = datetime('now')");
+  updates.push("updated_at = NOW()");
   params.push(req.params.id, req.orgId);
   await db.prepare(`UPDATE use_cases SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params);
-  res.json(await db.prepare('SELECT * FROM use_cases WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+  res.json(await fetchUseCaseWithUsers(db, req.params.id));
+});
+
+// Stage transition with gate validation
+app.put('/api/use-cases/:id/stage', requireOrgContext, async (req, res) => {
+  const { status: targetStage } = req.body;
+  const validStages = ['new','assessment','approved','development','production','retired'];
+  if (!validStages.includes(targetStage)) return res.status(400).json({ error: 'Invalid stage' });
+  const uc = await db.prepare('SELECT * FROM use_cases WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!uc) return res.status(404).json({ error: 'Not found' });
+  // Gate checks
+  if (targetStage === 'approved') {
+    if (!uc.approved_by_id || !uc.approval_date) {
+      return res.status(422).json({ error: 'Set Approved By and Approval Date before moving to Approved.' });
+    }
+  }
+  if (targetStage === 'development') {
+    if (!uc.implementation_owner_id) {
+      return res.status(422).json({ error: 'Assign an Implementation Owner before starting Development.' });
+    }
+  }
+  if (targetStage === 'production') {
+    if (!uc.go_live_date) {
+      return res.status(422).json({ error: 'Set a Go-Live Date before moving to Production.' });
+    }
+  }
+  await db.prepare("UPDATE use_cases SET status = ?, updated_at = NOW() WHERE id = ? AND organization_id = ?").run(targetStage, req.params.id, req.orgId);
+  res.json(await fetchUseCaseWithUsers(db, req.params.id));
 });
 
 app.delete('/api/use-cases/:id', requireOrgContext, async (req, res) => {
   await db.prepare('DELETE FROM use_cases WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   res.json({ success: true });
+});
+
+// Use case team members
+app.get('/api/use-cases/:id/members', requireOrgContext, async (req, res) => {
+  const members = await db.prepare(`
+    SELECT ucm.id, ucm.user_id, u.name, u.email, u.department
+    FROM use_case_members ucm JOIN users u ON ucm.user_id = u.id
+    WHERE ucm.use_case_id = ?
+    ORDER BY u.name
+  `).all(req.params.id);
+  res.json(members);
+});
+
+app.post('/api/use-cases/:id/members', requireOrgContext, async (req, res) => {
+  const { user_id } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'user_id required' });
+  try {
+    await db.prepare('INSERT INTO use_case_members (use_case_id, user_id) VALUES (?, ?)').run(req.params.id, user_id);
+  } catch (e) { /* already exists – ignore */ }
+  res.json(await db.prepare(`
+    SELECT ucm.id, ucm.user_id, u.name, u.email FROM use_case_members ucm JOIN users u ON ucm.user_id = u.id WHERE ucm.use_case_id = ? ORDER BY u.name
+  `).all(req.params.id));
+});
+
+app.delete('/api/use-cases/:id/members/:userId', requireOrgContext, async (req, res) => {
+  await db.prepare('DELETE FROM use_case_members WHERE use_case_id = ? AND user_id = ?').run(req.params.id, req.params.userId);
+  res.json({ success: true });
+});
+
+// Use case approval history
+app.get('/api/use-cases/:id/approvals', requireOrgContext, async (req, res) => {
+  const approvals = await db.prepare(`
+    SELECT ua.*, u.name AS approver_name
+    FROM use_case_approvals ua LEFT JOIN users u ON ua.approved_by_id = u.id
+    WHERE ua.use_case_id = ? ORDER BY ua.created_at DESC
+  `).all(req.params.id);
+  res.json(approvals);
+});
+
+app.post('/api/use-cases/:id/approvals', requireOrgContext, async (req, res) => {
+  const { approved_by_id, decision, notes } = req.body;
+  if (!decision) return res.status(400).json({ error: 'decision required' });
+  const result = await db.prepare(
+    'INSERT INTO use_case_approvals (use_case_id, organization_id, approved_by_id, decision, notes) VALUES (?, ?, ?, ?, ?)'
+  ).run(req.params.id, req.orgId, approved_by_id || null, decision, notes || '');
+  res.status(201).json(await db.prepare('SELECT ua.*, u.name AS approver_name FROM use_case_approvals ua LEFT JOIN users u ON ua.approved_by_id = u.id WHERE ua.id = ?').get(result.lastInsertRowid));
 });
 
 // Architecture
