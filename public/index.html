@@ -2414,6 +2414,24 @@
     </div>
   </div>
 
+  <!-- Document Editor Modal -->
+  <div id="doc-editor-modal" class="modal hidden">
+    <div class="modal-overlay" onclick="closeDocEditor()"></div>
+    <div class="modal-content doc-editor-modal-content">
+      <div class="modal-header">
+        <h3 id="doc-editor-title">Edit Document</h3>
+        <button class="modal-close" onclick="closeDocEditor()">&times;</button>
+      </div>
+      <div id="doc-editor-body" class="doc-editor-body">
+        <div style="padding:40px;text-align:center;color:var(--text-muted)">Loading...</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeDocEditor()">Cancel</button>
+        <button class="btn btn-primary" id="doc-editor-save-btn" onclick="saveDocContent()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== ADMIN MODALS ===== -->
 
   <!-- User Modal -->
