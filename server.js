@@ -106,6 +106,10 @@ const authRateLimiter = rateLimit({
 const TOKEN_SECRET = process.env.SESSION_SECRET || 'lettheframework-secret-key-change-in-production';
 const TOKEN_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours in ms
 
+// ONLYOFFICE Document Server config
+const OO_SERVER_URL = (process.env.ONLYOFFICE_SERVER_URL || '').replace(/\/$/, '');
+const OO_JWT_SECRET = process.env.ONLYOFFICE_JWT_SECRET || '';
+
 function createToken(payload) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const body = Buffer.from(JSON.stringify({ ...payload, iat: Date.now(), exp: Date.now() + TOKEN_MAX_AGE })).toString('base64url');
@@ -124,6 +128,43 @@ function verifyToken(token) {
     return payload;
   } catch { return null; }
 }
+
+// ONLYOFFICE helpers -------------------------------------------------------
+
+// Map file extension → ONLYOFFICE documentType
+function ooDocumentType(ext) {
+  if (['doc','docx','odt','txt','rtf'].includes(ext)) return 'word';
+  if (['xls','xlsx','ods','csv'].includes(ext)) return 'cell';
+  if (['ppt','pptx','odp'].includes(ext)) return 'slide';
+  return 'word';
+}
+
+// Short-lived token that lets ONLYOFFICE DS call download/callback endpoints
+// without a browser session. Reuses the existing TOKEN_SECRET and JWT format.
+function makeOODocToken(orgId, docId) {
+  return createToken({ type: 'oo_doc', orgId: String(orgId), docId: String(docId) });
+}
+function verifyOODocToken(token) {
+  const p = verifyToken(token);
+  return p?.type === 'oo_doc' ? p : null;
+}
+
+// Optionally sign the whole ONLYOFFICE editor config as a JWT so that
+// the Document Server can verify it wasn't tampered with.
+function signOOConfig(config) {
+  if (!OO_JWT_SECRET) return config;
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify(config)).toString('base64url');
+  const sig = crypto.createHmac('sha256', OO_JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
+  return { ...config, token: `${header}.${payload}.${sig}` };
+}
+
+// Derive a public base URL for ONLYOFFICE to call back into this server
+function getAppBaseUrl(req) {
+  return (process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+}
+
+// ---------------------------------------------------------------------------
 
 // Middleware: parse token from cookie and attach to req
 const cookieParser = require('cookie-parser');
@@ -3093,6 +3134,118 @@ app.put('/api/documents/:id/save-content', requireOrgContext, async (req, res) =
 
   await db.prepare("UPDATE documents SET file_size=?, mime_type=?, updated_at=datetime('now') WHERE id=?").run(fileBuffer.length, mimeType, req.params.id);
   res.json({ success: true });
+});
+
+// ---- ONLYOFFICE endpoints ----
+
+// GET /api/documents/:id/onlyoffice-config
+// Returns the editor configuration object the frontend passes to DocsAPI.DocEditor.
+app.get('/api/documents/:id/onlyoffice-config', requireOrgContext, async (req, res) => {
+  if (!OO_SERVER_URL) {
+    return res.status(503).json({ error: 'ONLYOFFICE_SERVER_URL is not configured on this server' });
+  }
+  const doc = await db.prepare('SELECT * FROM documents WHERE id=? AND organization_id=?').get(req.params.id, req.orgId);
+  if (!doc) return res.status(404).json({ error: 'Document not found' });
+  if (!doc.file_path) return res.status(400).json({ error: 'No file attached to this document' });
+
+  const ext = (doc.file_name || '').split('.').pop().toLowerCase();
+  const supported = ['doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','txt','csv','rtf'];
+  if (!supported.includes(ext)) {
+    return res.status(400).json({ error: `File type .${ext} cannot be opened in the document editor` });
+  }
+
+  const base = getAppBaseUrl(req);
+  const t = makeOODocToken(req.orgId, doc.id);
+  // Cache key includes updated_at so ONLYOFFICE re-fetches after each save
+  const key = `doc${doc.id}_${String(doc.updated_at || '').replace(/\D/g, '')}`;
+
+  const editorConfig = signOOConfig({
+    width: '100%',
+    height: '100%',
+    type: 'desktop',
+    documentType: ooDocumentType(ext),
+    document: {
+      title: doc.file_name || doc.title,
+      url: `${base}/api/documents/${doc.id}/onlyoffice-download?t=${t}`,
+      fileType: ext,
+      key,
+      permissions: { edit: true, download: true, print: true, review: false, comment: false },
+    },
+    editorConfig: {
+      callbackUrl: `${base}/api/documents/${doc.id}/onlyoffice-callback?t=${t}`,
+      mode: 'edit',
+      lang: 'en',
+    },
+  });
+
+  res.json({ serverUrl: OO_SERVER_URL, editorConfig });
+});
+
+// GET /api/documents/:id/onlyoffice-download
+// Called by the ONLYOFFICE Document Server (no browser session) to fetch the file.
+app.get('/api/documents/:id/onlyoffice-download', async (req, res) => {
+  const claims = verifyOODocToken(req.query.t || '');
+  if (!claims || claims.docId !== req.params.id) return res.status(403).json({ error: 'Invalid or expired token' });
+
+  const doc = await db.prepare('SELECT * FROM documents WHERE id=? AND organization_id=?').get(req.params.id, claims.orgId);
+  if (!doc || !doc.file_path) return res.status(404).json({ error: 'File not found' });
+
+  if (!storageClient) return res.status(503).json({ error: 'Storage not configured' });
+  const { data: blob, error: dlErr } = await storageClient.storage.from(UPLOADS_BUCKET).download(doc.file_path);
+  if (dlErr) return res.status(500).json({ error: 'Storage retrieval failed' });
+
+  const buffer = Buffer.from(await blob.arrayBuffer());
+  const mimeTypes = {
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    doc:  'application/msword',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    xls:  'application/vnd.ms-excel',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ppt:  'application/vnd.ms-powerpoint',
+    odt:  'application/vnd.oasis.opendocument.text',
+    ods:  'application/vnd.oasis.opendocument.spreadsheet',
+    odp:  'application/vnd.oasis.opendocument.presentation',
+    txt:  'text/plain',
+    csv:  'text/csv',
+    rtf:  'application/rtf',
+  };
+  const ext = (doc.file_name || '').split('.').pop().toLowerCase();
+  res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(doc.file_name || 'document')}`);
+  res.send(buffer);
+});
+
+// POST /api/documents/:id/onlyoffice-callback
+// Called by the ONLYOFFICE Document Server when the user saves or closes the editor.
+// ONLYOFFICE expects {"error":0} on success, {"error":1} on failure.
+app.post('/api/documents/:id/onlyoffice-callback', express.json(), async (req, res) => {
+  const claims = verifyOODocToken(req.query.t || '');
+  if (!claims || claims.docId !== req.params.id) return res.json({ error: 1 });
+
+  const { status, url } = req.body || {};
+  // status 2 = ready to save, status 6 = force save; all others are informational
+  if (status === 2 || status === 6) {
+    const doc = await db.prepare('SELECT * FROM documents WHERE id=? AND organization_id=?').get(req.params.id, claims.orgId);
+    if (!doc) return res.json({ error: 1 });
+
+    try {
+      const fetchRes = await fetch(url);
+      if (!fetchRes.ok) throw new Error(`ONLYOFFICE file fetch failed: ${fetchRes.status}`);
+      const buffer = Buffer.from(await fetchRes.arrayBuffer());
+
+      const { error: upErr } = await storageClient.storage
+        .from(UPLOADS_BUCKET)
+        .update(doc.file_path, buffer, { contentType: doc.mime_type || 'application/octet-stream', upsert: true });
+      if (upErr) throw new Error(upErr.message);
+
+      await db.prepare("UPDATE documents SET file_size=?, updated_at=datetime('now') WHERE id=?").run(buffer.length, doc.id);
+    } catch (e) {
+      console.error('[ONLYOFFICE callback] save error:', e.message);
+      return res.json({ error: 1 });
+    }
+  }
+
+  res.json({ error: 0 });
 });
 
 // --- Universal Cross-Linking API ---

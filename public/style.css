@@ -4515,3 +4515,27 @@ body.has-org-banner .user-widget {
   margin: 6px 0 0;
   flex-shrink: 0;
 }
+
+/* ONLYOFFICE full-screen modal override */
+.doc-editor-modal-content.doc-editor-fullscreen {
+  max-width: 100vw !important;
+  width: 100vw !important;
+  max-height: 100vh !important;
+  height: 100vh !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+}
+.doc-editor-fullscreen .modal-header { flex-shrink: 0; }
+.doc-editor-fullscreen .modal-footer { display: none; }
+.doc-editor-fullscreen .doc-editor-body {
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
+}
+.doc-editor-fullscreen #oo-editor-placeholder,
+.doc-editor-fullscreen #oo-editor-placeholder > div,
+.doc-editor-fullscreen #oo-editor-placeholder iframe {
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+}

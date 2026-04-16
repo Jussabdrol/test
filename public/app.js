@@ -8304,7 +8304,7 @@ async function loadDocumentControl() {
         <div class="doc-col-actions">
           ${actionMenu([
             ...(d.file_name ? [{ label: '&#128229; Download', onclick: `downloadDoc(${d.id})` }] : []),
-            ...(/\.(docx?|xlsx?)$/i.test(d.file_name || '') ? [{ label: '&#9998;&#65039; Edit in Browser', onclick: `openDocEditor(${d.id},${JSON.stringify(d.title)})` }] : []),
+            ...(/\.(docx?|xlsx?|pptx?)$/i.test(d.file_name || '') ? [{ label: '&#9998;&#65039; Edit in Browser', onclick: `openDocEditor(${d.id},${JSON.stringify(d.title)})` }] : []),
             { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('document',${d.id},'doc-expand-${d.id}')` },
             { label: '&#9998; Edit Metadata', onclick: `openDocModal(${d.id})` },
             'sep',
@@ -8508,14 +8508,68 @@ let _docEditorType = null;
 let _docEditorSheets = null;
 let _docEditorSheetNames = null;
 let _docEditorActiveSheet = null;
+let _ooEditor = null;  // active DocsAPI.DocEditor instance
 
 async function openDocEditor(id, title) {
   _docEditorId = id;
+  const modal = document.getElementById('doc-editor-modal');
   const body = document.getElementById('doc-editor-body');
-  document.getElementById('doc-editor-title').textContent = `Edit: ${title || 'Document'}`;
-  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading document\u2026</div>';
-  document.getElementById('doc-editor-modal').classList.remove('hidden');
+  const saveBtn = document.getElementById('doc-editor-save-btn');
+  const modalContent = modal.querySelector('.modal-content');
 
+  document.getElementById('doc-editor-title').textContent = `Edit: ${title || 'Document'}`;
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading editor\u2026</div>';
+  saveBtn.style.display = 'none';
+  modal.classList.remove('hidden');
+
+  // Try ONLYOFFICE first
+  let ooConfig;
+  try {
+    ooConfig = await api(`/api/documents/${id}/onlyoffice-config`);
+  } catch (e) {
+    // ONLYOFFICE not configured or file type unsupported — fall back to simple editor
+    saveBtn.style.display = '';
+    modalContent.classList.remove('doc-editor-fullscreen');
+    await _openSimpleEditor(id, body);
+    return;
+  }
+
+  // ONLYOFFICE is available — switch to full-screen modal
+  modalContent.classList.add('doc-editor-fullscreen');
+  body.innerHTML = '<div id="oo-editor-placeholder" style="width:100%;height:100%"></div>';
+
+  try {
+    await _loadScript(`${ooConfig.serverUrl}/web-apps/apps/api/documents/api.js`);
+    _ooEditor = new DocsAPI.DocEditor('oo-editor-placeholder', {
+      ...ooConfig.editorConfig,
+      events: {
+        onRequestClose() { closeDocEditor(); },
+        onError(e) {
+          showToast('Editor error: ' + (e?.data?.errorDescription || 'unknown error'), 'error');
+        },
+      },
+    });
+  } catch (e) {
+    // ONLYOFFICE script failed to load — fall back to simple editor
+    _ooEditor = null;
+    modalContent.classList.remove('doc-editor-fullscreen');
+    saveBtn.style.display = '';
+    await _openSimpleEditor(id, body);
+  }
+}
+
+function _loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${CSS.escape ? src : src}"]`)) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Failed to load ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+async function _openSimpleEditor(id, body) {
   let data;
   try {
     data = await api(`/api/documents/${id}/edit-content`);
@@ -8523,7 +8577,6 @@ async function openDocEditor(id, title) {
     body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--danger)">Failed to load: ${esc(e.message)}</div>`;
     return;
   }
-
   _docEditorType = data.type;
   if (data.type === 'excel') {
     _docEditorSheets = JSON.parse(JSON.stringify(data.sheets));
@@ -8623,9 +8676,17 @@ function _renderWordEditor(container, html) {
 }
 
 function closeDocEditor() {
-  document.getElementById('doc-editor-modal').classList.add('hidden');
+  if (_ooEditor) {
+    try { _ooEditor.destroyEditor(); } catch {}
+    _ooEditor = null;
+  }
+  const modal = document.getElementById('doc-editor-modal');
+  modal.querySelector('.modal-content').classList.remove('doc-editor-fullscreen');
+  modal.classList.add('hidden');
+  document.getElementById('doc-editor-save-btn').style.display = '';
   _docEditorId = null; _docEditorType = null;
   _docEditorSheets = null; _docEditorSheetNames = null;
+  loadDocumentControl(); // refresh list so updated_at changes reflect
 }
 
 async function saveDocContent() {
