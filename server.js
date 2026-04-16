@@ -302,6 +302,63 @@ async function emitEvent(orgId, caseId, caseType, activity, actor = '', attrs = 
   }
 }
 
+// Webhook delivery – fire-and-forget, never throws into caller
+function fireWebhooks(orgId, event, data) {
+  (async () => {
+    try {
+      const webhooks = await db.prepare(
+        "SELECT * FROM webhooks WHERE organization_id = ? AND status = 'active'"
+      ).all(orgId);
+
+      const matching = webhooks.filter(w => {
+        try { return JSON.parse(w.events || '[]').includes(event); } catch { return false; }
+      });
+      if (!matching.length) return;
+
+      const https = require('https');
+      const http  = require('http');
+      const payloadStr = JSON.stringify({ event, timestamp: new Date().toISOString(), organization_id: orgId, data });
+
+      for (const webhook of matching) {
+        (async () => {
+          try {
+            const url = new URL(webhook.url);
+            const client = url.protocol === 'https:' ? https : http;
+            const headers = {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payloadStr),
+              'User-Agent': 'LetTheFrameWork/1.0',
+            };
+            if (webhook.secret) {
+              headers['X-Webhook-Signature'] = 'sha256=' + crypto.createHmac('sha256', webhook.secret).update(payloadStr).digest('hex');
+            }
+            await new Promise((resolve, reject) => {
+              const req = client.request({
+                hostname: url.hostname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname + url.search,
+                method: 'POST',
+                headers,
+                timeout: 10000,
+              }, (res) => { res.resume(); resolve(res.statusCode); });
+              req.on('error', reject);
+              req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+              req.write(payloadStr);
+              req.end();
+            });
+            await db.prepare("UPDATE webhooks SET last_triggered = NOW() WHERE id = ?").run(webhook.id);
+          } catch (err) {
+            await db.prepare('UPDATE webhooks SET failure_count = failure_count + 1 WHERE id = ?').run(webhook.id);
+            console.warn(`[webhook] delivery failed for "${webhook.name}" (${event}):`, err.message);
+          }
+        })().catch(() => {});
+      }
+    } catch (err) {
+      console.warn('[webhook] fireWebhooks error:', err.message);
+    }
+  })();
+}
+
 // --- Authentication Routes ---
 
 // Check if user is authenticated
@@ -715,6 +772,11 @@ app.post('/api/tasks/:id/complete', requireOrgContext, async (req, res) => {
     req.body.completed_by || '',
     { task_title: task.title, category: task.category, priority: task.priority,
       completion_id: completionResult.lastInsertRowid });
+
+  fireWebhooks(req.orgId, 'task_complete', {
+    id: task.id, title: task.title, category: task.category,
+    priority: task.priority, completed_by: req.body.completed_by || '', next_due: nextDue,
+  });
 
   const updated = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(task.id, req.orgId);
   res.json({ ...updated, completion_id: completionResult.lastInsertRowid });
@@ -1226,6 +1288,14 @@ app.put('/api/audits/:id', requireOrgContext, async (req, res) => {
   params.push(req.params.id);
   await db.prepare(`UPDATE audits SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
 
+  if (req.body.status === 'completed' && existing.status !== 'completed') {
+    const completedAudit = await db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
+    fireWebhooks(req.orgId, 'audit_complete', {
+      id: completedAudit.id, title: completedAudit.title, standard: completedAudit.standard,
+      lead_auditor: completedAudit.lead_auditor, completed_date: completedAudit.completed_date,
+    });
+  }
+
   // Add checklist items from newly selected requirements (skip existing clauses)
   if (req.body.requirement_ids && Array.isArray(req.body.requirement_ids)) {
     const existingClauses = (await db.prepare('SELECT clause FROM audit_checklist WHERE audit_id = ?').all(req.params.id)).map(c => c.clause);
@@ -1564,7 +1634,12 @@ app.post('/api/ncrs', requireOrgContext, async (req, res) => {
     const rating = (severity === 'major') ? 'major_nc' : 'minor_nc';
     await db.prepare('UPDATE audit_checklist SET rating = ? WHERE id = ? AND organization_id = ?').run(rating, checklist_item_id, req.orgId);
   }
-  res.status(201).json(await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(result.lastInsertRowid));
+  const newNcr = await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(result.lastInsertRowid);
+  fireWebhooks(req.orgId, 'ncr_created', {
+    id: newNcr.id, clause: newNcr.clause, description: newNcr.description,
+    severity: newNcr.severity, audit_id: newNcr.audit_id,
+  });
+  res.status(201).json(newNcr);
 });
 
 // Update NC
@@ -1967,7 +2042,14 @@ app.post('/api/risks', requireOrgContext, async (req, res) => {
   const result = await db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, inherent_score, risk_owner, status, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', l, i, inherent_score, risk_owner || '', status || 'identified', req.orgId
   );
-  res.status(201).json(await db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid));
+  const newRisk = await db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid);
+  if (inherent_score >= 15) {
+    fireWebhooks(req.orgId, 'risk_high', {
+      id: newRisk.id, title: newRisk.title, category: newRisk.category,
+      inherent_score, likelihood: l, impact: i, risk_owner: newRisk.risk_owner,
+    });
+  }
+  res.status(201).json(newRisk);
 });
 
 // Update risk
@@ -1991,7 +2073,16 @@ app.put('/api/risks/:id', requireOrgContext, async (req, res) => {
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
   await db.prepare(`UPDATE risks SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
-  res.json(await db.prepare('SELECT * FROM risks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+  const updatedRisk = await db.prepare('SELECT * FROM risks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  // Fire when score just crossed into high territory (was below 15, now ≥ 15)
+  if (updatedRisk.inherent_score >= 15 && existing.inherent_score < 15) {
+    fireWebhooks(req.orgId, 'risk_high', {
+      id: updatedRisk.id, title: updatedRisk.title, category: updatedRisk.category,
+      inherent_score: updatedRisk.inherent_score, likelihood: updatedRisk.likelihood,
+      impact: updatedRisk.impact, risk_owner: updatedRisk.risk_owner,
+    });
+  }
+  res.json(updatedRisk);
 });
 
 // Delete risk
@@ -2407,14 +2498,6 @@ app.delete('/api/kpis/:id/values/:valueId', requireOrgContext, async (req, res) 
   res.json({ success: true });
 });
 
-// Org users listing (for smart user pickers – accessible to any org member)
-app.get('/api/org-users', requireOrgContext, async (req, res) => {
-  const users = await db.prepare(
-    "SELECT id, name, email, role, department FROM users WHERE organization_id = ? AND status = 'active' ORDER BY name"
-  ).all(req.orgId);
-  res.json(users);
-});
-
 // AI Use Cases – Kanban board management
 const UC_FIELDS = [
   'title','description','category','business_domain','ai_approach','risk_tier','human_oversight',
@@ -2474,7 +2557,13 @@ app.post('/api/use-cases', requireOrgContext, async (req, res) => {
   }
   const ph = vals.map(() => '?').join(', ');
   const result = await db.prepare(`INSERT INTO use_cases (${cols.join(', ')}) VALUES (${ph})`).run(...vals);
-  res.status(201).json(await fetchUseCaseWithUsers(db, result.lastInsertRowid));
+  const createdUc = await fetchUseCaseWithUsers(db, result.lastInsertRowid);
+  fireWebhooks(req.orgId, 'usecase_created', {
+    id: createdUc.id, title: createdUc.title, category: createdUc.category,
+    business_domain: createdUc.business_domain, priority: createdUc.priority,
+    owner: createdUc.owner_name || null,
+  });
+  res.status(201).json(createdUc);
 });
 
 app.put('/api/use-cases/:id', requireOrgContext, async (req, res) => {
@@ -2516,7 +2605,14 @@ app.put('/api/use-cases/:id/stage', requireOrgContext, async (req, res) => {
     }
   }
   await db.prepare("UPDATE use_cases SET status = ?, updated_at = NOW() WHERE id = ? AND organization_id = ?").run(targetStage, req.params.id, req.orgId);
-  res.json(await fetchUseCaseWithUsers(db, req.params.id));
+  const movedUc = await fetchUseCaseWithUsers(db, req.params.id);
+  fireWebhooks(req.orgId, 'usecase_stage_changed', {
+    id: movedUc.id, title: movedUc.title, category: movedUc.category,
+    previous_stage: uc.status, new_stage: targetStage,
+    business_domain: movedUc.business_domain, priority: movedUc.priority,
+    owner: movedUc.owner_name || null,
+  });
+  res.json(movedUc);
 });
 
 app.delete('/api/use-cases/:id', requireOrgContext, async (req, res) => {
@@ -2571,8 +2667,79 @@ app.post('/api/use-cases/:id/approvals', requireOrgContext, async (req, res) => 
 });
 
 // Architecture
+// ---------------------------------------------------------------------------
+// Architecture – helpers for ai_usecase single-source-of-truth in use_cases
+// ---------------------------------------------------------------------------
+const UC_STATUS_TO_APPROVAL = { new: 'Not started', assessment: 'Pending', approved: 'Approved', development: 'Approved', production: 'Approved', retired: 'Rejected' };
+const UC_APPROVAL_TO_STATUS = { 'Not started': 'new', 'Pending': 'assessment', 'Approved': 'approved', 'Rejected': 'retired' };
+
+function mapUcToArch(uc) {
+  return {
+    id: uc.id,
+    organization_id: uc.organization_id,
+    arch_type: 'ai_usecase',
+    name: uc.title,
+    description: uc.description || '',
+    owner: uc.owner_name || '',
+    status: uc.status,
+    metadata: JSON.stringify({
+      domain:               uc.business_domain   || '',
+      ai_approach:          uc.ai_approach        || '',
+      risk_tier:            uc.risk_tier          || '',
+      human_oversight:      uc.human_oversight    || '',
+      governance_approval:  UC_STATUS_TO_APPROVAL[uc.status] || 'Not started',
+      incident_reporting:   uc.incident_reporting ? 'Yes' : 'No',
+      approval_date:        uc.approval_date      || '',
+      next_review_date:     uc.next_review_date   || '',
+      business_value:       uc.business_value     || '',
+      success_kpis:         uc.success_kpis       || '',
+      fallback_process:     uc.fallback_process   || '',
+    }),
+    sort_order: uc.sort_order || 0,
+    created_at: uc.created_at,
+    updated_at: uc.updated_at,
+  };
+}
+
+function mapArchBodyToUcFields(body) {
+  const meta = typeof body.metadata === 'string' ? JSON.parse(body.metadata || '{}') : (body.metadata || {});
+  const fields = {
+    title:            body.name,
+    description:      body.description || '',
+    business_domain:  meta.domain         || '',
+    ai_approach:      meta.ai_approach    || '',
+    risk_tier:        meta.risk_tier      || '',
+    human_oversight:  meta.human_oversight || '',
+    incident_reporting: meta.incident_reporting === 'Yes' ? 1 : 0,
+    approval_date:    meta.approval_date    || null,
+    next_review_date: meta.next_review_date || null,
+    business_value:   meta.business_value   || '',
+    success_kpis:     meta.success_kpis     || '',
+    fallback_process: meta.fallback_process || '',
+  };
+  if (meta.governance_approval && UC_APPROVAL_TO_STATUS[meta.governance_approval]) {
+    fields.status = UC_APPROVAL_TO_STATUS[meta.governance_approval];
+  }
+  return fields;
+}
+
+// ---------------------------------------------------------------------------
+
 app.get('/api/architecture', requireOrgContext, async (req, res) => {
   const { arch_type } = req.query;
+
+  // ai_usecase items are stored in use_cases (single source of truth)
+  if (arch_type === 'ai_usecase') {
+    const cases = await db.prepare(`
+      SELECT uc.*, u.name AS owner_name
+      FROM use_cases uc
+      LEFT JOIN users u ON uc.owner_id = u.id
+      WHERE uc.organization_id = ?
+      ORDER BY uc.sort_order, uc.title
+    `).all(req.orgId);
+    return res.json(cases.map(mapUcToArch));
+  }
+
   let sql = 'SELECT * FROM org_architecture WHERE organization_id = ?';
   const params = [req.orgId];
   if (arch_type) { sql += ' AND arch_type = ?'; params.push(arch_type); }
@@ -2583,6 +2750,18 @@ app.get('/api/architecture', requireOrgContext, async (req, res) => {
 app.post('/api/architecture', requireOrgContext, async (req, res) => {
   const { arch_type, name, description, parent_id, owner, status, metadata } = req.body;
   if (!arch_type || !name) return res.status(400).json({ error: 'arch_type and name are required' });
+
+  // ai_usecase items are created in use_cases table
+  if (arch_type === 'ai_usecase') {
+    const fields = mapArchBodyToUcFields(req.body);
+    const cols = ['organization_id', ...Object.keys(fields)];
+    const vals = [req.orgId, ...Object.values(fields)];
+    const ph   = vals.map(() => '?').join(', ');
+    const result = await db.prepare(`INSERT INTO use_cases (${cols.join(', ')}) VALUES (${ph})`).run(...vals);
+    const uc = await fetchUseCaseWithUsers(db, result.lastInsertRowid);
+    return res.status(201).json(mapUcToArch(uc));
+  }
+
   const result = await db.prepare('INSERT INTO org_architecture (organization_id, arch_type, name, description, parent_id, owner, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
     req.orgId, arch_type, name, description || '', parent_id || null, owner || '', status || 'active', metadata || '{}'
   );
@@ -2590,6 +2769,18 @@ app.post('/api/architecture', requireOrgContext, async (req, res) => {
 });
 
 app.put('/api/architecture/:id', requireOrgContext, async (req, res) => {
+  // ai_usecase items are updated in use_cases table
+  if (req.body.arch_type === 'ai_usecase') {
+    const uc = await db.prepare('SELECT id FROM use_cases WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+    if (!uc) return res.status(404).json({ error: 'Use case not found' });
+    const fields = mapArchBodyToUcFields(req.body);
+    const setClauses = Object.keys(fields).map(k => `${k} = ?`).concat('updated_at = NOW()');
+    const vals = [...Object.values(fields), req.params.id, req.orgId];
+    await db.prepare(`UPDATE use_cases SET ${setClauses.join(', ')} WHERE id = ? AND organization_id = ?`).run(...vals);
+    const updated = await fetchUseCaseWithUsers(db, req.params.id);
+    return res.json(mapUcToArch(updated));
+  }
+
   // Improvement 2: snapshot current state before overwriting (architecture version history)
   const current = await db.prepare('SELECT * FROM org_architecture WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!current) return res.status(404).json({ error: 'Architecture element not found' });
@@ -2635,14 +2826,18 @@ app.get('/api/architecture/:id/versions', requireOrgContext, async (req, res) =>
 });
 
 app.delete('/api/architecture/:id', requireOrgContext, async (req, res) => {
-  await db.prepare('DELETE FROM org_architecture WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
+  // Try org_architecture first; if nothing deleted, try use_cases (ai_usecase items live there)
+  const archResult = await db.prepare('DELETE FROM org_architecture WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
+  if (!archResult.changes) {
+    await db.prepare('DELETE FROM use_cases WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
+  }
   res.json({ success: true });
 });
 
-// Org users list – accessible to all authenticated org members (for role assignment picker)
+// Org users list – accessible to all authenticated org members (user pickers, role assignment)
 app.get('/api/org-users', requireOrgContext, async (req, res) => {
   const users = await db.prepare(
-    "SELECT id, name, email, department FROM users WHERE organization_id = ? AND status = 'active' AND role != 'superadmin' ORDER BY name"
+    "SELECT id, name, email, role, department FROM users WHERE organization_id = ? AND status = 'active' AND role != 'superadmin' ORDER BY name"
   ).all(req.orgId);
   res.json(users);
 });
@@ -2789,7 +2984,14 @@ app.put('/api/documents/:id', requireOrgContext, upload.single('file'), async (r
     classification !== undefined ? classification : (existing.classification || ''),
     req.params.id
   );
-  res.json(await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id));
+  const updatedDoc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (status === 'approved' && existing.status !== 'approved') {
+    fireWebhooks(req.orgId, 'doc_approved', {
+      id: updatedDoc.id, title: updatedDoc.title, doc_type: updatedDoc.doc_type,
+      version: updatedDoc.version, owner: updatedDoc.owner,
+    });
+  }
+  res.json(updatedDoc);
 });
 
 app.delete('/api/documents/:id', requireOrgContext, async (req, res) => {
@@ -2844,7 +3046,7 @@ const entityResolvers = {
   usecase: async (id) => await db.get('SELECT id, title as name FROM use_cases WHERE id = ?', id),
   ai_model:   async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_model'", id),
   ai_dataset: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_dataset'", id),
-  ai_usecase: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_usecase'", id),
+  ai_usecase: async (id) => await db.get('SELECT id, title as name FROM use_cases WHERE id = ?', id),
 };
 
 // Bulk cross-links: fetch all cross-links for multiple items of the same type in one shot.
@@ -2898,8 +3100,9 @@ app.get('/api/cross-links/batch/:type', requireOrgContext, async (req, res) => {
       .map(n => ({ id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` }));
     else if (eType === 'treatment') rows = (await db.prepare(`SELECT id, description FROM risk_treatments WHERE id IN (${eph})`).all(...idArr))
       .map(t => ({ id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` }));
-    else if (['role','process','system','asset','facility','ai_model','ai_dataset','ai_usecase'].includes(eType))
+    else if (['role','process','system','asset','facility','ai_model','ai_dataset'].includes(eType))
       rows = await db.prepare(`SELECT id, name FROM org_architecture WHERE arch_type = ? AND id IN (${eph})`).all(eType, ...idArr);
+    else if (eType === 'ai_usecase') rows = await db.prepare(`SELECT id, title as name FROM use_cases WHERE id IN (${eph})`).all(...idArr);
     else if (eType === 'usecase') rows = await db.prepare(`SELECT id, title as name FROM use_cases WHERE id IN (${eph})`).all(...idArr);
     for (const r of rows) nameCache[`${eType}:${r.id}`] = r.name;
   }
@@ -2991,7 +3194,7 @@ app.get('/api/linkable/:type', requireOrgContext, async (req, res) => {
   else if (type === 'usecase') items = await db.prepare('SELECT id, title as name FROM use_cases WHERE organization_id = ? ORDER BY title').all(oid);
   else if (type === 'ai_model')   items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_model' ORDER BY name").all(oid);
   else if (type === 'ai_dataset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_dataset' ORDER BY name").all(oid);
-  else if (type === 'ai_usecase') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_usecase' ORDER BY name").all(oid);
+  else if (type === 'ai_usecase') items = await db.prepare('SELECT id, title as name FROM use_cases WHERE organization_id = ? ORDER BY title').all(oid);
   res.json(items);
 });
 
@@ -3603,9 +3806,13 @@ app.post('/api/admin/webhooks/:id/test', requireAdmin, async (req, res) => {
   const testPayload = {
     event: 'test',
     timestamp: new Date().toISOString(),
-    message: 'This is a test webhook from Let The Frame Work',
-    webhook_id: webhook.id,
-    webhook_name: webhook.name
+    organization_id: req.orgId,
+    data: {
+      message: 'This is a test webhook from Let The Frame Work',
+      webhook_id: webhook.id,
+      webhook_name: webhook.name,
+      configured_events: (() => { try { return JSON.parse(webhook.events || '[]'); } catch { return []; } })(),
+    },
   };
 
   try {
@@ -3615,18 +3822,21 @@ app.post('/api/admin/webhooks/:id/test', requireAdmin, async (req, res) => {
     const client = url.protocol === 'https:' ? https : http;
 
     const payload = JSON.stringify(testPayload);
+    const headers = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+      'User-Agent': 'LetTheFrameWork/1.0',
+    };
+    if (webhook.secret) {
+      headers['X-Webhook-Signature'] = 'sha256=' + crypto.createHmac('sha256', webhook.secret).update(payload).digest('hex');
+    }
     const options = {
       hostname: url.hostname,
       port: url.port || (url.protocol === 'https:' ? 443 : 80),
       path: url.pathname + url.search,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload),
-        'User-Agent': 'LetTheFrameWork/1.0',
-        ...(webhook.secret ? { 'X-Webhook-Secret': webhook.secret } : {})
-      },
-      timeout: 10000
+      headers,
+      timeout: 10000,
     };
 
     const result = await new Promise((resolve, reject) => {
