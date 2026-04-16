@@ -225,7 +225,7 @@ const POSTGRES_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS org_architecture (
     id SERIAL PRIMARY KEY,
     organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    arch_type TEXT NOT NULL CHECK(arch_type IN ('role','process','system','asset','facility')),
+    arch_type TEXT NOT NULL CHECK(arch_type IN ('role','process','system','asset','facility','ai_model','ai_dataset','ai_usecase')),
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     parent_id INTEGER DEFAULT NULL,
@@ -628,6 +628,13 @@ const POSTGRES_SCHEMA_SQL = `
   -- threat items: per-feed lookups
   CREATE INDEX IF NOT EXISTS idx_threat_items_feed_id ON threat_items (feed_id);
   CREATE INDEX IF NOT EXISTS idx_threat_items_status  ON threat_items (feed_id, status);
+
+  -- =========================================================================
+  -- AI Governance: extend arch_type to include ai_model, ai_dataset, ai_usecase
+  -- =========================================================================
+  ALTER TABLE org_architecture DROP CONSTRAINT IF EXISTS org_architecture_arch_type_check;
+  ALTER TABLE org_architecture ADD CONSTRAINT org_architecture_arch_type_check
+    CHECK (arch_type IN ('role','process','system','asset','facility','ai_model','ai_dataset','ai_usecase'));
 `;
 
 // Default threat feeds to seed per organization
