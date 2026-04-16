@@ -658,7 +658,9 @@ async function renderCrossLinks(entityType, entityId, containerId) {
 }
 
 function getViewForType(type, id) {
-  const archTypes = ['role','process','system','asset','facility','ai_model','ai_dataset','ai_usecase'];
+  // ai_usecase items live in the Kanban board, not the Architecture view
+  if (type === 'ai_usecase') return `openUseCaseModal(${id})`;
+  const archTypes = ['role','process','system','asset','facility','ai_model','ai_dataset'];
   if (archTypes.includes(type)) {
     return `currentArchTab='${type}';switchView('architecture')`;
   }
@@ -5634,11 +5636,12 @@ let ucDragId = null;
 function ucApplyFilter() { renderUseCaseBoard(); }
 
 async function loadUseCases() {
-  [ucAllUsecases, ucUsersCache] = await Promise.all([
+  const [cases, users] = await Promise.all([
     api('/api/use-cases'),
-    ucUsersCache || api('/api/org-users'),
+    ucUsersCache ? Promise.resolve(ucUsersCache) : api('/api/org-users'),
   ]);
-  if (!ucUsersCache) ucUsersCache = await api('/api/org-users');
+  ucAllUsecases = cases;
+  ucUsersCache = users;
   renderUseCaseBoard();
 }
 
@@ -6444,6 +6447,9 @@ function switchArchTab(type) {
     if (type === 'supplier') {
       addBtn.textContent = '+ Add Supplier';
       addBtn.setAttribute('onclick', 'openSupplierModal()');
+    } else if (type === 'ai_usecase') {
+      addBtn.textContent = '+ New AI Use Case';
+      addBtn.setAttribute('onclick', "switchView('use-cases');setTimeout(()=>openUseCaseModal(),200)");
     } else {
       addBtn.textContent = '+ Add Item';
       addBtn.setAttribute('onclick', 'openArchModal()');
@@ -7285,27 +7291,46 @@ function buildArchTableRow(item, meta, links, archType) {
     `).join('');
   }
 
-  const isProcess = archType === 'process';
+  const isProcess  = archType === 'process';
+  const isUseCase  = archType === 'ai_usecase';
   const kpiPanelId = `proc-kpi-panel-${item.id}`;
+
+  // ai_usecase items are managed in the Kanban board; clicking opens the Kanban modal
+  const nameClickHandler = isUseCase
+    ? `openUseCaseModal(${item.id})`
+    : `openArchModal(${item.id})`;
+
+  // Stage badge for ai_usecase items
+  const ucStageColors = { new:'#6b7280', assessment:'#f59e0b', approved:'#3b82f6', development:'#8b5cf6', production:'#10b981', retired:'#94a3b8' };
+  const ucStageLabels = { new:'New', assessment:'Under Assessment', approved:'Approved', development:'In Development', production:'In Production', retired:'Retired' };
+  const statusCell = isUseCase
+    ? (() => { const c = ucStageColors[item.status]||'#6b7280'; const l = ucStageLabels[item.status]||item.status; return `<span class="badge" style="background:${c}18;color:${c};border:1px solid ${c}40;font-size:11px">${l}</span>`; })()
+    : `<span class="badge ${stBadge}">${item.status}</span>`;
 
   return `<div class="arch-table-row-wrap">
     <div class="arch-table-row">
-      <div class="arch-col-name" onclick="openArchModal(${item.id})" style="cursor:pointer">
+      <div class="arch-col-name" onclick="${nameClickHandler}" style="cursor:pointer">
         <span class="arch-name" style="color:var(--primary)">${esc(item.name)}</span>
         ${archType === 'role' && item.description ? `<span class="arch-desc">${esc(item.description)}</span>` : ''}
         ${isProcess ? `<div class="proc-row-toggles" onclick="event.stopPropagation()">
           <span class="arch-link-toggle" onclick="toggleProcessKpiPanel(${item.id})">KPIs &amp; Objectives <span class="arch-link-arrow" id="proc-kpi-arrow-${item.id}">&#9660;</span></span>
           <span class="arch-link-toggle" onclick="toggleProcessFlowchartPanel(${item.id})">Flowchart <span class="arch-link-arrow" id="proc-flowchart-arrow-${item.id}">&#9660;</span></span>
         </div>` : ''}
+        ${isUseCase ? `<span style="font-size:10px;color:var(--text-muted)">&#8599; Managed in Kanban</span>` : ''}
       </div>
       <div class="arch-col-detail">${detailCol}</div>
       <div class="arch-col-detail"><span style="font-size:12px">${item.owner ? esc(item.owner) : '-'}</span></div>
-      <div class="arch-col-detail"><span class="badge ${stBadge}">${item.status}</span></div>
+      <div class="arch-col-detail">${statusCell}</div>
       <div class="arch-col-detail arch-col-links">
         ${linkCount > 0 ? `<span class="arch-link-toggle" onclick="toggleArchLinks('${linksDetailId}')">${linkCount} link${linkCount !== 1 ? 's' : ''} <span class="arch-link-arrow" id="${linksDetailId}-arrow">&#9660;</span></span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
       </div>
       <div class="arch-col-actions">
-        ${actionMenu([
+        ${isUseCase ? actionMenu([
+          { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('ai_usecase',${item.id},'arch-expand-${item.id}')` },
+          { label: '&#127919; Open in Kanban', onclick: `openUseCaseModal(${item.id})` },
+          'sep',
+          { label: '&#128465; Delete', onclick: `deleteArch(${item.id})`, cls: 'danger' },
+        ]) : actionMenu([
           { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('${archType}',${item.id},'arch-expand-${item.id}')` },
           { label: '&#9998; Edit', onclick: `openArchModal(${item.id})` },
           'sep',

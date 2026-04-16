@@ -2407,14 +2407,6 @@ app.delete('/api/kpis/:id/values/:valueId', requireOrgContext, async (req, res) 
   res.json({ success: true });
 });
 
-// Org users listing (for smart user pickers – accessible to any org member)
-app.get('/api/org-users', requireOrgContext, async (req, res) => {
-  const users = await db.prepare(
-    "SELECT id, name, email, role, department FROM users WHERE organization_id = ? AND status = 'active' ORDER BY name"
-  ).all(req.orgId);
-  res.json(users);
-});
-
 // AI Use Cases – Kanban board management
 const UC_FIELDS = [
   'title','description','category','business_domain','ai_approach','risk_tier','human_oversight',
@@ -2571,8 +2563,79 @@ app.post('/api/use-cases/:id/approvals', requireOrgContext, async (req, res) => 
 });
 
 // Architecture
+// ---------------------------------------------------------------------------
+// Architecture – helpers for ai_usecase single-source-of-truth in use_cases
+// ---------------------------------------------------------------------------
+const UC_STATUS_TO_APPROVAL = { new: 'Not started', assessment: 'Pending', approved: 'Approved', development: 'Approved', production: 'Approved', retired: 'Rejected' };
+const UC_APPROVAL_TO_STATUS = { 'Not started': 'new', 'Pending': 'assessment', 'Approved': 'approved', 'Rejected': 'retired' };
+
+function mapUcToArch(uc) {
+  return {
+    id: uc.id,
+    organization_id: uc.organization_id,
+    arch_type: 'ai_usecase',
+    name: uc.title,
+    description: uc.description || '',
+    owner: uc.owner_name || '',
+    status: uc.status,
+    metadata: JSON.stringify({
+      domain:               uc.business_domain   || '',
+      ai_approach:          uc.ai_approach        || '',
+      risk_tier:            uc.risk_tier          || '',
+      human_oversight:      uc.human_oversight    || '',
+      governance_approval:  UC_STATUS_TO_APPROVAL[uc.status] || 'Not started',
+      incident_reporting:   uc.incident_reporting ? 'Yes' : 'No',
+      approval_date:        uc.approval_date      || '',
+      next_review_date:     uc.next_review_date   || '',
+      business_value:       uc.business_value     || '',
+      success_kpis:         uc.success_kpis       || '',
+      fallback_process:     uc.fallback_process   || '',
+    }),
+    sort_order: uc.sort_order || 0,
+    created_at: uc.created_at,
+    updated_at: uc.updated_at,
+  };
+}
+
+function mapArchBodyToUcFields(body) {
+  const meta = typeof body.metadata === 'string' ? JSON.parse(body.metadata || '{}') : (body.metadata || {});
+  const fields = {
+    title:            body.name,
+    description:      body.description || '',
+    business_domain:  meta.domain         || '',
+    ai_approach:      meta.ai_approach    || '',
+    risk_tier:        meta.risk_tier      || '',
+    human_oversight:  meta.human_oversight || '',
+    incident_reporting: meta.incident_reporting === 'Yes' ? 1 : 0,
+    approval_date:    meta.approval_date    || null,
+    next_review_date: meta.next_review_date || null,
+    business_value:   meta.business_value   || '',
+    success_kpis:     meta.success_kpis     || '',
+    fallback_process: meta.fallback_process || '',
+  };
+  if (meta.governance_approval && UC_APPROVAL_TO_STATUS[meta.governance_approval]) {
+    fields.status = UC_APPROVAL_TO_STATUS[meta.governance_approval];
+  }
+  return fields;
+}
+
+// ---------------------------------------------------------------------------
+
 app.get('/api/architecture', requireOrgContext, async (req, res) => {
   const { arch_type } = req.query;
+
+  // ai_usecase items are stored in use_cases (single source of truth)
+  if (arch_type === 'ai_usecase') {
+    const cases = await db.prepare(`
+      SELECT uc.*, u.name AS owner_name
+      FROM use_cases uc
+      LEFT JOIN users u ON uc.owner_id = u.id
+      WHERE uc.organization_id = ?
+      ORDER BY uc.sort_order, uc.title
+    `).all(req.orgId);
+    return res.json(cases.map(mapUcToArch));
+  }
+
   let sql = 'SELECT * FROM org_architecture WHERE organization_id = ?';
   const params = [req.orgId];
   if (arch_type) { sql += ' AND arch_type = ?'; params.push(arch_type); }
@@ -2583,6 +2646,18 @@ app.get('/api/architecture', requireOrgContext, async (req, res) => {
 app.post('/api/architecture', requireOrgContext, async (req, res) => {
   const { arch_type, name, description, parent_id, owner, status, metadata } = req.body;
   if (!arch_type || !name) return res.status(400).json({ error: 'arch_type and name are required' });
+
+  // ai_usecase items are created in use_cases table
+  if (arch_type === 'ai_usecase') {
+    const fields = mapArchBodyToUcFields(req.body);
+    const cols = ['organization_id', ...Object.keys(fields)];
+    const vals = [req.orgId, ...Object.values(fields)];
+    const ph   = vals.map(() => '?').join(', ');
+    const result = await db.prepare(`INSERT INTO use_cases (${cols.join(', ')}) VALUES (${ph})`).run(...vals);
+    const uc = await fetchUseCaseWithUsers(db, result.lastInsertRowid);
+    return res.status(201).json(mapUcToArch(uc));
+  }
+
   const result = await db.prepare('INSERT INTO org_architecture (organization_id, arch_type, name, description, parent_id, owner, status, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
     req.orgId, arch_type, name, description || '', parent_id || null, owner || '', status || 'active', metadata || '{}'
   );
@@ -2590,6 +2665,18 @@ app.post('/api/architecture', requireOrgContext, async (req, res) => {
 });
 
 app.put('/api/architecture/:id', requireOrgContext, async (req, res) => {
+  // ai_usecase items are updated in use_cases table
+  if (req.body.arch_type === 'ai_usecase') {
+    const uc = await db.prepare('SELECT id FROM use_cases WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+    if (!uc) return res.status(404).json({ error: 'Use case not found' });
+    const fields = mapArchBodyToUcFields(req.body);
+    const setClauses = Object.keys(fields).map(k => `${k} = ?`).concat('updated_at = NOW()');
+    const vals = [...Object.values(fields), req.params.id, req.orgId];
+    await db.prepare(`UPDATE use_cases SET ${setClauses.join(', ')} WHERE id = ? AND organization_id = ?`).run(...vals);
+    const updated = await fetchUseCaseWithUsers(db, req.params.id);
+    return res.json(mapUcToArch(updated));
+  }
+
   // Improvement 2: snapshot current state before overwriting (architecture version history)
   const current = await db.prepare('SELECT * FROM org_architecture WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!current) return res.status(404).json({ error: 'Architecture element not found' });
@@ -2635,14 +2722,18 @@ app.get('/api/architecture/:id/versions', requireOrgContext, async (req, res) =>
 });
 
 app.delete('/api/architecture/:id', requireOrgContext, async (req, res) => {
-  await db.prepare('DELETE FROM org_architecture WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
+  // Try org_architecture first; if nothing deleted, try use_cases (ai_usecase items live there)
+  const archResult = await db.prepare('DELETE FROM org_architecture WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
+  if (!archResult.changes) {
+    await db.prepare('DELETE FROM use_cases WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
+  }
   res.json({ success: true });
 });
 
-// Org users list – accessible to all authenticated org members (for role assignment picker)
+// Org users list – accessible to all authenticated org members (user pickers, role assignment)
 app.get('/api/org-users', requireOrgContext, async (req, res) => {
   const users = await db.prepare(
-    "SELECT id, name, email, department FROM users WHERE organization_id = ? AND status = 'active' AND role != 'superadmin' ORDER BY name"
+    "SELECT id, name, email, role, department FROM users WHERE organization_id = ? AND status = 'active' AND role != 'superadmin' ORDER BY name"
   ).all(req.orgId);
   res.json(users);
 });
@@ -2844,7 +2935,7 @@ const entityResolvers = {
   usecase: async (id) => await db.get('SELECT id, title as name FROM use_cases WHERE id = ?', id),
   ai_model:   async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_model'", id),
   ai_dataset: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_dataset'", id),
-  ai_usecase: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_usecase'", id),
+  ai_usecase: async (id) => await db.get('SELECT id, title as name FROM use_cases WHERE id = ?', id),
 };
 
 // Bulk cross-links: fetch all cross-links for multiple items of the same type in one shot.
@@ -2898,8 +2989,9 @@ app.get('/api/cross-links/batch/:type', requireOrgContext, async (req, res) => {
       .map(n => ({ id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` }));
     else if (eType === 'treatment') rows = (await db.prepare(`SELECT id, description FROM risk_treatments WHERE id IN (${eph})`).all(...idArr))
       .map(t => ({ id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` }));
-    else if (['role','process','system','asset','facility','ai_model','ai_dataset','ai_usecase'].includes(eType))
+    else if (['role','process','system','asset','facility','ai_model','ai_dataset'].includes(eType))
       rows = await db.prepare(`SELECT id, name FROM org_architecture WHERE arch_type = ? AND id IN (${eph})`).all(eType, ...idArr);
+    else if (eType === 'ai_usecase') rows = await db.prepare(`SELECT id, title as name FROM use_cases WHERE id IN (${eph})`).all(...idArr);
     else if (eType === 'usecase') rows = await db.prepare(`SELECT id, title as name FROM use_cases WHERE id IN (${eph})`).all(...idArr);
     for (const r of rows) nameCache[`${eType}:${r.id}`] = r.name;
   }
@@ -2991,7 +3083,7 @@ app.get('/api/linkable/:type', requireOrgContext, async (req, res) => {
   else if (type === 'usecase') items = await db.prepare('SELECT id, title as name FROM use_cases WHERE organization_id = ? ORDER BY title').all(oid);
   else if (type === 'ai_model')   items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_model' ORDER BY name").all(oid);
   else if (type === 'ai_dataset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_dataset' ORDER BY name").all(oid);
-  else if (type === 'ai_usecase') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_usecase' ORDER BY name").all(oid);
+  else if (type === 'ai_usecase') items = await db.prepare('SELECT id, title as name FROM use_cases WHERE organization_id = ? ORDER BY title').all(oid);
   res.json(items);
 });
 
