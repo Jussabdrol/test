@@ -8304,8 +8304,9 @@ async function loadDocumentControl() {
         <div class="doc-col-actions">
           ${actionMenu([
             ...(d.file_name ? [{ label: '&#128229; Download', onclick: `downloadDoc(${d.id})` }] : []),
+            ...(/\.(docx?|xlsx?)$/i.test(d.file_name || '') ? [{ label: '&#9998;&#65039; Edit in Browser', onclick: `openDocEditor(${d.id},${JSON.stringify(d.title)})` }] : []),
             { label: '&#128279; Link Items', onclick: `openCrossLinkPicker('document',${d.id},'doc-expand-${d.id}')` },
-            { label: '&#9998; Edit', onclick: `openDocModal(${d.id})` },
+            { label: '&#9998; Edit Metadata', onclick: `openDocModal(${d.id})` },
             'sep',
             { label: '&#128465; Delete', onclick: `deleteDoc(${d.id})`, cls: 'danger' },
           ])}
@@ -8499,6 +8500,157 @@ async function deleteDoc(id) {
 
 function downloadDoc(id) {
   window.open(`/api/documents/${id}/download`, '_blank');
+}
+
+// --- Document In-Browser Editor ---
+let _docEditorId = null;
+let _docEditorType = null;
+let _docEditorSheets = null;
+let _docEditorSheetNames = null;
+let _docEditorActiveSheet = null;
+
+async function openDocEditor(id, title) {
+  _docEditorId = id;
+  const body = document.getElementById('doc-editor-body');
+  document.getElementById('doc-editor-title').textContent = `Edit: ${title || 'Document'}`;
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading document\u2026</div>';
+  document.getElementById('doc-editor-modal').classList.remove('hidden');
+
+  let data;
+  try {
+    data = await api(`/api/documents/${id}/edit-content`);
+  } catch (e) {
+    body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--danger)">Failed to load: ${esc(e.message)}</div>`;
+    return;
+  }
+
+  _docEditorType = data.type;
+  if (data.type === 'excel') {
+    _docEditorSheets = JSON.parse(JSON.stringify(data.sheets));
+    _docEditorSheetNames = data.sheetNames;
+    _docEditorActiveSheet = data.sheetNames[0];
+    _renderExcelEditor(body);
+  } else {
+    _renderWordEditor(body, data.html);
+  }
+}
+
+function _renderExcelEditor(container) {
+  const tabs = _docEditorSheetNames.map(n =>
+    `<button class="doc-sheet-tab${n === _docEditorActiveSheet ? ' active' : ''}" onclick="_switchDocSheet('${n.replace(/'/g,"\\'")}');event.preventDefault()">${esc(n)}</button>`
+  ).join('');
+
+  const rows = (_docEditorSheets[_docEditorActiveSheet] || []);
+  const maxCols = Math.max(10, rows.reduce((m, r) => Math.max(m, (r || []).length), 0));
+
+  let tHead = '<thead><tr><th></th>';
+  for (let c = 0; c < maxCols + 1; c++) {
+    tHead += `<th>${String.fromCharCode(65 + (c % 26))}</th>`;
+  }
+  tHead += '</tr></thead>';
+
+  let tBody = '<tbody>';
+  const displayRows = Math.max(rows.length + 3, 20);
+  for (let r = 0; r < displayRows; r++) {
+    tBody += `<tr><th>${r + 1}</th>`;
+    for (let c = 0; c < maxCols + 1; c++) {
+      const val = rows[r] ? (rows[r][c] !== undefined ? rows[r][c] : '') : '';
+      tBody += `<td contenteditable="true" spellcheck="false" data-row="${r}" data-col="${c}" onblur="_updateDocCell(this)" onkeydown="_docCellKeydown(event,${r},${c})">${esc(String(val))}</td>`;
+    }
+    tBody += '</tr>';
+  }
+  tBody += '</tbody>';
+
+  container.innerHTML = `
+    <div class="doc-sheet-tabs">${tabs}</div>
+    <div class="doc-excel-wrapper">
+      <table class="doc-excel-table">${tHead}${tBody}</table>
+    </div>
+    <p class="doc-editor-hint">Click any cell to edit. Tab / Enter to navigate.</p>`;
+}
+
+function _switchDocSheet(name) {
+  _docEditorActiveSheet = name;
+  _renderExcelEditor(document.getElementById('doc-editor-body'));
+}
+
+function _updateDocCell(td) {
+  const r = parseInt(td.dataset.row), c = parseInt(td.dataset.col);
+  const val = td.textContent;
+  const sheet = _docEditorSheets[_docEditorActiveSheet];
+  while (sheet.length <= r) sheet.push([]);
+  while (sheet[r].length <= c) sheet[r].push('');
+  sheet[r][c] = val;
+}
+
+function _docCellKeydown(e, r, c) {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const next = document.querySelector(`[data-row="${r}"][data-col="${c + 1}"]`);
+    if (next) next.focus();
+  } else if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    const next = document.querySelector(`[data-row="${r + 1}"][data-col="${c}"]`);
+    if (next) next.focus();
+  }
+}
+
+function _renderWordEditor(container, html) {
+  container.innerHTML = `
+    <div class="doc-word-toolbar">
+      <button type="button" class="doc-tb-btn" onclick="document.execCommand('bold')" title="Bold"><strong>B</strong></button>
+      <button type="button" class="doc-tb-btn" onclick="document.execCommand('italic')" title="Italic"><em>I</em></button>
+      <button type="button" class="doc-tb-btn" onclick="document.execCommand('underline')" title="Underline"><u>U</u></button>
+      <span class="doc-tb-sep"></span>
+      <button type="button" class="doc-tb-btn" onclick="document.execCommand('insertUnorderedList')" title="Bullet list">&bull;</button>
+      <button type="button" class="doc-tb-btn" onclick="document.execCommand('insertOrderedList')" title="Numbered list">1.</button>
+      <span class="doc-tb-sep"></span>
+      <select class="doc-tb-select" onchange="document.execCommand('formatBlock',false,this.value);this.value='';document.getElementById('doc-word-content').focus()">
+        <option value="">Paragraph style</option>
+        <option value="h1">Heading 1</option>
+        <option value="h2">Heading 2</option>
+        <option value="h3">Heading 3</option>
+        <option value="p">Paragraph</option>
+      </select>
+      <span class="doc-tb-sep"></span>
+      <button type="button" class="doc-tb-btn" onclick="document.execCommand('justifyLeft')" title="Align left">&#8676;</button>
+      <button type="button" class="doc-tb-btn" onclick="document.execCommand('justifyCenter')" title="Center">&#8596;</button>
+      <button type="button" class="doc-tb-btn" onclick="document.execCommand('justifyRight')" title="Align right">&#8677;</button>
+    </div>
+    <div id="doc-word-content" class="doc-word-content" contenteditable="true">${html}</div>
+    <p class="doc-editor-hint">Formatting is approximate — complex Word styles may simplify on save.</p>`;
+  document.getElementById('doc-word-content').focus();
+}
+
+function closeDocEditor() {
+  document.getElementById('doc-editor-modal').classList.add('hidden');
+  _docEditorId = null; _docEditorType = null;
+  _docEditorSheets = null; _docEditorSheetNames = null;
+}
+
+async function saveDocContent() {
+  const btn = document.getElementById('doc-editor-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving\u2026';
+  try {
+    let payload;
+    if (_docEditorType === 'excel') {
+      // Sync any active cell before saving
+      const activeCells = document.querySelectorAll('#doc-editor-body [contenteditable]');
+      activeCells.forEach(td => _updateDocCell(td));
+      payload = { type: 'excel', content: { sheets: _docEditorSheets } };
+    } else {
+      payload = { type: 'word', content: { html: document.getElementById('doc-word-content').innerHTML } };
+    }
+    await api(`/api/documents/${_docEditorId}/save-content`, { method: 'PUT', body: payload });
+    showToast('Document saved successfully', 'success');
+    closeDocEditor();
+  } catch (e) {
+    showToast('Save failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
+  }
 }
 
 // --- User Widget Dropdown ---

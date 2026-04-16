@@ -1,5 +1,7 @@
 // Patch Express to forward async errors to the error handler automatically (must be first)
 require('express-async-errors');
+const mammoth = require('mammoth');
+const HTMLtoDOCX = require('html-to-docx');
 
 const express = require('express');
 const path = require('path');
@@ -3024,6 +3026,73 @@ app.get('/api/documents/:id/download', requireOrgContext, async (req, res) => {
   } catch (err) {
     res.status(404).json({ error: 'File not found in storage' });
   }
+});
+
+// GET /api/documents/:id/edit-content — download file from storage and return editable content
+app.get('/api/documents/:id/edit-content', requireOrgContext, async (req, res) => {
+  const doc = await db.prepare('SELECT * FROM documents WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!doc) return res.status(404).json({ error: 'Document not found' });
+  if (!doc.file_path) return res.status(400).json({ error: 'No file attached to this document' });
+
+  const ext = (doc.file_name || '').split('.').pop().toLowerCase();
+  if (!['docx', 'doc', 'xlsx', 'xls'].includes(ext)) {
+    return res.status(400).json({ error: 'Only Word (.docx) and Excel (.xlsx) files can be edited in the browser' });
+  }
+
+  if (!storageClient) return res.status(503).json({ error: 'Storage not configured' });
+  const { data: blob, error: dlErr } = await storageClient.storage.from(UPLOADS_BUCKET).download(doc.file_path);
+  if (dlErr) return res.status(500).json({ error: 'Failed to retrieve file from storage' });
+
+  const buffer = Buffer.from(await blob.arrayBuffer());
+
+  if (['xlsx', 'xls'].includes(ext)) {
+    const wb = XLSX.read(buffer, { type: 'buffer' });
+    const sheets = {};
+    for (const name of wb.SheetNames) {
+      sheets[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
+    }
+    return res.json({ type: 'excel', sheetNames: wb.SheetNames, sheets });
+  }
+
+  // Word
+  const { value: html } = await mammoth.convertToHtml({ buffer });
+  res.json({ type: 'word', html });
+});
+
+// PUT /api/documents/:id/save-content — save edited content back to storage
+app.put('/api/documents/:id/save-content', requireOrgContext, async (req, res) => {
+  const doc = await db.prepare('SELECT * FROM documents WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!doc) return res.status(404).json({ error: 'Document not found' });
+  if (!doc.file_path) return res.status(400).json({ error: 'No file path on record' });
+
+  const { type, content } = req.body;
+  if (!type || !content) return res.status(400).json({ error: 'Missing type or content' });
+
+  let fileBuffer, mimeType;
+
+  if (type === 'excel') {
+    const wb = XLSX.utils.book_new();
+    for (const [name, rows] of Object.entries(content.sheets || {})) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
+    }
+    fileBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  } else if (type === 'word') {
+    const docxBuffer = await HTMLtoDOCX(content.html || '', null, { table: { row: { cantSplit: true } } });
+    fileBuffer = Buffer.isBuffer(docxBuffer) ? docxBuffer : Buffer.from(docxBuffer);
+    mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  } else {
+    return res.status(400).json({ error: 'Unsupported content type' });
+  }
+
+  if (!storageClient) return res.status(503).json({ error: 'Storage not configured' });
+  const { error: upErr } = await storageClient.storage
+    .from(UPLOADS_BUCKET)
+    .update(doc.file_path, fileBuffer, { contentType: mimeType, upsert: true });
+  if (upErr) return res.status(500).json({ error: 'Failed to save file: ' + upErr.message });
+
+  await db.prepare("UPDATE documents SET file_size=?, mime_type=?, updated_at=datetime('now') WHERE id=?").run(fileBuffer.length, mimeType, req.params.id);
+  res.json({ success: true });
 });
 
 // --- Universal Cross-Linking API ---
