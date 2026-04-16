@@ -302,6 +302,63 @@ async function emitEvent(orgId, caseId, caseType, activity, actor = '', attrs = 
   }
 }
 
+// Webhook delivery – fire-and-forget, never throws into caller
+function fireWebhooks(orgId, event, data) {
+  (async () => {
+    try {
+      const webhooks = await db.prepare(
+        "SELECT * FROM webhooks WHERE organization_id = ? AND status = 'active'"
+      ).all(orgId);
+
+      const matching = webhooks.filter(w => {
+        try { return JSON.parse(w.events || '[]').includes(event); } catch { return false; }
+      });
+      if (!matching.length) return;
+
+      const https = require('https');
+      const http  = require('http');
+      const payloadStr = JSON.stringify({ event, timestamp: new Date().toISOString(), organization_id: orgId, data });
+
+      for (const webhook of matching) {
+        (async () => {
+          try {
+            const url = new URL(webhook.url);
+            const client = url.protocol === 'https:' ? https : http;
+            const headers = {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payloadStr),
+              'User-Agent': 'LetTheFrameWork/1.0',
+            };
+            if (webhook.secret) {
+              headers['X-Webhook-Signature'] = 'sha256=' + crypto.createHmac('sha256', webhook.secret).update(payloadStr).digest('hex');
+            }
+            await new Promise((resolve, reject) => {
+              const req = client.request({
+                hostname: url.hostname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname + url.search,
+                method: 'POST',
+                headers,
+                timeout: 10000,
+              }, (res) => { res.resume(); resolve(res.statusCode); });
+              req.on('error', reject);
+              req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+              req.write(payloadStr);
+              req.end();
+            });
+            await db.prepare("UPDATE webhooks SET last_triggered = NOW() WHERE id = ?").run(webhook.id);
+          } catch (err) {
+            await db.prepare('UPDATE webhooks SET failure_count = failure_count + 1 WHERE id = ?').run(webhook.id);
+            console.warn(`[webhook] delivery failed for "${webhook.name}" (${event}):`, err.message);
+          }
+        })().catch(() => {});
+      }
+    } catch (err) {
+      console.warn('[webhook] fireWebhooks error:', err.message);
+    }
+  })();
+}
+
 // --- Authentication Routes ---
 
 // Check if user is authenticated
@@ -715,6 +772,11 @@ app.post('/api/tasks/:id/complete', requireOrgContext, async (req, res) => {
     req.body.completed_by || '',
     { task_title: task.title, category: task.category, priority: task.priority,
       completion_id: completionResult.lastInsertRowid });
+
+  fireWebhooks(req.orgId, 'task_complete', {
+    id: task.id, title: task.title, category: task.category,
+    priority: task.priority, completed_by: req.body.completed_by || '', next_due: nextDue,
+  });
 
   const updated = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(task.id, req.orgId);
   res.json({ ...updated, completion_id: completionResult.lastInsertRowid });
@@ -1226,6 +1288,14 @@ app.put('/api/audits/:id', requireOrgContext, async (req, res) => {
   params.push(req.params.id);
   await db.prepare(`UPDATE audits SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
 
+  if (req.body.status === 'completed' && existing.status !== 'completed') {
+    const completedAudit = await db.prepare('SELECT * FROM audits WHERE id = ?').get(req.params.id);
+    fireWebhooks(req.orgId, 'audit_complete', {
+      id: completedAudit.id, title: completedAudit.title, standard: completedAudit.standard,
+      lead_auditor: completedAudit.lead_auditor, completed_date: completedAudit.completed_date,
+    });
+  }
+
   // Add checklist items from newly selected requirements (skip existing clauses)
   if (req.body.requirement_ids && Array.isArray(req.body.requirement_ids)) {
     const existingClauses = (await db.prepare('SELECT clause FROM audit_checklist WHERE audit_id = ?').all(req.params.id)).map(c => c.clause);
@@ -1564,7 +1634,12 @@ app.post('/api/ncrs', requireOrgContext, async (req, res) => {
     const rating = (severity === 'major') ? 'major_nc' : 'minor_nc';
     await db.prepare('UPDATE audit_checklist SET rating = ? WHERE id = ? AND organization_id = ?').run(rating, checklist_item_id, req.orgId);
   }
-  res.status(201).json(await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(result.lastInsertRowid));
+  const newNcr = await db.prepare('SELECT * FROM non_conformities WHERE id = ?').get(result.lastInsertRowid);
+  fireWebhooks(req.orgId, 'ncr_created', {
+    id: newNcr.id, clause: newNcr.clause, description: newNcr.description,
+    severity: newNcr.severity, audit_id: newNcr.audit_id,
+  });
+  res.status(201).json(newNcr);
 });
 
 // Update NC
@@ -1967,7 +2042,14 @@ app.post('/api/risks', requireOrgContext, async (req, res) => {
   const result = await db.prepare(`INSERT INTO risks (title, description, category, source, asset, threat, vulnerability, likelihood, impact, inherent_score, risk_owner, status, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     title, description || '', category || 'Information Security', source || '', asset || '', threat || '', vulnerability || '', l, i, inherent_score, risk_owner || '', status || 'identified', req.orgId
   );
-  res.status(201).json(await db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid));
+  const newRisk = await db.prepare('SELECT * FROM risks WHERE id = ?').get(result.lastInsertRowid);
+  if (inherent_score >= 15) {
+    fireWebhooks(req.orgId, 'risk_high', {
+      id: newRisk.id, title: newRisk.title, category: newRisk.category,
+      inherent_score, likelihood: l, impact: i, risk_owner: newRisk.risk_owner,
+    });
+  }
+  res.status(201).json(newRisk);
 });
 
 // Update risk
@@ -1991,7 +2073,16 @@ app.put('/api/risks/:id', requireOrgContext, async (req, res) => {
   updates.push("updated_at = datetime('now')");
   params.push(req.params.id);
   await db.prepare(`UPDATE risks SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
-  res.json(await db.prepare('SELECT * FROM risks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+  const updatedRisk = await db.prepare('SELECT * FROM risks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  // Fire when score just crossed into high territory (was below 15, now ≥ 15)
+  if (updatedRisk.inherent_score >= 15 && existing.inherent_score < 15) {
+    fireWebhooks(req.orgId, 'risk_high', {
+      id: updatedRisk.id, title: updatedRisk.title, category: updatedRisk.category,
+      inherent_score: updatedRisk.inherent_score, likelihood: updatedRisk.likelihood,
+      impact: updatedRisk.impact, risk_owner: updatedRisk.risk_owner,
+    });
+  }
+  res.json(updatedRisk);
 });
 
 // Delete risk
@@ -2466,7 +2557,13 @@ app.post('/api/use-cases', requireOrgContext, async (req, res) => {
   }
   const ph = vals.map(() => '?').join(', ');
   const result = await db.prepare(`INSERT INTO use_cases (${cols.join(', ')}) VALUES (${ph})`).run(...vals);
-  res.status(201).json(await fetchUseCaseWithUsers(db, result.lastInsertRowid));
+  const createdUc = await fetchUseCaseWithUsers(db, result.lastInsertRowid);
+  fireWebhooks(req.orgId, 'usecase_created', {
+    id: createdUc.id, title: createdUc.title, category: createdUc.category,
+    business_domain: createdUc.business_domain, priority: createdUc.priority,
+    owner: createdUc.owner_name || null,
+  });
+  res.status(201).json(createdUc);
 });
 
 app.put('/api/use-cases/:id', requireOrgContext, async (req, res) => {
@@ -2508,7 +2605,14 @@ app.put('/api/use-cases/:id/stage', requireOrgContext, async (req, res) => {
     }
   }
   await db.prepare("UPDATE use_cases SET status = ?, updated_at = NOW() WHERE id = ? AND organization_id = ?").run(targetStage, req.params.id, req.orgId);
-  res.json(await fetchUseCaseWithUsers(db, req.params.id));
+  const movedUc = await fetchUseCaseWithUsers(db, req.params.id);
+  fireWebhooks(req.orgId, 'usecase_stage_changed', {
+    id: movedUc.id, title: movedUc.title, category: movedUc.category,
+    previous_stage: uc.status, new_stage: targetStage,
+    business_domain: movedUc.business_domain, priority: movedUc.priority,
+    owner: movedUc.owner_name || null,
+  });
+  res.json(movedUc);
 });
 
 app.delete('/api/use-cases/:id', requireOrgContext, async (req, res) => {
@@ -2880,7 +2984,14 @@ app.put('/api/documents/:id', requireOrgContext, upload.single('file'), async (r
     classification !== undefined ? classification : (existing.classification || ''),
     req.params.id
   );
-  res.json(await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id));
+  const updatedDoc = await db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (status === 'approved' && existing.status !== 'approved') {
+    fireWebhooks(req.orgId, 'doc_approved', {
+      id: updatedDoc.id, title: updatedDoc.title, doc_type: updatedDoc.doc_type,
+      version: updatedDoc.version, owner: updatedDoc.owner,
+    });
+  }
+  res.json(updatedDoc);
 });
 
 app.delete('/api/documents/:id', requireOrgContext, async (req, res) => {
@@ -3695,9 +3806,13 @@ app.post('/api/admin/webhooks/:id/test', requireAdmin, async (req, res) => {
   const testPayload = {
     event: 'test',
     timestamp: new Date().toISOString(),
-    message: 'This is a test webhook from Let The Frame Work',
-    webhook_id: webhook.id,
-    webhook_name: webhook.name
+    organization_id: req.orgId,
+    data: {
+      message: 'This is a test webhook from Let The Frame Work',
+      webhook_id: webhook.id,
+      webhook_name: webhook.name,
+      configured_events: (() => { try { return JSON.parse(webhook.events || '[]'); } catch { return []; } })(),
+    },
   };
 
   try {
@@ -3707,18 +3822,21 @@ app.post('/api/admin/webhooks/:id/test', requireAdmin, async (req, res) => {
     const client = url.protocol === 'https:' ? https : http;
 
     const payload = JSON.stringify(testPayload);
+    const headers = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+      'User-Agent': 'LetTheFrameWork/1.0',
+    };
+    if (webhook.secret) {
+      headers['X-Webhook-Signature'] = 'sha256=' + crypto.createHmac('sha256', webhook.secret).update(payload).digest('hex');
+    }
     const options = {
       hostname: url.hostname,
       port: url.port || (url.protocol === 'https:' ? 443 : 80),
       path: url.pathname + url.search,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload),
-        'User-Agent': 'LetTheFrameWork/1.0',
-        ...(webhook.secret ? { 'X-Webhook-Secret': webhook.secret } : {})
-      },
-      timeout: 10000
+      headers,
+      timeout: 10000,
     };
 
     const result = await new Promise((resolve, reject) => {

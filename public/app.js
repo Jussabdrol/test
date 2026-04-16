@@ -9876,6 +9876,8 @@ function openWebhookModal(id) {
         document.getElementById('hook-audit-complete').checked = events.includes('audit_complete');
         document.getElementById('hook-ncr-created').checked = events.includes('ncr_created');
         document.getElementById('hook-doc-approved').checked = events.includes('doc_approved');
+        document.getElementById('hook-usecase-created').checked = events.includes('usecase_created');
+        document.getElementById('hook-usecase-stage').checked = events.includes('usecase_stage_changed');
       }
     });
   }
@@ -9898,6 +9900,8 @@ async function saveWebhook(e) {
   if (document.getElementById('hook-audit-complete').checked) events.push('audit_complete');
   if (document.getElementById('hook-ncr-created').checked) events.push('ncr_created');
   if (document.getElementById('hook-doc-approved').checked) events.push('doc_approved');
+  if (document.getElementById('hook-usecase-created').checked) events.push('usecase_created');
+  if (document.getElementById('hook-usecase-stage').checked) events.push('usecase_stage_changed');
 
   const body = {
     name: document.getElementById('webhook-name').value,
