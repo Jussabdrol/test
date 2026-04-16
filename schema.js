@@ -275,12 +275,47 @@ const POSTGRES_SCHEMA_SQL = `
     organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
-    actor TEXT DEFAULT '',
-    status TEXT DEFAULT 'draft' CHECK(status IN ('draft','proposed','active','deprecated')),
+    category TEXT DEFAULT 'AI' CHECK(category IN ('AI','Process Automation','Analytics','Integration','Other')),
+    business_domain TEXT DEFAULT '',
+    ai_approach TEXT DEFAULT '',
+    risk_tier TEXT DEFAULT '' CHECK(risk_tier IN ('','Minimal','Limited','High','Unacceptable')),
+    human_oversight TEXT DEFAULT '' CHECK(human_oversight IN ('','Required','Optional','None')),
     priority TEXT DEFAULT 'medium' CHECK(priority IN ('low','medium','high','critical')),
-    category TEXT DEFAULT '',
+    status TEXT DEFAULT 'new' CHECK(status IN ('new','assessment','approved','development','production','retired')),
+    business_value TEXT DEFAULT '',
+    success_kpis TEXT DEFAULT '',
+    fallback_process TEXT DEFAULT '',
+    retirement_reason TEXT DEFAULT '',
+    target_go_live DATE,
+    go_live_date DATE,
+    next_review_date DATE,
+    performance_notes TEXT DEFAULT '',
+    incident_reporting INTEGER DEFAULT 0,
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    implementation_owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    approved_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    approval_date DATE,
+    sort_order INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
+  );
+
+  CREATE TABLE IF NOT EXISTS use_case_approvals (
+    id SERIAL PRIMARY KEY,
+    use_case_id INTEGER NOT NULL REFERENCES use_cases(id) ON DELETE CASCADE,
+    organization_id INTEGER NOT NULL,
+    approved_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    decision TEXT NOT NULL CHECK(decision IN ('approved','rejected','pending')),
+    notes TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT NOW()
+  );
+
+  CREATE TABLE IF NOT EXISTS use_case_members (
+    id SERIAL PRIMARY KEY,
+    use_case_id INTEGER NOT NULL REFERENCES use_cases(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(use_case_id, user_id)
   );
 
   CREATE TABLE IF NOT EXISTS threat_feeds (

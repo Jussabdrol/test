@@ -4184,3 +4184,167 @@ body.has-org-banner .user-widget {
   margin-left: 6px;
   vertical-align: middle;
 }
+
+/* ===== AI Use Cases – Kanban Board ===== */
+
+/* Stats bar above the board */
+.uc-stats-bar {
+  display: flex;
+  gap: 0;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.uc-stat-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+  gap: 2px;
+}
+.uc-stat-item:last-child { border-right: none; }
+.uc-stat-count  { font-size: 22px; font-weight: 700; line-height: 1; }
+.uc-stat-label  { font-size: 11px; color: var(--text-muted); font-weight: 500; white-space: nowrap; }
+
+/* Board container */
+.kanban-board {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  align-items: flex-start;
+  padding-bottom: 24px;
+  min-height: 60vh;
+}
+.kanban-board::-webkit-scrollbar       { height: 6px; }
+.kanban-board::-webkit-scrollbar-track { background: transparent; }
+.kanban-board::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Column */
+.kanban-column {
+  flex: 0 0 220px;
+  min-width: 220px;
+  background: var(--sidebar-bg, #f8fafc);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  transition: background 0.15s;
+}
+.kanban-column.kanban-drag-over {
+  background: #eff6ff;
+  border-color: #3b82f6;
+}
+
+/* Column header */
+.kanban-col-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px 8px;
+  border-radius: 9px 9px 0 0;
+}
+.kanban-col-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--primary); }
+.kanban-col-count { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 10px; }
+
+/* Column body */
+.kanban-col-body {
+  flex: 1;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 80px;
+}
+
+/* Card */
+.kanban-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 11px;
+  cursor: pointer;
+  transition: box-shadow 0.15s, transform 0.1s, opacity 0.15s;
+  user-select: none;
+}
+.kanban-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  transform: translateY(-1px);
+}
+.kanban-card-dragging { opacity: 0.45; transform: rotate(1.5deg); }
+
+/* Add button at bottom of New column */
+.kanban-add-btn {
+  width: 100%;
+  padding: 7px;
+  background: none;
+  border: 1.5px dashed var(--border);
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.kanban-add-btn:hover { background: #f1f5f9; color: var(--primary); }
+
+/* Drop placeholder */
+.kanban-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  border: 1.5px dashed var(--border);
+  border-radius: 7px;
+}
+
+/* Modal – wide variant */
+.modal-xl { max-width: 780px; width: 95vw; }
+.modal-xl .modal-header { padding: 16px 24px 12px; border-bottom: 1px solid var(--border); }
+.modal-xl input[type="text"],
+.modal-xl textarea,
+.modal-xl select { font-size: 13px; }
+
+/* Sections inside modal */
+.uc-section { margin-bottom: 4px; }
+.uc-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 16px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Member chips */
+.uc-member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 12px;
+}
+.uc-member-chip button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #1e40af;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.6;
+}
+.uc-member-chip button:hover { opacity: 1; }
+
+/* Approval history list */
+.uc-approvals-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.uc-approval-item  { display: flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.uc-approval-item:last-child { border-bottom: none; }
