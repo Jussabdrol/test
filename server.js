@@ -961,6 +961,7 @@ app.get('/api/task-instances', requireOrgContext, async (req, res) => {
 
 // Get single instance
 app.get('/api/task-instances/:id', requireOrgContext, async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const row = await db.prepare(
     `SELECT ti.*, t.title AS task_title, t.category AS task_category, t.assignee AS task_assignee
      FROM task_instances ti JOIN tasks t ON ti.task_id = t.id
@@ -972,6 +973,7 @@ app.get('/api/task-instances/:id', requireOrgContext, async (req, res) => {
 
 // Complete an instance
 app.post('/api/task-instances/:id/complete', requireOrgContext, async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
 
@@ -1004,6 +1006,7 @@ app.post('/api/task-instances/:id/complete', requireOrgContext, async (req, res)
 
 // Skip an instance
 app.post('/api/task-instances/:id/skip', requireOrgContext, async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
   await db.prepare(
@@ -1022,6 +1025,7 @@ app.post('/api/task-instances/:id/skip', requireOrgContext, async (req, res) => 
 
 // Reopen an instance (back to pending)
 app.post('/api/task-instances/:id/reopen', requireOrgContext, async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
   await db.prepare(
@@ -1034,6 +1038,7 @@ app.post('/api/task-instances/:id/reopen', requireOrgContext, async (req, res) =
 
 // Upload evidence to an instance
 app.post('/api/task-instances/:id/evidence', requireOrgContext, upload.single('file'), async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
