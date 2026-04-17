@@ -1360,9 +1360,10 @@ async function submitComplete(e) {
 
   document.getElementById('complete-evidence-upload').style.display = 'block';
   document.getElementById('complete-modal-title').textContent = 'Completed — Attach Evidence';
+  const savedInstanceId = activeInstanceId; // preserve before closeCompleteModal nullifies it
   closeCompleteModal();
   invalidateYearlyCache();
-  lastInstanceContext = { instance_id: activeInstanceId, task_id: parseInt(taskId), scheduled_date: scheduled };
+  lastInstanceContext = { instance_id: savedInstanceId, task_id: parseInt(taskId), scheduled_date: scheduled };
   await openPostCompleteModal();
 }
 
@@ -1388,6 +1389,7 @@ async function uploadInstanceEvidence() {
 }
 
 async function refreshInstanceEvidence(instanceId) {
+  if (!instanceId) return;
   const inst = await api(`/api/task-instances/${instanceId}`);
   let evidenceFiles = [];
   try { evidenceFiles = JSON.parse(inst?.evidence_files || '[]'); } catch(e) {}
