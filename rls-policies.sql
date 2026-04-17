@@ -91,25 +91,25 @@ CREATE POLICY "tasks_delete" ON tasks
   FOR DELETE USING (is_superadmin() OR organization_id = current_user_org_id());
 
 -- ---------------------------------------------------------------------------
--- 3. completions
+-- 3. task_instances (Task Log — scheduled occurrences of recurring task series)
 -- ---------------------------------------------------------------------------
-ALTER TABLE completions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_instances ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "completions_select" ON completions;
-DROP POLICY IF EXISTS "completions_insert" ON completions;
-DROP POLICY IF EXISTS "completions_update" ON completions;
-DROP POLICY IF EXISTS "completions_delete" ON completions;
+DROP POLICY IF EXISTS "task_instances_select" ON task_instances;
+DROP POLICY IF EXISTS "task_instances_insert" ON task_instances;
+DROP POLICY IF EXISTS "task_instances_update" ON task_instances;
+DROP POLICY IF EXISTS "task_instances_delete" ON task_instances;
 
-CREATE POLICY "completions_select" ON completions
+CREATE POLICY "task_instances_select" ON task_instances
   FOR SELECT USING (is_superadmin() OR organization_id = current_user_org_id());
 
-CREATE POLICY "completions_insert" ON completions
+CREATE POLICY "task_instances_insert" ON task_instances
   FOR INSERT WITH CHECK (is_superadmin() OR organization_id = current_user_org_id());
 
-CREATE POLICY "completions_update" ON completions
+CREATE POLICY "task_instances_update" ON task_instances
   FOR UPDATE USING (is_superadmin() OR organization_id = current_user_org_id());
 
-CREATE POLICY "completions_delete" ON completions
+CREATE POLICY "task_instances_delete" ON task_instances
   FOR DELETE USING (is_superadmin() OR organization_id = current_user_org_id());
 
 -- ---------------------------------------------------------------------------
@@ -673,7 +673,7 @@ CREATE POLICY "saml_sessions_delete" ON saml_sessions
 CREATE INDEX IF NOT EXISTS idx_users_supabase_uid ON users(supabase_uid);
 CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(organization_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_org_id ON tasks(organization_id);
-CREATE INDEX IF NOT EXISTS idx_completions_org_id ON completions(organization_id);
+CREATE INDEX IF NOT EXISTS idx_task_instances_org_id ON task_instances(organization_id);
 CREATE INDEX IF NOT EXISTS idx_actions_org_id ON actions(organization_id);
 CREATE INDEX IF NOT EXISTS idx_audits_org_id ON audits(organization_id);
 CREATE INDEX IF NOT EXISTS idx_audit_checklist_org_id ON audit_checklist(organization_id);

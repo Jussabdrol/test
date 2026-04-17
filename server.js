@@ -274,6 +274,35 @@ function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth)
   return d.toISOString().split('T')[0];
 }
 
+// Generate missing task_instances rows for all active task series in an org,
+// from the latest scheduled_date (or the series' start_date) up to a target horizon.
+// Idempotent thanks to UNIQUE(task_id, scheduled_date); safe to call on every Task Log load.
+async function ensureTaskInstances(orgId, horizonDays = 14) {
+  const today = new Date();
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate() + horizonDays);
+  const horizonStr = horizon.toISOString().split('T')[0];
+
+  const tasks = await db.prepare('SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1').all(orgId);
+  for (const task of tasks) {
+    const last = await db.prepare(
+      'SELECT MAX(scheduled_date) AS d FROM task_instances WHERE task_id = ? AND organization_id = ?'
+    ).get(task.id, orgId);
+    let cursor = last && last.d
+      ? computeNextDue(last.d, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month)
+      : task.start_date;
+    let safety = 0;
+    while (cursor <= horizonStr && safety < 400) {
+      await db.prepare(
+        `INSERT INTO task_instances (organization_id, task_id, scheduled_date)
+         VALUES (?, ?, ?) ON CONFLICT (task_id, scheduled_date) DO NOTHING`
+      ).run(orgId, task.id, cursor);
+      cursor = computeNextDue(cursor, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
+      safety++;
+    }
+  }
+}
+
 // --- Utility helpers ---
 
 // Improvement 10: safe integer param parser — prevents NaN from reaching the DB driver
@@ -620,8 +649,8 @@ app.get('/api/dashboard', requireOrgContext, async (req, res) => {
     totalActive: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ? AND is_active = 1').get(oid)).c,
     dueToday: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ? AND is_active = 1 AND next_due = ?').get(oid, today)).c,
     overdue: (await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE organization_id = ? AND is_active = 1 AND next_due < ?').get(oid, today)).c,
-    completedThisWeek: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE organization_id = ? AND completed_at >= date('now', '-7 days')`).get(oid)).c,
-    completedThisMonth: (await db.prepare(`SELECT COUNT(*) as c FROM completions WHERE organization_id = ? AND completed_at >= date('now', '-30 days')`).get(oid)).c,
+    completedThisWeek: (await db.prepare(`SELECT COUNT(*) as c FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now', '-7 days')`).get(oid)).c,
+    completedThisMonth: (await db.prepare(`SELECT COUNT(*) as c FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now', '-30 days')`).get(oid)).c,
     byCategory: await db.prepare('SELECT category, COUNT(*) as count FROM tasks WHERE organization_id = ? AND is_active = 1 GROUP BY category').all(oid),
     byPriority: await db.prepare('SELECT priority, COUNT(*) as count FROM tasks WHERE organization_id = ? AND is_active = 1 GROUP BY priority').all(oid),
     byAssignee: await db.prepare("SELECT assignee, COUNT(*) as count FROM tasks WHERE organization_id = ? AND is_active = 1 AND assignee != '' GROUP BY assignee").all(oid),
@@ -632,7 +661,7 @@ app.get('/api/dashboard', requireOrgContext, async (req, res) => {
   };
 
   // KPI: Actions per check
-  const totalCompletions = (await db.prepare('SELECT COUNT(*) as c FROM completions WHERE organization_id = ?').get(oid)).c;
+  const totalCompletions = (await db.prepare("SELECT COUNT(*) as c FROM task_instances WHERE organization_id = ? AND status = 'completed'").get(oid)).c;
   const totalActionsAll = (await db.prepare('SELECT COUNT(*) as c FROM actions WHERE organization_id = ?').get(oid)).c;
   stats.actionsPerCheck = totalCompletions > 0 ? +(totalActionsAll / totalCompletions).toFixed(2) : 0;
   stats.totalCompletions = totalCompletions;
@@ -640,9 +669,9 @@ app.get('/api/dashboard', requireOrgContext, async (req, res) => {
 
   // Actions per check this month vs last month
   const actionsThisMonth = (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE organization_id = ? AND created_at >= date('now','start of month')").get(oid)).c;
-  const completionsThisMonth = (await db.prepare("SELECT COUNT(*) as c FROM completions WHERE organization_id = ? AND completed_at >= date('now','start of month')").get(oid)).c;
+  const completionsThisMonth = (await db.prepare("SELECT COUNT(*) as c FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now','start of month')").get(oid)).c;
   const actionsLastMonth = (await db.prepare("SELECT COUNT(*) as c FROM actions WHERE organization_id = ? AND created_at >= date('now','start of month','-1 month') AND created_at < date('now','start of month')").get(oid)).c;
-  const completionsLastMonth = (await db.prepare("SELECT COUNT(*) as c FROM completions WHERE organization_id = ? AND completed_at >= date('now','start of month','-1 month') AND completed_at < date('now','start of month')").get(oid)).c;
+  const completionsLastMonth = (await db.prepare("SELECT COUNT(*) as c FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now','start of month','-1 month') AND completed_at < date('now','start of month')").get(oid)).c;
   stats.actionsPerCheckThisMonth = completionsThisMonth > 0 ? +(actionsThisMonth / completionsThisMonth).toFixed(2) : 0;
   stats.actionsPerCheckLastMonth = completionsLastMonth > 0 ? +(actionsLastMonth / completionsLastMonth).toFixed(2) : 0;
 
@@ -659,8 +688,8 @@ app.get('/api/dashboard', requireOrgContext, async (req, res) => {
     }
   }
 
-  const recent30 = await db.prepare("SELECT task_id, completed_at FROM completions WHERE organization_id = ? AND completed_at >= date('now','-30 days') ORDER BY completed_at ASC").all(oid);
-  const prev30 = await db.prepare("SELECT task_id, completed_at FROM completions WHERE organization_id = ? AND completed_at >= date('now','-60 days') AND completed_at < date('now','-30 days') ORDER BY completed_at ASC").all(oid);
+  const recent30 = await db.prepare("SELECT task_id, completed_at FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now','-30 days') ORDER BY completed_at ASC").all(oid);
+  const prev30 = await db.prepare("SELECT task_id, completed_at FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now','-60 days') AND completed_at < date('now','-30 days') ORDER BY completed_at ASC").all(oid);
 
   function calcOnTimeRate(completions) {
     if (completions.length === 0) return null;
@@ -691,12 +720,16 @@ app.get('/api/dashboard', requireOrgContext, async (req, res) => {
   res.json(stats);
 });
 
-// Get single task with completion history
+// Get single task series with recent instance history
 app.get('/api/tasks/:id', requireOrgContext, async (req, res) => {
   const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!task) return res.status(404).json({ error: 'Task not found' });
-  const completions = await db.prepare('SELECT * FROM completions WHERE task_id = ? AND organization_id = ? ORDER BY completed_at DESC LIMIT 20').all(req.params.id, req.orgId);
-  res.json({ ...task, completions });
+  const instances = await db.prepare(
+    `SELECT * FROM task_instances
+     WHERE task_id = ? AND organization_id = ? AND status = 'completed'
+     ORDER BY completed_at DESC LIMIT 20`
+  ).all(req.params.id, req.orgId);
+  res.json({ ...task, completions: instances });
 });
 
 // Create task
@@ -754,17 +787,26 @@ app.put('/api/tasks/:id', requireOrgContext, async (req, res) => {
   res.json(task);
 });
 
-// Complete a task (mark done + advance next_due)
+// Complete a task series (upsert the instance for next_due, mark completed, advance next_due)
 app.post('/api/tasks/:id/complete', requireOrgContext, async (req, res) => {
   const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
-  const completionResult = await db.prepare('INSERT INTO completions (organization_id, task_id, completed_by, notes) VALUES (?, ?, ?, ?)').run(
-    req.orgId,
-    task.id,
-    req.body.completed_by || '',
-    req.body.notes || ''
-  );
+  const scheduled = task.next_due;
+  await db.prepare(
+    `INSERT INTO task_instances (organization_id, task_id, scheduled_date, status, completed_by, completed_at, notes)
+     VALUES (?, ?, ?, 'completed', ?, NOW(), ?)
+     ON CONFLICT (task_id, scheduled_date) DO UPDATE
+       SET status = 'completed',
+           completed_by = EXCLUDED.completed_by,
+           completed_at = NOW(),
+           notes = EXCLUDED.notes,
+           updated_at = NOW()`
+  ).run(req.orgId, task.id, scheduled, req.body.completed_by || '', req.body.notes || '');
+
+  const instance = await db.prepare(
+    'SELECT * FROM task_instances WHERE task_id = ? AND scheduled_date = ? AND organization_id = ?'
+  ).get(task.id, scheduled, req.orgId);
 
   const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
   await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
@@ -773,7 +815,7 @@ app.post('/api/tasks/:id/complete', requireOrgContext, async (req, res) => {
   emitEvent(req.orgId, `task-${task.id}-${task.next_due}`, 'task_cycle', 'task_completed',
     req.body.completed_by || '',
     { task_title: task.title, category: task.category, priority: task.priority,
-      completion_id: completionResult.lastInsertRowid });
+      instance_id: instance.id });
 
   fireWebhooks(req.orgId, 'task_complete', {
     id: task.id, title: task.title, category: task.category,
@@ -781,7 +823,7 @@ app.post('/api/tasks/:id/complete', requireOrgContext, async (req, res) => {
   });
 
   const updated = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(task.id, req.orgId);
-  res.json({ ...updated, completion_id: completionResult.lastInsertRowid });
+  res.json({ ...updated, instance_id: instance.id });
 });
 
 // Delete task
@@ -791,44 +833,120 @@ app.delete('/api/tasks/:id', requireOrgContext, async (req, res) => {
   res.json({ success: true });
 });
 
-// Get completion history
-app.get('/api/completions', requireOrgContext, async (req, res) => {
-  const { task_id, limit, completed_by, from, to } = req.query;
-  let sql = `SELECT c.*, t.title as task_title, t.category as task_category,
-    (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id) as action_count,
-    (SELECT COUNT(*) FROM actions a WHERE a.completion_id = c.id AND a.status IN ('open','in_progress')) as open_action_count
-    FROM completions c JOIN tasks t ON c.task_id = t.id WHERE c.organization_id = ?`;
+// --- Task Log (task_instances) API ---
+
+// List task instances (auto-generates missing pending rows for active series up to today+14d)
+app.get('/api/task-instances', requireOrgContext, async (req, res) => {
+  const { status, task_id, from, to, completed_by, limit } = req.query;
+
+  // Ensure pending instances exist up to the horizon before querying (idempotent)
+  if (!from && !to) {
+    try { await ensureTaskInstances(req.orgId, 14); }
+    catch (err) { console.error('[task-instances] ensure failed:', err.message); }
+  }
+
+  let sql = `SELECT ti.*, t.title AS task_title, t.category AS task_category,
+    t.assignee AS task_assignee, t.priority AS task_priority, t.recurrence AS task_recurrence,
+    (SELECT COUNT(*) FROM actions a WHERE a.instance_id = ti.id) AS action_count,
+    (SELECT COUNT(*) FROM actions a WHERE a.instance_id = ti.id AND a.status IN ('open','in_progress')) AS open_action_count
+    FROM task_instances ti JOIN tasks t ON ti.task_id = t.id
+    WHERE ti.organization_id = ?`;
   const params = [req.orgId];
-  if (task_id) {
-    sql += ' AND c.task_id = ?';
-    params.push(task_id);
-  }
-  if (completed_by) {
-    sql += ' AND c.completed_by = ?';
-    params.push(completed_by);
-  }
-  if (from) {
-    sql += ' AND c.completed_at >= ?';
-    params.push(from);
-  }
-  if (to) {
-    sql += ' AND c.completed_at <= ?';
-    params.push(to + ' 23:59:59');
-  }
-  sql += ' ORDER BY c.completed_at DESC LIMIT ?';
-  params.push(parseIntParam(limit, 50, { min: 1, max: 500 }));
+  if (status) { sql += ' AND ti.status = ?'; params.push(status); }
+  if (task_id) { sql += ' AND ti.task_id = ?'; params.push(task_id); }
+  if (completed_by) { sql += ' AND ti.completed_by = ?'; params.push(completed_by); }
+  if (from) { sql += ' AND ti.scheduled_date >= ?'; params.push(from); }
+  if (to)   { sql += ' AND ti.scheduled_date <= ?'; params.push(to); }
+  sql += ` ORDER BY CASE WHEN ti.status = 'pending' THEN ti.scheduled_date END ASC,
+                    ti.completed_at DESC NULLS LAST,
+                    ti.scheduled_date DESC
+           LIMIT ?`;
+  params.push(parseIntParam(limit, 500, { min: 1, max: 2000 }));
   res.json(await db.prepare(sql).all(...params));
 });
 
-// Upload evidence to a completion
-app.post('/api/completions/:id/evidence', requireOrgContext, upload.single('file'), async (req, res) => {
-  const item = await db.prepare('SELECT * FROM completions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  if (!item) return res.status(404).json({ error: 'Completion not found' });
+// Get single instance
+app.get('/api/task-instances/:id', requireOrgContext, async (req, res) => {
+  const row = await db.prepare(
+    `SELECT ti.*, t.title AS task_title, t.category AS task_category, t.assignee AS task_assignee
+     FROM task_instances ti JOIN tasks t ON ti.task_id = t.id
+     WHERE ti.id = ? AND ti.organization_id = ?`
+  ).get(req.params.id, req.orgId);
+  if (!row) return res.status(404).json({ error: 'Instance not found' });
+  res.json(row);
+});
+
+// Complete an instance
+app.post('/api/task-instances/:id/complete', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!item) return res.status(404).json({ error: 'Instance not found' });
+
+  await db.prepare(
+    `UPDATE task_instances
+     SET status = 'completed', completed_by = ?, completed_at = NOW(), notes = ?, updated_at = NOW()
+     WHERE id = ? AND organization_id = ?`
+  ).run(req.body.completed_by || '', req.body.notes || item.notes || '', req.params.id, req.orgId);
+
+  // If the completed instance matches the task's current next_due, advance next_due
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(item.task_id, req.orgId);
+  if (task && task.next_due === item.scheduled_date) {
+    const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
+    await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
+  }
+
+  emitEvent(req.orgId, `task-${item.task_id}-${item.scheduled_date}`, 'task_cycle', 'task_completed',
+    req.body.completed_by || '',
+    { task_title: task ? task.title : '', category: task ? task.category : '', priority: task ? task.priority : '',
+      instance_id: item.id });
+
+  fireWebhooks(req.orgId, 'task_complete', {
+    id: item.task_id, title: task ? task.title : '',
+    category: task ? task.category : '', priority: task ? task.priority : '',
+    completed_by: req.body.completed_by || '', scheduled_date: item.scheduled_date,
+  });
+
+  res.json(await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+});
+
+// Skip an instance
+app.post('/api/task-instances/:id/skip', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!item) return res.status(404).json({ error: 'Instance not found' });
+  await db.prepare(
+    `UPDATE task_instances SET status = 'skipped', notes = ?, updated_at = NOW()
+     WHERE id = ? AND organization_id = ?`
+  ).run(req.body.notes || item.notes || '', req.params.id, req.orgId);
+
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(item.task_id, req.orgId);
+  if (task && task.next_due === item.scheduled_date) {
+    const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
+    await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
+  }
+
+  res.json(await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+});
+
+// Reopen an instance (back to pending)
+app.post('/api/task-instances/:id/reopen', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!item) return res.status(404).json({ error: 'Instance not found' });
+  await db.prepare(
+    `UPDATE task_instances
+     SET status = 'pending', completed_by = '', completed_at = NULL, updated_at = NOW()
+     WHERE id = ? AND organization_id = ?`
+  ).run(req.params.id, req.orgId);
+  res.json(await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+});
+
+// Upload evidence to an instance
+app.post('/api/task-instances/:id/evidence', requireOrgContext, upload.single('file'), async (req, res) => {
+  const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!item) return res.status(404).json({ error: 'Instance not found' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   let storagePath;
   try {
-    storagePath = await uploadToSupabase('completion-evidence', req.file);
+    storagePath = await uploadToSupabase('task-instance-evidence', req.file);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -845,17 +963,16 @@ app.post('/api/completions/:id/evidence', requireOrgContext, upload.single('file
     uploaded_at: new Date().toISOString()
   });
 
-  await db.prepare('UPDATE completions SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
+  await db.prepare('UPDATE task_instances SET evidence_files = ?, updated_at = NOW() WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
 
   // Also create a Document Control entry for this evidence and auto-cross-link to the task
   try {
     const task = await db.prepare('SELECT title FROM tasks WHERE id = ?').get(item.task_id);
     const docTitle = `Evidence: ${req.file.originalname}`;
-    const docDesc = `Evidence uploaded for task "${task ? task.title : 'Unknown'}" (completion #${req.params.id})`;
+    const docDesc = `Evidence uploaded for task "${task ? task.title : 'Unknown'}" (instance #${req.params.id}, ${item.scheduled_date})`;
     const docResult = await db.prepare(`INSERT INTO documents (organization_id, title, description, doc_type, version, owner, status, file_name, file_path, file_size, mime_type, linked_module, linked_ref_type, linked_ref_id, classification) VALUES (?, ?, ?, 'evidence', '1.0', '', 'approved', ?, ?, ?, ?, 'operational-planning', 'task', ?, 'confidential')`).run(
       req.orgId, docTitle, docDesc, req.file.originalname, storagePath, req.file.size, req.file.mimetype, item.task_id
     );
-    // Auto-create cross-link between the new document and the source task
     if (docResult.lastInsertRowid && item.task_id) {
       const [s_type, s_id, t_type, t_id] = 'document' < 'task'
         ? ['document', docResult.lastInsertRowid, 'task', item.task_id]
@@ -863,16 +980,16 @@ app.post('/api/completions/:id/evidence', requireOrgContext, upload.single('file
       await db.prepare('INSERT OR IGNORE INTO cross_links (organization_id, source_type, source_id, target_type, target_id) VALUES (?, ?, ?, ?, ?)').run(req.orgId, s_type, s_id, t_type, t_id);
     }
   } catch (docErr) {
-    console.error('Failed to create Document Control entry for completion evidence:', docErr.message);
+    console.error('Failed to create Document Control entry for instance evidence:', docErr.message);
   }
 
-  res.json(await db.prepare('SELECT * FROM completions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
+  res.json(await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
 });
 
-// Download completion evidence file
-app.get('/api/completions/:id/evidence/:fileId/download', requireOrgContext, async (req, res) => {
-  const item = await db.prepare('SELECT * FROM completions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  if (!item) return res.status(404).json({ error: 'Completion not found' });
+// Download instance evidence file
+app.get('/api/task-instances/:id/evidence/:fileId/download', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!item) return res.status(404).json({ error: 'Instance not found' });
   let evidenceFiles = [];
   try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
   const file = evidenceFiles.find(f => String(f.id) === String(req.params.fileId));
@@ -885,10 +1002,10 @@ app.get('/api/completions/:id/evidence/:fileId/download', requireOrgContext, asy
   }
 });
 
-// Delete completion evidence file
-app.delete('/api/completions/:id/evidence/:fileId', requireOrgContext, async (req, res) => {
-  const item = await db.prepare('SELECT * FROM completions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  if (!item) return res.status(404).json({ error: 'Completion not found' });
+// Delete instance evidence file
+app.delete('/api/task-instances/:id/evidence/:fileId', requireOrgContext, async (req, res) => {
+  const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
+  if (!item) return res.status(404).json({ error: 'Instance not found' });
   let evidenceFiles = [];
   try { evidenceFiles = JSON.parse(item.evidence_files || '[]'); } catch(e) {}
   const file = evidenceFiles.find(f => String(f.id) === String(req.params.fileId));
@@ -896,7 +1013,7 @@ app.delete('/api/completions/:id/evidence/:fileId', requireOrgContext, async (re
     await deleteFromSupabase(file.path);
   }
   evidenceFiles = evidenceFiles.filter(f => String(f.id) !== String(req.params.fileId));
-  await db.prepare('UPDATE completions SET evidence_files = ? WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
+  await db.prepare('UPDATE task_instances SET evidence_files = ?, updated_at = NOW() WHERE id = ? AND organization_id = ?').run(JSON.stringify(evidenceFiles), req.params.id, req.orgId);
   res.json({ success: true });
 });
 
@@ -944,11 +1061,12 @@ app.get('/api/yearly', requireOrgContext, async (req, res) => {
     }
   }
 
-  // Get completions for this year
+  // Get completed task instances for this year
   const completions = await db.prepare(
-    `SELECT c.*, t.title, t.assignee, t.category, t.priority, t.recurrence
-     FROM completions c JOIN tasks t ON c.task_id = t.id
-     WHERE c.organization_id = ? AND c.completed_at >= ? AND c.completed_at <= ?`
+    `SELECT ti.*, t.title, t.assignee, t.category, t.priority, t.recurrence
+     FROM task_instances ti JOIN tasks t ON ti.task_id = t.id
+     WHERE ti.organization_id = ? AND ti.status = 'completed'
+       AND ti.completed_at >= ? AND ti.completed_at <= ?`
   ).all(req.orgId, startDate, endDate + ' 23:59:59');
 
   const completedDates = {};
@@ -972,17 +1090,19 @@ app.get('/api/yearly', requireOrgContext, async (req, res) => {
 
 // --- Follow-up Actions API ---
 
-// Get all actions with optional filters
+// Get all follow-ups (actions) with optional filters
 app.get('/api/actions', requireOrgContext, async (req, res) => {
-  const { task_id, completion_id, status, process_id } = req.query;
-  let sql = `SELECT a.*, COALESCE(t.title, 'Standalone') as task_title, p.name as process_name
+  const { task_id, instance_id, status, process_id } = req.query;
+  let sql = `SELECT a.*, COALESCE(t.title, 'Standalone') as task_title, p.name as process_name,
+    ti.scheduled_date AS instance_scheduled_date
     FROM actions a
     LEFT JOIN tasks t ON a.task_id = t.id
+    LEFT JOIN task_instances ti ON a.instance_id = ti.id
     LEFT JOIN org_architecture p ON a.process_id = p.id
     WHERE a.organization_id = ?`;
   const params = [req.orgId];
   if (task_id) { sql += ' AND a.task_id = ?'; params.push(task_id); }
-  if (completion_id) { sql += ' AND a.completion_id = ?'; params.push(completion_id); }
+  if (instance_id) { sql += ' AND a.instance_id = ?'; params.push(instance_id); }
   if (status) { sql += ' AND a.status = ?'; params.push(status); }
   if (process_id) { sql += ' AND a.process_id = ?'; params.push(process_id); }
   sql += ' ORDER BY a.created_at DESC';
@@ -1000,15 +1120,22 @@ app.get('/api/actions/:id', requireOrgContext, async (req, res) => {
   res.json(action);
 });
 
-// Create action (optionally linked to a completion/task/process, or standalone)
+// Create follow-up (optionally linked to an instance/task/process, or standalone)
 app.post('/api/actions', requireOrgContext, async (req, res) => {
-  const { completion_id, task_id, process_id, title, description, assignee, priority, due_date } = req.body;
+  const { instance_id, task_id, process_id, title, description, assignee, priority, due_date } = req.body;
   if (!title) return res.status(400).json({ error: 'title is required' });
 
+  // If linked to an instance, inherit task_id from the instance when not explicitly provided.
+  let resolvedTaskId = task_id || null;
+  if (instance_id && !resolvedTaskId) {
+    const inst = await db.prepare('SELECT task_id FROM task_instances WHERE id = ? AND organization_id = ?').get(instance_id, req.orgId);
+    if (inst) resolvedTaskId = inst.task_id;
+  }
+
   const result = await db.prepare(`
-    INSERT INTO actions (organization_id, completion_id, task_id, process_id, title, description, assignee, priority, due_date)
+    INSERT INTO actions (organization_id, instance_id, task_id, process_id, title, description, assignee, priority, due_date)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(req.orgId, completion_id || null, task_id || null, process_id || null, title, description || '', assignee || '', priority || 'Medium', due_date || null);
+  `).run(req.orgId, instance_id || null, resolvedTaskId, process_id || null, title, description || '', assignee || '', priority || 'Medium', due_date || null);
 
   const action = await db.prepare('SELECT * FROM actions WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(action);
@@ -2357,7 +2484,7 @@ app.get('/api/kpis/auto', requireOrgContext, async (req, res) => {
     // Task Management
     tasks_active: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE organization_id = ? AND is_active = 1').get(oid)).v,
     tasks_overdue: (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE organization_id = ? AND is_active = 1 AND next_due < ?').get(oid, today)).v,
-    completions_this_month: (await db.prepare("SELECT COUNT(*) as v FROM completions WHERE organization_id = ? AND completed_at >= date('now','start of month')").get(oid)).v,
+    completions_this_month: (await db.prepare("SELECT COUNT(*) as v FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now','start of month')").get(oid)).v,
     // Audits & Compliance
     audits_planned: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE organization_id = ? AND status = 'planned'").get(oid)).v,
     audits_completed: (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE organization_id = ? AND status = 'completed'").get(oid)).v,
@@ -2412,7 +2539,7 @@ app.post('/api/kpis/auto/persist', requireOrgContext, async (req, res) => {
   const auto = {
     tasks_active:           (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE organization_id = ? AND is_active = 1').get(oid)).v,
     tasks_overdue:          (await db.prepare('SELECT COUNT(*) as v FROM tasks WHERE organization_id = ? AND is_active = 1 AND next_due < ?').get(oid, today_str)).v,
-    completions_this_month: (await db.prepare("SELECT COUNT(*) as v FROM completions WHERE organization_id = ? AND completed_at >= date('now','start of month')").get(oid)).v,
+    completions_this_month: (await db.prepare("SELECT COUNT(*) as v FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now','start of month')").get(oid)).v,
     audits_planned:         (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE organization_id = ? AND status = 'planned'").get(oid)).v,
     audits_completed:       (await db.prepare("SELECT COUNT(*) as v FROM audits WHERE organization_id = ? AND status = 'completed'").get(oid)).v,
     open_ncrs:              (await db.prepare("SELECT COUNT(*) as v FROM non_conformities WHERE organization_id = ? AND status IN ('open','in_progress')").get(oid)).v,
@@ -3619,7 +3746,7 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
 
   if (includes.includes('tasks')) {
     data.tasks = await db.prepare('SELECT * FROM tasks WHERE organization_id = ?').all(req.orgId);
-    data.completions = await db.prepare('SELECT * FROM completions WHERE organization_id = ?').all(req.orgId);
+    data.taskInstances = await db.prepare('SELECT * FROM task_instances WHERE organization_id = ?').all(req.orgId);
     data.actions = await db.prepare('SELECT * FROM actions WHERE organization_id = ?').all(req.orgId);
   }
   if (includes.includes('risks')) {
@@ -3663,7 +3790,7 @@ app.post('/api/admin/backups', requireAdmin, async (req, res) => {
     exportedAt: new Date().toISOString(),
     version: '1.0',
     tasks: await db.prepare('SELECT * FROM tasks WHERE organization_id = ?').all(req.orgId),
-    completions: await db.prepare('SELECT * FROM completions WHERE organization_id = ?').all(req.orgId),
+    taskInstances: await db.prepare('SELECT * FROM task_instances WHERE organization_id = ?').all(req.orgId),
     actions: await db.prepare('SELECT * FROM actions WHERE organization_id = ?').all(req.orgId),
     risks: await db.prepare('SELECT * FROM risks WHERE organization_id = ?').all(req.orgId),
     treatments: await db.prepare('SELECT * FROM risk_treatments WHERE organization_id = ?').all(req.orgId),
@@ -3733,10 +3860,12 @@ app.post('/api/admin/cleanup', requireAdmin, async (req, res) => {
   let result = { affected: 0 };
 
   if (type === 'history') {
-    // Delete completions older than 1 year (scoped to current org)
+    // Delete completed/skipped task instances older than 1 year (scoped to current org)
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-    const r = await db.prepare("DELETE FROM completions WHERE completed_at < ? AND organization_id = ?").run(oneYearAgo.toISOString(), req.orgId);
+    const r = await db.prepare(
+      "DELETE FROM task_instances WHERE status IN ('completed','skipped') AND scheduled_date < ? AND organization_id = ?"
+    ).run(oneYearAgo.toISOString().split('T')[0], req.orgId);
     result.affected = r.changes;
   } else if (type === 'logs') {
     // Delete audit logs older than 90 days (scoped to current org)
@@ -5551,11 +5680,14 @@ async function executeAgentTool(toolName, args, orgId, meta = {}) {
       // Verify task belongs to org
       const task = await db.prepare('SELECT * FROM tasks WHERE id = $1 AND organization_id = $2').get(task_id, orgId);
       if (!task) return { error: `Task ${task_id} not found.` };
-      // Insert completion record
+      // Upsert the next_due instance as completed
       await db.prepare(
-        `INSERT INTO completions (organization_id, task_id, completed_by, notes, completed_at)
-         VALUES ($1, $2, $3, $4, NOW())`
-      ).run(orgId, task_id, completed_by, notes);
+        `INSERT INTO task_instances (organization_id, task_id, scheduled_date, status, completed_by, completed_at, notes)
+         VALUES ($1, $2, $3, 'completed', $4, NOW(), $5)
+         ON CONFLICT (task_id, scheduled_date) DO UPDATE
+           SET status = 'completed', completed_by = EXCLUDED.completed_by,
+               completed_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`
+      ).run(orgId, task_id, task.next_due, completed_by, notes);
       // Advance next_due based on recurrence
       const recurrenceMap = { daily: '1 day', weekly: '1 week', biweekly: '2 weeks', monthly: '1 month', quarterly: '3 months', yearly: '1 year' };
       const interval = recurrenceMap[task.recurrence];
