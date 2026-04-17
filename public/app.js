@@ -5,9 +5,9 @@ let meta = { assignees: [], categories: [] };
 let filters = { active: 'true', assignee: '', category: '', priority: '', search: '' };
 let actionFilters = { status: '', priority: '', assignee: '' };
 let yearlyFilters = { priority: '', overdue_only: false, search: '' };
-let historySearch = '';
+let taskLogSearch = '';
 let yearlyYear = new Date().getFullYear();
-let lastCompletionContext = null; // { completion_id, task_id }
+let lastInstanceContext = null; // { instance_id, task_id, scheduled_date }
 let yearlyData = null; // cached yearly API data
 let yearlyUpcomingCache = []; // raw overdue+upcoming items for filter re-renders
 let currentUser = null;
@@ -15,7 +15,7 @@ let isSuperadmin = false;
 let activeOrg = null; // { id, name, slug } when superadmin is inside an org
 
 // --- Operational Planning process context ---
-const OP_PLAN_VIEWS = ['tasks', 'yearly', 'actions', 'history'];
+const OP_PLAN_VIEWS = ['tasks', 'yearly', 'actions', 'task-log'];
 let opPlanContext = { type: 'all', id: null }; // type: 'all' | 'process' | 'bundle'
 let opPlanProcesses = []; // cached list of processes from org_architecture
 let opPlanBundles = [];   // cached list of plan_bundles
@@ -509,7 +509,7 @@ function switchView(view) {
   if (view === 'tasks') loadTasks();
   else if (view === 'yearly') loadYearlyPlan();
   else if (view === 'actions') loadActions();
-  else if (view === 'history') loadHistory();
+  else if (view === 'task-log') loadTaskLog();
   else if (view === 'audit-plan') loadAuditPlan();
   else if (view === 'audit-execute') loadAuditExecuteView();
   else if (view === 'audit-ncrs') loadNcrs();
@@ -982,96 +982,146 @@ function toggleTaskLinks(taskId) {
   renderCrossLinks('task', taskId, `task-links-${taskId}`);
 }
 
-// --- History ---
-let historyFilters = { task_id: '', completed_by: '', from: '', to: '' };
+// --- Task Log (scheduled instances of each task series) ---
+let taskLogTab = 'pending'; // 'pending' | 'completed' | 'skipped'
+let taskLogFilters = { task_id: '', completed_by: '' };
 
-async function loadHistory() {
-  const params = new URLSearchParams({ limit: '200' });
-  if (historyFilters.task_id) params.set('task_id', historyFilters.task_id);
-  if (historyFilters.completed_by) params.set('completed_by', historyFilters.completed_by);
-  if (historyFilters.from) params.set('from', historyFilters.from);
-  if (historyFilters.to) params.set('to', historyFilters.to);
-  let completions = await api(`/api/completions?${params}`);
-  // Apply process context filter
-  const histCtxNames = getOpPlanContextNames();
-  if (histCtxNames) completions = completions.filter(c => histCtxNames.includes(c.task_category));
-  // Apply client-side search
-  if (historySearch) {
-    const q = historySearch.toLowerCase();
-    completions = completions.filter(c =>
-      (c.task_title || '').toLowerCase().includes(q) ||
-      (c.completed_by || '').toLowerCase().includes(q) ||
-      (c.notes || '').toLowerCase().includes(q)
-    );
-  }
-  renderHistoryFilters(completions);
-  const list = document.getElementById('history-list');
-  if (completions.length === 0) {
-    list.innerHTML = '<div class="empty-state">No completions match filters</div>';
-    return;
-  }
-  list.innerHTML = completions.map(c => {
-    let evidenceFiles = [];
-    try { evidenceFiles = JSON.parse(c.evidence_files || '[]'); } catch(e) {}
-    return `<div class="history-item">
-      <div class="hi-info">
-        <strong style="cursor:pointer;color:var(--primary)" onclick="openTaskDetailModal(${c.task_id})">${esc(c.task_title)}</strong>
-        ${c.task_category && c.task_category !== 'General' ? `<span class="op-ctx-process-tag" style="margin-left:6px">${esc(c.task_category)}</span>` : ''}
-        <div class="hi-meta">${c.completed_by ? 'by ' + esc(c.completed_by) : 'Unknown'}${c.notes ? ' — ' + esc(c.notes) : ''}</div>
-        ${evidenceFiles.length > 0 ? `<div class="hi-meta">${evidenceFiles.map(ef => `<span style="font-size:11px;cursor:pointer;text-decoration:underline;margin-right:8px" onclick="window.open('/api/completions/${c.id}/evidence/${ef.id}/download','_blank')">&#128206; ${esc(ef.name)}</span>`).join('')}</div>` : ''}
-        ${c.action_count > 0 ? `<div class="hi-meta"><span class="badge badge-${c.open_action_count > 0 ? 'high' : 'low'}">${c.open_action_count} open / ${c.action_count} actions</span></div>` : ''}
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <div class="hi-date">${new Date(c.completed_at).toLocaleString()}</div>
-        ${actionMenu([
-          { label: '&#128203; View Actions', onclick: `viewCompletionActions(${c.id}, ${c.task_id})` },
-        ])}
-      </div>
-    </div>`;
-  }).join('');
+function switchTaskLogTab(tab) {
+  taskLogTab = tab;
+  document.querySelectorAll('#task-log-tabs .tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  loadTaskLog();
 }
 
-function renderHistoryFilters(completions) {
-  const bar = document.getElementById('history-filters-bar');
-  // Use allTasks (stable list) for task dropdown so options don't disappear when other filters narrow results
-  const taskOptions = allTasks.length
-    ? allTasks.map(t => `<option value="${t.id}" ${historyFilters.task_id == t.id ? 'selected' : ''}>${esc(t.title)}</option>`).join('')
-    : [...new Map(completions.map(c => [c.task_id, c.task_title])).entries()]
-        .map(([id, title]) => `<option value="${id}" ${historyFilters.task_id == id ? 'selected' : ''}>${esc(title)}</option>`).join('');
-  const completers = [...new Set(completions.map(c => c.completed_by).filter(Boolean))];
+async function loadTaskLog() {
+  const params = new URLSearchParams({ status: taskLogTab, limit: '500' });
+  if (taskLogFilters.task_id) params.set('task_id', taskLogFilters.task_id);
+  if (taskLogFilters.completed_by) params.set('completed_by', taskLogFilters.completed_by);
+  let instances = await api(`/api/task-instances?${params}`);
+
+  // Apply process context filter (matches on task_category like the rest of Operational Planning)
+  const ctxNames = getOpPlanContextNames();
+  if (ctxNames) instances = instances.filter(i => ctxNames.includes(i.task_category));
+
+  if (taskLogSearch) {
+    const q = taskLogSearch.toLowerCase();
+    instances = instances.filter(i =>
+      (i.task_title || '').toLowerCase().includes(q) ||
+      (i.completed_by || '').toLowerCase().includes(q) ||
+      (i.notes || '').toLowerCase().includes(q)
+    );
+  }
+
+  renderTaskLogFilters(instances);
+  renderTaskLogTable(instances);
+}
+
+function renderTaskLogFilters(instances) {
+  const bar = document.getElementById('task-log-filters-bar');
+  const taskOptions = (allTasks.length ? allTasks : [...new Map(instances.map(i => [i.task_id, { id: i.task_id, title: i.task_title }])).values()])
+    .map(t => `<option value="${t.id}" ${taskLogFilters.task_id == t.id ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
+  const completers = [...new Set(instances.map(i => i.completed_by).filter(Boolean))];
   bar.innerHTML = `
-    <input type="search" placeholder="Search completions..." value="${esc(historySearch)}"
-      style="min-width:180px" oninput="historySearch=this.value;loadHistory()">
-    <select onchange="historyFilters.task_id=this.value;loadHistory()">
-      <option value="">All Tasks</option>
+    <input type="search" placeholder="Search task log..." value="${esc(taskLogSearch)}"
+      style="min-width:180px" oninput="taskLogSearch=this.value;loadTaskLog()">
+    <select onchange="taskLogFilters.task_id=this.value;loadTaskLog()">
+      <option value="">All Series</option>
       ${taskOptions}
     </select>
-    <select onchange="historyFilters.completed_by=this.value;loadHistory()">
-      <option value="">All Completers</option>
-      ${completers.map(n => `<option value="${esc(n)}" ${historyFilters.completed_by === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}
-    </select>
-    <input type="date" value="${historyFilters.from}" onchange="historyFilters.from=this.value;loadHistory()" placeholder="From" title="From date">
-    <input type="date" value="${historyFilters.to}" onchange="historyFilters.to=this.value;loadHistory()" placeholder="To" title="To date">
+    ${taskLogTab === 'completed' ? `
+      <select onchange="taskLogFilters.completed_by=this.value;loadTaskLog()">
+        <option value="">All Completers</option>
+        ${completers.map(n => `<option value="${esc(n)}" ${taskLogFilters.completed_by === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}
+      </select>` : ''}
   `;
 }
 
-function exportCompletionLog() {
-  const rows = document.querySelectorAll('#history-list .history-item');
-  if (rows.length === 0) return alert('No data to export');
-  // Re-fetch and build CSV from what's loaded
-  api(`/api/completions?limit=500`).then(completions => {
-    let csv = 'Date,Task,Completed By,Notes,Actions,Evidence Files\n';
-    for (const c of completions) {
-      let evidenceFiles = [];
-      try { evidenceFiles = JSON.parse(c.evidence_files || '[]'); } catch(e) {}
-      csv += `"${c.completed_at}","${(c.task_title || '').replace(/"/g, '""')}","${(c.completed_by || '').replace(/"/g, '""')}","${(c.notes || '').replace(/"/g, '""')}","${c.action_count || 0}","${evidenceFiles.map(f => f.name).join('; ')}"\n`;
+function renderTaskLogTable(instances) {
+  const tbody = document.getElementById('task-log-table-body');
+  const statusCol = document.getElementById('task-log-status-col');
+  if (statusCol) statusCol.textContent = taskLogTab === 'pending' ? 'Status' : taskLogTab === 'completed' ? 'Completed' : 'Skipped';
+  if (instances.length === 0) {
+    const emptyMsg = taskLogTab === 'pending' ? 'No open tasks in the log. Nice work!' :
+                     taskLogTab === 'completed' ? 'No completed tasks yet.' :
+                     'No skipped tasks.';
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${emptyMsg}</td></tr>`;
+    return;
+  }
+  const today = new Date().toISOString().split('T')[0];
+  tbody.innerHTML = instances.map(i => {
+    const overdue = taskLogTab === 'pending' && i.scheduled_date < today;
+    const scheduledCell = overdue
+      ? `<span style="color:var(--danger);font-weight:600">${i.scheduled_date}</span>`
+      : i.scheduled_date;
+    let statusCell = '';
+    if (taskLogTab === 'pending') {
+      statusCell = overdue
+        ? '<span class="badge badge-overdue">Overdue</span>'
+        : (i.scheduled_date === today ? '<span class="badge badge-due-today">Due Today</span>' : '<span class="badge badge-upcoming">Upcoming</span>');
+    } else if (taskLogTab === 'completed') {
+      const who = i.completed_by ? ` by ${esc(i.completed_by)}` : '';
+      statusCell = `${i.completed_at ? new Date(i.completed_at).toLocaleDateString() : ''}${who}`;
+    } else {
+      statusCell = i.notes ? esc(i.notes) : '<span style="color:var(--text-muted)">—</span>';
     }
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `completion-log-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click(); URL.revokeObjectURL(url);
-  });
+    const menuItems = [];
+    if (taskLogTab === 'pending') {
+      menuItems.push({ label: '&#10003; Complete', onclick: `openInstanceCompleteModal(${i.id})`, cls: 'success' });
+      menuItems.push({ label: '&#8856; Skip', onclick: `skipInstance(${i.id})` });
+    } else {
+      menuItems.push({ label: '&#8635; Reopen', onclick: `reopenInstance(${i.id})` });
+    }
+    menuItems.push({ label: '&#10133; Follow-up', onclick: `createFollowUpForInstance(${i.id},${i.task_id})` });
+    menuItems.push('sep');
+    menuItems.push({ label: '&#128203; View series', onclick: `openTaskDetailModal(${i.task_id})` });
+    return `<tr>
+      <td><strong style="cursor:pointer;color:var(--primary)" onclick="openTaskDetailModal(${i.task_id})">${esc(i.task_title)}</strong></td>
+      <td>${i.task_category && i.task_category !== 'General' ? `<span class="op-ctx-process-tag">${esc(i.task_category)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td>${esc(i.task_assignee || '-')}</td>
+      <td><span class="badge badge-${(i.task_priority || 'Medium').toLowerCase()}">${i.task_priority || 'Medium'}</span></td>
+      <td>${scheduledCell}</td>
+      <td>${statusCell}</td>
+      <td>${actionMenu(menuItems)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function openInstanceCompleteModal(instanceId) {
+  const inst = await api(`/api/task-instances/${instanceId}`);
+  document.getElementById('complete-task-id').value = inst.task_id;
+  document.getElementById('complete-title').textContent = inst.task_title;
+  document.getElementById('complete-by').value = currentUser?.name || '';
+  document.getElementById('complete-notes').value = '';
+  document.getElementById('complete-evidence-upload').style.display = 'none';
+  document.getElementById('complete-evidence-list').innerHTML = '';
+  document.getElementById('complete-modal-title').textContent = `Complete — scheduled ${inst.scheduled_date}`;
+  // Override submit behaviour for instance-direct completion
+  lastInstanceContext = { instance_id: instanceId, task_id: inst.task_id, scheduled_date: inst.scheduled_date };
+  document.getElementById('complete-form').dataset.instanceId = instanceId;
+  document.getElementById('complete-modal').classList.remove('hidden');
+}
+
+async function skipInstance(instanceId) {
+  const notes = prompt('Reason for skipping (optional):') || '';
+  await api(`/api/task-instances/${instanceId}/skip`, { method: 'POST', body: { notes } });
+  invalidateYearlyCache();
+  loadTaskLog();
+}
+
+async function reopenInstance(instanceId) {
+  if (!confirm('Reopen this task instance?')) return;
+  await api(`/api/task-instances/${instanceId}/reopen`, { method: 'POST', body: {} });
+  invalidateYearlyCache();
+  loadTaskLog();
+}
+
+async function createFollowUpForInstance(instanceId, taskId) {
+  lastInstanceContext = { instance_id: instanceId, task_id: taskId, scheduled_date: null };
+  await openActionModal();
+  // openActionModal clears the instance/task id; restore them after the modal is set up.
+  document.getElementById('action-instance-id').value = instanceId;
+  document.getElementById('action-task-id').value = taskId;
 }
 
 // --- Task Detail Modal (read-only timeline view) ---
@@ -1113,14 +1163,14 @@ async function openTaskDetailModal(taskId) {
     for (const c of completions) {
       let evidenceFiles = [];
       try { evidenceFiles = JSON.parse(c.evidence_files || '[]'); } catch(e) {}
-      const actions = await api(`/api/actions?completion_id=${c.id}`);
+      const actions = await api(`/api/actions?instance_id=${c.id}`);
       html += `<div style="border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px;background:#fafbfc">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <span style="font-size:13px;font-weight:600">${new Date(c.completed_at).toLocaleDateString()}</span>
           <span style="font-size:12px;color:var(--text-muted)">${c.completed_by ? 'by ' + esc(c.completed_by) : ''}</span>
         </div>
         ${c.notes ? `<div style="font-size:13px;color:var(--text-muted);margin-bottom:6px">${esc(c.notes)}</div>` : ''}
-        ${evidenceFiles.length > 0 ? `<div style="margin-bottom:6px">${evidenceFiles.map(ef => `<span style="font-size:12px;cursor:pointer;text-decoration:underline;margin-right:10px" onclick="window.open('/api/completions/${c.id}/evidence/${ef.id}/download','_blank')">&#128206; ${esc(ef.name)}</span>`).join('')}</div>` : ''}
+        ${evidenceFiles.length > 0 ? `<div style="margin-bottom:6px">${evidenceFiles.map(ef => `<span style="font-size:12px;cursor:pointer;text-decoration:underline;margin-right:10px" onclick="window.open('/api/task-instances/${c.id}/evidence/${ef.id}/download','_blank')">&#128206; ${esc(ef.name)}</span>`).join('')}</div>` : ''}
         ${actions.length > 0 ? `<div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--border)">${actions.map(a => {
           const cls = a.status === 'open' ? 'badge-high' : a.status === 'in_progress' ? 'badge-medium' : 'badge-low';
           return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
@@ -1253,12 +1303,12 @@ async function saveTask(e) {
 }
 
 // --- Complete Modal ---
-let activeCompletionId = null; // set after first save so evidence can be uploaded
+let activeInstanceId = null; // set after first save so evidence can be uploaded
 
 async function openCompleteModal(taskId) {
   document.getElementById('complete-form').reset();
   document.getElementById('complete-task-id').value = taskId;
-  activeCompletionId = null;
+  activeInstanceId = null;
   document.getElementById('complete-evidence-list').innerHTML = '';
   document.getElementById('complete-evidence-upload').style.display = 'none';
   document.getElementById('complete-modal-title').textContent = 'Mark Complete';
@@ -1279,39 +1329,51 @@ async function openCompleteModal(taskId) {
 
 function closeCompleteModal() {
   document.getElementById('complete-modal').classList.add('hidden');
-  activeCompletionId = null;
+  activeInstanceId = null;
 }
 
 async function submitComplete(e) {
   e.preventDefault();
+  const form = document.getElementById('complete-form');
+  const instanceId = form.dataset.instanceId;
   const taskId = document.getElementById('complete-task-id').value;
-  const result = await api(`/api/tasks/${taskId}/complete`, {
-    method: 'POST',
-    body: {
-      completed_by: document.getElementById('complete-by').value,
-      notes: document.getElementById('complete-notes').value,
-    },
-  });
-  activeCompletionId = result.completion_id;
-  // Enable evidence upload now that we have a completion ID
+  const completedBy = document.getElementById('complete-by').value;
+  const notes = document.getElementById('complete-notes').value;
+
+  let result;
+  let scheduled = null;
+  if (instanceId) {
+    result = await api(`/api/task-instances/${instanceId}/complete`, {
+      method: 'POST',
+      body: { completed_by: completedBy, notes },
+    });
+    activeInstanceId = parseInt(instanceId);
+    scheduled = result.scheduled_date || null;
+    delete form.dataset.instanceId;
+  } else {
+    result = await api(`/api/tasks/${taskId}/complete`, {
+      method: 'POST',
+      body: { completed_by: completedBy, notes },
+    });
+    activeInstanceId = result.instance_id;
+  }
+
   document.getElementById('complete-evidence-upload').style.display = 'block';
   document.getElementById('complete-modal-title').textContent = 'Completed — Attach Evidence';
-  // Swap the form buttons to a "Done" + "Attach More" pattern
   closeCompleteModal();
   invalidateYearlyCache();
-  // Show post-completion action prompt (includes evidence upload option)
-  lastCompletionContext = { completion_id: result.completion_id, task_id: parseInt(taskId) };
+  lastInstanceContext = { instance_id: activeInstanceId, task_id: parseInt(taskId), scheduled_date: scheduled };
   await openPostCompleteModal();
 }
 
-async function uploadCompletionEvidence() {
-  if (!activeCompletionId) return;
+async function uploadInstanceEvidence() {
+  if (!activeInstanceId) return;
   const fileInput = document.getElementById('complete-evidence-file');
   if (!fileInput.files.length) return;
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
   try {
-    const res = await fetch(`/api/completions/${activeCompletionId}/evidence`, { method: 'POST', body: formData });
+    const res = await fetch(`/api/task-instances/${activeInstanceId}/evidence`, { method: 'POST', body: formData });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Upload failed' }));
       alert(err.error || 'Evidence upload failed');
@@ -1322,14 +1384,13 @@ async function uploadCompletionEvidence() {
     return;
   }
   fileInput.value = '';
-  await refreshCompletionEvidence(activeCompletionId);
+  await refreshInstanceEvidence(activeInstanceId);
 }
 
-async function refreshCompletionEvidence(completionId) {
-  const completions = await api(`/api/completions?limit=1`);
-  const comp = completions.find(c => c.id === completionId);
+async function refreshInstanceEvidence(instanceId) {
+  const inst = await api(`/api/task-instances/${instanceId}`);
   let evidenceFiles = [];
-  try { evidenceFiles = JSON.parse(comp?.evidence_files || '[]'); } catch(e) {}
+  try { evidenceFiles = JSON.parse(inst?.evidence_files || '[]'); } catch(e) {}
   const container = document.getElementById('complete-evidence-list') || document.getElementById('post-complete-evidence-list');
   if (!container) return;
   if (evidenceFiles.length === 0) {
@@ -1338,27 +1399,27 @@ async function refreshCompletionEvidence(completionId) {
   }
   container.innerHTML = evidenceFiles.map(ef => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px">
     <span>&#128206;</span>
-    <span style="cursor:pointer;text-decoration:underline;flex:1" onclick="window.open('/api/completions/${completionId}/evidence/${ef.id}/download','_blank')">${esc(ef.name)}</span>
+    <span style="cursor:pointer;text-decoration:underline;flex:1" onclick="window.open('/api/task-instances/${instanceId}/evidence/${ef.id}/download','_blank')">${esc(ef.name)}</span>
     <span style="color:var(--text-muted);font-size:11px">${ef.size ? (ef.size / 1024).toFixed(1) + ' KB' : ''}</span>
-    <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 6px" onclick="removeCompletionEvidence(${completionId},${ef.id})">&times;</button>
+    <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 6px" onclick="removeInstanceEvidence(${instanceId},${ef.id})">&times;</button>
   </div>`).join('');
 }
 
-async function removeCompletionEvidence(completionId, fileId) {
+async function removeInstanceEvidence(instanceId, fileId) {
   if (!confirm('Remove this evidence file?')) return;
-  await api(`/api/completions/${completionId}/evidence/${fileId}`, { method: 'DELETE' });
-  await refreshCompletionEvidence(completionId);
+  await api(`/api/task-instances/${instanceId}/evidence/${fileId}`, { method: 'DELETE' });
+  await refreshInstanceEvidence(instanceId);
 }
 
 async function uploadPostCompleteEvidence() {
-  if (!lastCompletionContext) return;
+  if (!lastInstanceContext) return;
   const fileInput = document.getElementById('post-complete-evidence-file');
   if (!fileInput.files.length) return;
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
-  await fetch(`/api/completions/${lastCompletionContext.completion_id}/evidence`, { method: 'POST', body: formData });
+  await fetch(`/api/task-instances/${lastInstanceContext.instance_id}/evidence`, { method: 'POST', body: formData });
   fileInput.value = '';
-  await refreshCompletionEvidence(lastCompletionContext.completion_id);
+  await refreshInstanceEvidence(lastInstanceContext.instance_id);
 }
 
 
@@ -1385,10 +1446,10 @@ async function openPostCompleteModal() {
 
   // Show evidence section for this completion
   const evidenceWrap = document.getElementById('post-complete-evidence-wrap');
-  if (evidenceWrap && lastCompletionContext) {
+  if (evidenceWrap && lastInstanceContext) {
     evidenceWrap.style.display = 'block';
-    activeCompletionId = lastCompletionContext.completion_id;
-    await refreshCompletionEvidence(lastCompletionContext.completion_id);
+    activeInstanceId = lastInstanceContext.instance_id;
+    await refreshInstanceEvidence(lastInstanceContext.instance_id);
   }
 
   document.getElementById('post-complete-modal').classList.remove('hidden');
@@ -1396,13 +1457,13 @@ async function openPostCompleteModal() {
 
 function closePostCompleteModal() {
   document.getElementById('post-complete-modal').classList.add('hidden');
-  lastCompletionContext = null;
-  activeCompletionId = null;
+  lastInstanceContext = null;
+  activeInstanceId = null;
   refreshCurrentView();
 }
 
-async function linkCompletionToAudit() {
-  if (!lastCompletionContext) return;
+async function linkInstanceToAudit() {
+  if (!lastInstanceContext) return;
   // Fetch active audits with checklist items
   const audits = await api('/api/audits?status=in_progress');
   if (audits.length === 0) return alert('No in-progress audits found. Start an audit first.');
@@ -1414,23 +1475,23 @@ async function linkCompletionToAudit() {
   // Create cross-link: task → audit
   await api('/api/cross-links', {
     method: 'POST',
-    body: { source_type: 'task', source_id: lastCompletionContext.task_id, target_type: 'audit', target_id: auditId }
+    body: { source_type: 'task', source_id: lastInstanceContext.task_id, target_type: 'audit', target_id: auditId }
   });
   const container = document.getElementById('post-complete-crosslinks');
   const audit = audits.find(a => a.id === auditId);
   container.innerHTML += `<div style="font-size:12px;padding:4px 0">&#9745; Linked to audit: <strong>${esc(audit?.title || 'Audit #' + auditId)}</strong></div>`;
 }
 
-async function createNcrFromCompletion() {
-  if (!lastCompletionContext) return;
+async function createNcrFromInstance() {
+  if (!lastInstanceContext) return;
   const title = prompt('NCR title (describe the nonconformity):');
   if (!title) return;
   // Create a new action flagged as NCR-type
   const action = await api('/api/actions', {
     method: 'POST',
     body: {
-      completion_id: lastCompletionContext.completion_id,
-      task_id: lastCompletionContext.task_id,
+      instance_id: lastInstanceContext.instance_id,
+      task_id: lastInstanceContext.task_id,
       title: '[NCR] ' + title,
       description: 'Nonconformity raised from task completion',
       priority: 'High',
@@ -1440,7 +1501,7 @@ async function createNcrFromCompletion() {
   try {
     const ncr = await api('/api/ncrs', {
       method: 'POST',
-      body: { title, source: 'task_completion', source_id: lastCompletionContext.task_id, severity: 'major' }
+      body: { title, source: 'task_completion', source_id: lastInstanceContext.task_id, severity: 'major' }
     });
     if (ncr && ncr.id) {
       await api('/api/cross-links', {
@@ -1463,12 +1524,12 @@ async function addQuickAction() {
   if (!title) return alert('Action title is required');
 
   const assigneeName = document.getElementById('quick-action-assignee').value;
-  const taskId = lastCompletionContext.task_id;
+  const taskId = lastInstanceContext.task_id;
 
   const action = await api('/api/actions', {
     method: 'POST',
     body: {
-      completion_id: lastCompletionContext.completion_id,
+      instance_id: lastInstanceContext.instance_id,
       task_id: taskId,
       title,
       assignee: assigneeName,
@@ -1617,9 +1678,9 @@ async function openActionModal(id) {
   const form = document.getElementById('action-form');
   form.reset();
   document.getElementById('action-id').value = '';
-  document.getElementById('action-completion-id').value = '';
+  document.getElementById('action-instance-id').value = '';
   document.getElementById('action-task-id').value = '';
-  document.getElementById('action-modal-title').textContent = 'New Action';
+  document.getElementById('action-modal-title').textContent = 'New Follow-up';
   document.getElementById('action-resolved-by-group').classList.add('hidden');
 
   // Populate Role + Process dropdowns from Architecture
@@ -1641,9 +1702,9 @@ async function openActionModal(id) {
 
   if (id) {
     const action = await api(`/api/actions/${id}`);
-    document.getElementById('action-modal-title').textContent = 'Edit Action';
+    document.getElementById('action-modal-title').textContent = 'Edit Follow-up';
     document.getElementById('action-id').value = action.id;
-    document.getElementById('action-completion-id').value = action.completion_id;
+    document.getElementById('action-instance-id').value = action.instance_id || '';
     document.getElementById('action-task-id').value = action.task_id;
     document.getElementById('action-title').value = action.title;
     document.getElementById('action-description').value = action.description;
@@ -1695,7 +1756,8 @@ async function saveAction(e) {
   if (id) {
     await api(`/api/actions/${id}`, { method: 'PUT', body });
   } else {
-    body.completion_id = document.getElementById('action-completion-id').value;
+    const instVal = document.getElementById('action-instance-id').value;
+    body.instance_id = instVal ? parseInt(instVal) : null;
     taskId = document.getElementById('action-task-id').value;
     body.task_id = taskId;
     const result = await api('/api/actions', { method: 'POST', body });
@@ -1726,10 +1788,10 @@ async function saveAction(e) {
   refreshCurrentView();
 }
 
-// View actions for a specific completion (from history)
-async function viewCompletionActions(completionId, taskId) {
-  lastCompletionContext = { completion_id: completionId, task_id: taskId };
-  const actions = await api(`/api/actions?completion_id=${completionId}`);
+// View follow-ups for a specific task-instance
+async function viewInstanceActions(instanceId, taskId) {
+  lastInstanceContext = { instance_id: instanceId, task_id: taskId, scheduled_date: null };
+  const actions = await api(`/api/actions?instance_id=${instanceId}`);
 
   const list = document.getElementById('post-complete-actions-list');
   list.innerHTML = actions.map(a => {
@@ -9023,7 +9085,7 @@ async function setOpPlanContext(type, id) {
   if (currentView === 'tasks') loadTasks();
   else if (currentView === 'yearly') loadYearlyPlan();
   else if (currentView === 'actions') loadActions();
-  else if (currentView === 'history') loadHistory();
+  else if (currentView === 'task-log') loadTaskLog();
 }
 
 // ─── Bundle modal ─────────────────────────────────────────────────────────────

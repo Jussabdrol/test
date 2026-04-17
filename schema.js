@@ -31,21 +31,26 @@ const POSTGRES_SCHEMA_SQL = `
     updated_at TIMESTAMP DEFAULT NOW()
   );
 
-  CREATE TABLE IF NOT EXISTS completions (
-    id SERIAL PRIMARY KEY,
+  CREATE TABLE IF NOT EXISTS task_instances (
+    id              SERIAL PRIMARY KEY,
     organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    task_id INTEGER NOT NULL,
-    completed_by TEXT DEFAULT '',
-    completed_at TIMESTAMP DEFAULT NOW(),
-    notes TEXT DEFAULT '',
-    evidence_files TEXT DEFAULT '[]',
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    task_id         INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    scheduled_date  TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending','completed','skipped')),
+    completed_by    TEXT DEFAULT '',
+    completed_at    TIMESTAMP DEFAULT NULL,
+    notes           TEXT DEFAULT '',
+    evidence_files  TEXT DEFAULT '[]',
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW(),
+    UNIQUE (task_id, scheduled_date)
   );
 
   CREATE TABLE IF NOT EXISTS actions (
     id SERIAL PRIMARY KEY,
     organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    completion_id INTEGER DEFAULT NULL,
+    instance_id INTEGER DEFAULT NULL,
     task_id INTEGER DEFAULT NULL,
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
@@ -56,7 +61,7 @@ const POSTGRES_SCHEMA_SQL = `
     resolved_by TEXT DEFAULT '',
     resolved_at TIMESTAMP DEFAULT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
-    FOREIGN KEY (completion_id) REFERENCES completions(id) ON DELETE SET NULL,
+    FOREIGN KEY (instance_id) REFERENCES task_instances(id) ON DELETE SET NULL,
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
   );
 
@@ -502,8 +507,12 @@ const POSTGRES_SCHEMA_SQL = `
   -- Migrations: add legal_entities to org_mission
   ALTER TABLE org_mission ADD COLUMN IF NOT EXISTS legal_entities TEXT DEFAULT '[]';
 
-  -- Migrations: add evidence_files to completions
-  ALTER TABLE completions ADD COLUMN IF NOT EXISTS evidence_files TEXT DEFAULT '[]';
+  -- Migrations: Task Log refactor — drop completions, migrate actions.completion_id -> instance_id
+  ALTER TABLE actions DROP CONSTRAINT IF EXISTS actions_completion_id_fkey;
+  ALTER TABLE actions ADD COLUMN IF NOT EXISTS instance_id INTEGER DEFAULT NULL
+    REFERENCES task_instances(id) ON DELETE SET NULL;
+  ALTER TABLE actions DROP COLUMN IF EXISTS completion_id;
+  DROP TABLE IF EXISTS completions CASCADE;
 
   -- Migrations: backfill NULL organization_id on audit_checklist from parent audit
   UPDATE audit_checklist SET organization_id = (
@@ -617,12 +626,14 @@ const POSTGRES_SCHEMA_SQL = `
   -- Performance indexes: FK columns and common filter columns that were missing.
   -- All use IF NOT EXISTS so they are safe to re-run on every startup.
 
-  -- completions: task lookups and dashboard date range queries
-  CREATE INDEX IF NOT EXISTS idx_completions_task_id        ON completions (task_id);
-  CREATE INDEX IF NOT EXISTS idx_completions_org_completed  ON completions (organization_id, completed_at);
+  -- task_instances: Task Log queries — by task, org+status, org+scheduled_date, org+completed_at
+  CREATE INDEX IF NOT EXISTS idx_task_instances_task       ON task_instances (task_id);
+  CREATE INDEX IF NOT EXISTS idx_task_instances_org_status ON task_instances (organization_id, status);
+  CREATE INDEX IF NOT EXISTS idx_task_instances_scheduled  ON task_instances (organization_id, scheduled_date);
+  CREATE INDEX IF NOT EXISTS idx_task_instances_completed  ON task_instances (organization_id, completed_at);
 
   -- actions: linked entity lookups
-  CREATE INDEX IF NOT EXISTS idx_actions_completion_id  ON actions (completion_id);
+  CREATE INDEX IF NOT EXISTS idx_actions_instance_id    ON actions (instance_id);
   CREATE INDEX IF NOT EXISTS idx_actions_task_id        ON actions (task_id);
   CREATE INDEX IF NOT EXISTS idx_actions_process_id     ON actions (process_id);
   CREATE INDEX IF NOT EXISTS idx_actions_org_status     ON actions (organization_id, status);
