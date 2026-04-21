@@ -225,6 +225,59 @@ function verifyToken(token) {
 const cookieParser = require('cookie-parser');
 app.use(cookieParser());
 
+// ---------------------------------------------------------------------------
+// CSRF protection (double-submit cookie)
+// ---------------------------------------------------------------------------
+// We issue a non-httpOnly csrf_token cookie on first visit. The SPA's fetch
+// wrapper echoes the value back in an X-CSRF-Token header on every state-
+// changing request. SameSite=Lax on the session cookie already blocks the
+// common cross-site POST; the header check closes the remaining gaps
+// (subdomain attacks, browsers that lax-allow top-level POSTs, etc.) and
+// satisfies CodeQL's "missing CSRF middleware" rule.
+const CSRF_COOKIE = 'csrf_token';
+const CSRF_HEADER = 'x-csrf-token';
+const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// Login has no CSRF cookie yet; SAML callbacks are POSTed by the external IdP.
+const CSRF_EXEMPT_PATHS = new Set(['/api/auth/login']);
+
+function csrfTokensMatch(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length || ab.length === 0) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+app.use((req, res, next) => {
+  // Ensure the client has a CSRF cookie. Non-httpOnly by design so the SPA can
+  // read it and echo it back in a header — the attacker cannot read it because
+  // they are on a different origin.
+  if (!req.cookies?.[CSRF_COOKIE]) {
+    const token = crypto.randomBytes(32).toString('base64url');
+    res.cookie(CSRF_COOKIE, token, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production' || req.protocol === 'https',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+    });
+    req.cookies = req.cookies || {};
+    req.cookies[CSRF_COOKIE] = token;
+  }
+  next();
+});
+
+app.use((req, res, next) => {
+  if (!CSRF_UNSAFE_METHODS.has(req.method)) return next();
+  if (CSRF_EXEMPT_PATHS.has(req.path) || req.path.startsWith('/saml/')) return next();
+  const cookieToken = req.cookies?.[CSRF_COOKIE];
+  const headerToken = req.headers[CSRF_HEADER];
+  if (!csrfTokensMatch(cookieToken, headerToken)) {
+    return res.status(403).json({ error: 'CSRF validation failed' });
+  }
+  next();
+});
+
 app.use((req, res, next) => {
   const token = req.cookies?.session_token;
   const payload = verifyToken(token);
