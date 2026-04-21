@@ -143,6 +143,10 @@ app.use(helmet({
         'https://cdnjs.cloudflare.com',
         'https://unpkg.com',
       ],
+      // helmet's default is 'none', which blocks every inline onclick
+      // handler in the SPA. Keep this permissive until we migrate to
+      // delegated listeners.
+      'script-src-attr': ["'unsafe-inline'"],
       'style-src': [
         "'self'",
         "'unsafe-inline'",
