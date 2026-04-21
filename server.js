@@ -32,8 +32,55 @@ const supabaseAdmin = process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABA
 
 const UPLOADS_BUCKET = 'uploads';
 
+// Allowed MIME types for general evidence/document uploads. SVG is intentionally
+// excluded because it can carry inline scripts. HTML-ish types are rejected to
+// stop stored-XSS via uploaded files that a browser might render.
+const ALLOWED_UPLOAD_MIMES = new Set([
+  'application/pdf',
+  'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/bmp',
+  'text/plain', 'text/csv',
+  'application/json', 'application/xml', 'text/xml',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/zip', 'application/x-zip-compressed',
+  'application/octet-stream', // generic binary — still forced to download by storage headers
+]);
+const BLOCKED_UPLOAD_EXTENSIONS = new Set([
+  '.html', '.htm', '.xhtml', '.svg', '.xml', '.js', '.mjs', '.cjs', '.php',
+  '.phtml', '.phar', '.jsp', '.asp', '.aspx', '.cgi', '.pl', '.py', '.rb',
+  '.sh', '.bat', '.cmd', '.ps1', '.exe', '.dll', '.so', '.msi',
+]);
+
+function uploadFileFilter(allowed) {
+  return (req, file, cb) => {
+    const mime = (file.mimetype || '').toLowerCase();
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (BLOCKED_UPLOAD_EXTENSIONS.has(ext)) {
+      return cb(new Error(`File type not allowed: ${ext}`));
+    }
+    if (!allowed.has(mime)) {
+      return cb(new Error(`MIME type not allowed: ${mime || 'unknown'}`));
+    }
+    cb(null, true);
+  };
+}
+
 // File upload setup - use memory storage; files are sent to Supabase Storage
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: uploadFileFilter(ALLOWED_UPLOAD_MIMES),
+});
+// PDF-only uploads for report endpoints
+const uploadPdf = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: uploadFileFilter(new Set(['application/pdf'])),
+});
 
 // Helper: generate a unique storage path for an uploaded file
 function storageKey(folder, originalname) {
@@ -56,12 +103,14 @@ async function uploadToSupabase(folder, file) {
   return key;
 }
 
-// Helper: get a short-lived signed download URL from Supabase Storage
-async function getSignedUrl(storagePath, expiresIn = 300) {
+// Helper: get a short-lived signed download URL from Supabase Storage.
+// Forces Content-Disposition: attachment so the browser never renders
+// user-uploaded files inline (defense against HTML/SVG/PDF-hosted XSS).
+async function getSignedUrl(storagePath, expiresIn = 300, downloadName = true) {
   if (!storageClient) throw new Error('Supabase is not configured (missing SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY)');
   const { data, error } = await storageClient.storage
     .from(UPLOADS_BUCKET)
-    .createSignedUrl(storagePath, expiresIn);
+    .createSignedUrl(storagePath, expiresIn, { download: downloadName });
   if (error) throw new Error(`Supabase signed URL failed: ${error.message}`);
   return data.signedUrl;
 }
@@ -78,11 +127,46 @@ app.use(express.json());
 app.set('trust proxy', 1);
 
 // Security headers (Helmet)
-// CSP disabled for now to avoid breaking the existing vanilla JS frontend;
-// enable and tighten once a nonce/hash strategy is defined.
+// Baseline CSP. Keeps 'unsafe-inline' for scripts/styles because the SPA still
+// relies on inline onclick handlers and style attributes — tightening this
+// further requires a nonce/hash refactor. object-src/frame-ancestors/base-uri
+// are locked down regardless to block the common XSS escalation paths.
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      'default-src': ["'self'"],
+      'script-src': [
+        "'self'",
+        "'unsafe-inline'",
+        "'unsafe-eval'", // required by jsPDF
+        'https://cdnjs.cloudflare.com',
+        'https://unpkg.com',
+      ],
+      'style-src': [
+        "'self'",
+        "'unsafe-inline'",
+        'https://fonts.googleapis.com',
+        'https://unpkg.com',
+      ],
+      'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com'],
+      'img-src': [
+        "'self'",
+        'data:',
+        'blob:',
+        'https://*.tile.openstreetmap.org',
+        'https://unpkg.com',
+      ],
+      'connect-src': ["'self'", 'https://*.supabase.co'],
+      'frame-ancestors': ["'none'"],
+      'object-src': ["'none'"],
+      'base-uri': ["'self'"],
+      'form-action': ["'self'"],
+      'upgrade-insecure-requests': [],
+    },
+  },
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'same-origin' },
 }));
 
 // Rate limiting – brute force protection for auth endpoints
@@ -318,6 +402,15 @@ function parseIntParam(value, defaultVal, { min = 0, max = Infinity } = {}) {
   const n = parseInt(value, 10);
   if (!Number.isFinite(n)) return defaultVal;
   return Math.min(Math.max(n, min), max);
+}
+
+// Strict YYYY-MM-DD validator. Rejects anything that could smuggle markup
+// or invalid calendar dates into scheduled_date/start_date/next_due fields.
+function isValidDateStr(v) {
+  if (typeof v !== 'string') return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(v + 'T00:00:00Z');
+  return !isNaN(d.getTime()) && d.toISOString().startsWith(v);
 }
 
 // Improvement 13: allowed entity types for cross-link operations
@@ -830,8 +923,13 @@ app.get('/api/tasks/:id', requireOrgContext, async (req, res) => {
 app.post('/api/tasks', requireOrgContext, async (req, res) => {
   const { title, description, assignee, category, priority, recurrence, custom_days, day_of_week, day_of_month, start_date } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
+  if (start_date !== undefined && start_date !== null && start_date !== '' && !isValidDateStr(start_date)) {
+    return res.status(400).json({ error: 'start_date must be in YYYY-MM-DD format' });
+  }
 
-  const startDt = start_date || new Date().toISOString().split('T')[0];
+  const startDt = (start_date && isValidDateStr(start_date))
+    ? start_date
+    : new Date().toISOString().split('T')[0];
   const nextDue = startDt;
 
   const result = await db.prepare(`
@@ -860,6 +958,13 @@ app.post('/api/tasks', requireOrgContext, async (req, res) => {
 app.put('/api/tasks/:id', requireOrgContext, async (req, res) => {
   const existing = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Task not found' });
+
+  for (const dateField of ['start_date', 'next_due']) {
+    const v = req.body[dateField];
+    if (v !== undefined && v !== null && v !== '' && !isValidDateStr(v)) {
+      return res.status(400).json({ error: `${dateField} must be in YYYY-MM-DD format` });
+    }
+  }
 
   const fields = ['title', 'description', 'assignee', 'category', 'priority', 'recurrence', 'custom_days', 'day_of_week', 'day_of_month', 'start_date', 'next_due', 'is_active'];
   const updates = [];
@@ -1094,7 +1199,7 @@ app.get('/api/task-instances/:id/evidence/:fileId/download', requireOrgContext, 
   const file = evidenceFiles.find(f => String(f.id) === String(req.params.fileId));
   if (!file || file.type !== 'file') return res.status(404).json({ error: 'File not found' });
   try {
-    const url = await getSignedUrl(file.path);
+    const url = await getSignedUrl(file.path, 300, file.name || true);
     res.redirect(url);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1550,7 +1655,7 @@ app.delete('/api/audits/:id', requireOrgContext, async (req, res) => {
 });
 
 // Upload client-generated audit report PDF and save to Document Control
-app.post('/api/audits/:id/upload-report', requireOrgContext, upload.single('pdf'), async (req, res) => {
+app.post('/api/audits/:id/upload-report', requireOrgContext, uploadPdf.single('pdf'), async (req, res) => {
   const audit = await db.prepare('SELECT * FROM audits WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!audit) return res.status(404).json({ error: 'Audit not found' });
   if (!req.file) return res.status(400).json({ error: 'No PDF file provided' });
@@ -1773,7 +1878,7 @@ app.get('/api/checklist/:id/evidence/:fileId/download', requireOrgContext, async
   if (!file || file.type !== 'file') return res.status(404).json({ error: 'File not found' });
 
   try {
-    const signedUrl = await getSignedUrl(file.path);
+    const signedUrl = await getSignedUrl(file.path, 300, file.name || true);
     res.redirect(signedUrl);
   } catch (err) {
     res.status(404).json({ error: 'File not found in storage' });
@@ -2481,7 +2586,7 @@ app.put('/api/soa/:requirementId', requireOrgContext, async (req, res) => {
 });
 
 // Upload SoA PDF and save to Document Control
-app.post('/api/soa/upload-report', requireOrgContext, upload.single('pdf'), async (req, res) => {
+app.post('/api/soa/upload-report', requireOrgContext, uploadPdf.single('pdf'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No PDF file provided' });
 
   const org = await db.prepare('SELECT name FROM organizations WHERE id = ?').get(req.orgId);
@@ -3247,7 +3352,7 @@ app.get('/api/documents/:id/download', requireOrgContext, async (req, res) => {
 
   if (!doc.file_path) return res.status(404).json({ error: 'File not found' });
   try {
-    const signedUrl = await getSignedUrl(doc.file_path);
+    const signedUrl = await getSignedUrl(doc.file_path, 300, doc.file_name || doc.title || true);
     res.redirect(signedUrl);
   } catch (err) {
     res.status(404).json({ error: 'File not found in storage' });
@@ -3943,7 +4048,7 @@ app.get('/api/admin/backups/:id/download', requireAdmin, async (req, res) => {
   if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
   try {
-    const signedUrl = await getSignedUrl(`backups/${backup.filename}`);
+    const signedUrl = await getSignedUrl(`backups/${backup.filename}`, 300, backup.filename || true);
     res.redirect(signedUrl);
   } catch (err) {
     res.status(404).json({ error: 'Backup file not found in storage' });
@@ -4866,7 +4971,7 @@ app.post('/api/management-reviews/:id/generate-report', requireOrgContext, async
 });
 
 // Upload a client-generated PDF report for a management review and attach it to Document Control
-app.post('/api/management-reviews/:id/upload-report', requireOrgContext, upload.single('pdf'), async (req, res) => {
+app.post('/api/management-reviews/:id/upload-report', requireOrgContext, uploadPdf.single('pdf'), async (req, res) => {
   const review = await db.prepare(
     'SELECT * FROM management_reviews WHERE id = ? AND organization_id = ?'
   ).get(req.params.id, req.orgId);
@@ -6843,6 +6948,13 @@ app.get('*', async (req, res) => {
 
 // Global error handler - must be last middleware
 app.use((err, req, res, next) => {
+  // Surface upload validation failures as 400 so the UI can show a helpful message
+  if (err && (err instanceof multer.MulterError ||
+      (typeof err.message === 'string' &&
+       (err.message.startsWith('MIME type not allowed') ||
+        err.message.startsWith('File type not allowed'))))) {
+    return res.status(400).json({ error: err.message });
+  }
   console.error('Unhandled error:', err.stack || err);
   res.status(500).json({ error: 'Internal server error' });
 });

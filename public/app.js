@@ -817,7 +817,7 @@ async function loadDashboard() {
         <div class="task-card">
           <div class="task-card-info" style="cursor:pointer" onclick="openActionModal(${a.id})">
             <h4 style="color:var(--primary)">${esc(a.title)}</h4>
-            <div class="meta">From: ${esc(a.task_title)} &middot; ${esc(a.assignee || 'Unassigned')} &middot; Due: ${a.due_date}</div>
+            <div class="meta">From: ${esc(a.task_title)} &middot; ${esc(a.assignee || 'Unassigned')} &middot; Due: ${esc(a.due_date || '')}</div>
           </div>
           ${actionMenu([
             { label: '&#9654; Start', onclick: `updateActionStatusAndRefresh(${a.id},'in_progress')`, cls: 'primary' },
@@ -845,7 +845,7 @@ function taskCard(task) {
     <div class="task-card">
       <div class="task-card-info" style="cursor:pointer" onclick="openTaskModal(${task.id})">
         <h4 style="color:var(--primary)">${esc(task.title)}</h4>
-        <div class="meta">${esc(task.assignee || 'Unassigned')} &middot; ${task.recurrence} &middot; Due: ${task.next_due}</div>
+        <div class="meta">${esc(task.assignee || 'Unassigned')} &middot; ${esc(task.recurrence || '')} &middot; Due: ${esc(task.next_due || '')}</div>
       </div>
       ${actionMenu([
         { label: '&#10003; Mark Done', onclick: `openCompleteModal(${task.id})`, cls: 'success' },
@@ -1052,8 +1052,8 @@ function renderTaskLogTable(instances) {
   tbody.innerHTML = instances.map(i => {
     const overdue = taskLogTab === 'pending' && i.scheduled_date < today;
     const scheduledCell = overdue
-      ? `<span style="color:var(--danger);font-weight:600">${i.scheduled_date}</span>`
-      : i.scheduled_date;
+      ? `<span style="color:var(--danger);font-weight:600">${esc(i.scheduled_date || '')}</span>`
+      : esc(i.scheduled_date || '');
     let statusCell = '';
     if (taskLogTab === 'pending') {
       statusCell = overdue
@@ -1079,7 +1079,7 @@ function renderTaskLogTable(instances) {
       <td><strong style="cursor:pointer;color:var(--primary)" onclick="openTaskDetailModal(${i.task_id})">${esc(i.task_title)}</strong></td>
       <td>${i.task_category && i.task_category !== 'General' ? `<span class="op-ctx-process-tag">${esc(i.task_category)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
       <td>${esc(i.task_assignee || '-')}</td>
-      <td><span class="badge badge-${(i.task_priority || 'Medium').toLowerCase()}">${i.task_priority || 'Medium'}</span></td>
+      <td><span class="badge badge-${(i.task_priority || 'Medium').toLowerCase()}">${esc(i.task_priority || 'Medium')}</span></td>
       <td>${scheduledCell}</td>
       <td>${statusCell}</td>
       <td>${actionMenu(menuItems)}</td>
@@ -1151,8 +1151,8 @@ async function openTaskDetailModal(taskId) {
   html += `<div style="display:flex;gap:16px;font-size:13px;color:var(--text-muted);margin-bottom:16px;flex-wrap:wrap">
     ${task.assignee ? `<span>&#128100; ${esc(task.assignee)}</span>` : ''}
     ${task.category && task.category !== 'General' ? `<span>&#128260; ${esc(task.category)}</span>` : ''}
-    <span>Next due: <strong>${task.next_due}</strong></span>
-    <span>Start: ${task.start_date}</span>
+    <span>Next due: <strong>${esc(task.next_due || '')}</strong></span>
+    <span>Start: ${esc(task.start_date || '')}</span>
   </div>`;
 
   // Completion timeline
@@ -1561,7 +1561,7 @@ async function addQuickAction() {
   list.innerHTML += `<div class="task-card" style="margin-bottom:8px">
     <div class="task-card-info">
       <h4>${esc(action.title)}</h4>
-      <div class="meta">${esc(action.assignee || 'Unassigned')} &middot; <span class="badge badge-${action.priority.toLowerCase()}">${action.priority}</span>${action.due_date ? ' &middot; Due: ' + action.due_date : ''}</div>
+      <div class="meta">${esc(action.assignee || 'Unassigned')} &middot; <span class="badge badge-${action.priority.toLowerCase()}">${esc(action.priority)}</span>${action.due_date ? ' &middot; Due: ' + esc(action.due_date) : ''}</div>
     </div>
   </div>`;
 
@@ -1636,7 +1636,7 @@ function renderActionTable(actions) {
       <td>${esc(a.task_title)}</td>
       <td>${esc(a.assignee || '-')}</td>
       <td><span class="badge badge-${a.priority.toLowerCase()}">${a.priority}</span></td>
-      <td>${a.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + a.due_date + '</span>' : a.due_date) : '-'}</td>
+      <td>${a.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + esc(a.due_date) + '</span>' : esc(a.due_date)) : '-'}</td>
       <td><span class="badge ${statusClass}">${statusLabel}</span></td>
       <td>${actionMenu([
         ...(a.status === 'open' ? [{ label: '&#9654; Start', onclick: `updateActionStatus(${a.id},'in_progress')`, cls: 'primary' }] : []),
@@ -1801,7 +1801,7 @@ async function viewInstanceActions(instanceId, taskId) {
     return `<div class="task-card" style="margin-bottom:8px">
       <div class="task-card-info">
         <h4>${esc(a.title)}</h4>
-        <div class="meta">${esc(a.assignee || 'Unassigned')} &middot; <span class="badge badge-${a.priority.toLowerCase()}">${a.priority}</span> &middot; <span class="badge ${statusClass}">${a.status.replace('_',' ')}</span>${a.due_date ? ' &middot; Due: ' + a.due_date : ''}</div>
+        <div class="meta">${esc(a.assignee || 'Unassigned')} &middot; <span class="badge badge-${a.priority.toLowerCase()}">${esc(a.priority)}</span> &middot; <span class="badge ${statusClass}">${esc(a.status.replace('_',' '))}</span>${a.due_date ? ' &middot; Due: ' + esc(a.due_date) : ''}</div>
       </div>
     </div>`;
   }).join('');
@@ -2166,9 +2166,9 @@ async function loadAuditPlan() {
           const evStatusCls = ev.status === 'completed' ? 'badge-low' : ev.status === 'in_progress' ? 'badge-medium' : ev.status === 'cancelled' ? 'badge-inactive' : 'badge-upcoming';
           return `<div class="audit-child-event">
             <div class="audit-child-main">
-              <span class="audit-child-date">${ev.planned_date || 'No date'}</span>
+              <span class="audit-child-date">${ev.planned_date ? esc(ev.planned_date) : 'No date'}</span>
               <span class="audit-child-instance">Event #${ev.instance_number || 1}</span>
-              <span class="badge ${evStatusCls}">${ev.status.replace('_', ' ')}</span>
+              <span class="badge ${evStatusCls}">${esc(ev.status.replace('_', ' '))}</span>
               <span class="audit-child-stats">${ev.assessed_count || 0}/${ev.checklist_count || 0} assessed</span>
             </div>
             <div class="audit-child-actions">
@@ -3508,7 +3508,7 @@ function renderNcrTable(ncrs) {
       <td>${esc(n.clause || '-')}</td>
       <td><span class="badge ${sevBadge}">${n.severity.charAt(0).toUpperCase() + n.severity.slice(1)}</span></td>
       <td>${esc(n.responsible || '-')}</td>
-      <td>${n.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + n.due_date + '</span>' : n.due_date) : '-'}</td>
+      <td>${n.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + esc(n.due_date) + '</span>' : esc(n.due_date)) : '-'}</td>
       <td><span class="badge ${stBadge}">${n.status.replace(/_/g, ' ')}</span></td>
       <td>${actionMenu([
         ...(n.status === 'open' ? [{ label: '&#9654; Start', onclick: `updateNcrStatus(${n.id},'in_progress')`, cls: 'primary' }] : []),
@@ -5100,8 +5100,8 @@ function buildTreatmentDetail(treatments, treatmentLinks) {
       </div>
       <div class="treat-sub-ref"><span style="font-size:12px;color:var(--primary)">${linkCount > 0 ? `${linkCount} link${linkCount !== 1 ? 's' : ''}` : '-'}</span></div>
       <div class="treat-sub-resp"><span style="font-size:12px">${t.responsible ? esc(t.responsible) : '-'}</span></div>
-      <div class="treat-sub-due"><span style="font-size:12px">${t.due_date || '-'}</span></div>
-      <div class="treat-sub-st"><span class="badge ${stBadge}">${t.status.replace(/_/g, ' ')}</span></div>
+      <div class="treat-sub-due"><span style="font-size:12px">${t.due_date ? esc(t.due_date) : '-'}</span></div>
+      <div class="treat-sub-st"><span class="badge ${stBadge}">${esc(t.status.replace(/_/g, ' '))}</span></div>
       <div class="treat-sub-act">
         ${actionMenu([
           ...(t.status === 'planned' ? [{ label: '&#9654; Start', onclick: `updateTreatmentStatus(${t.id},'in_progress')` }] : []),
@@ -8781,7 +8781,7 @@ function renderMyTasksContent(data) {
     const isToday = dateStr === today;
     const cls = isOverdue ? 'my-tasks-overdue' : isToday ? 'my-tasks-today' : '';
     const label = isOverdue ? '⚠ Overdue · ' : isToday ? '● Due Today · ' : '';
-    return `<span class="my-tasks-due ${cls}">${label}${dateStr}</span>`;
+    return `<span class="my-tasks-due ${cls}">${label}${esc(dateStr)}</span>`;
   }
 
   // Returns a "via Role" chip when the assignee field is a role name (not the user directly)
@@ -10346,7 +10346,7 @@ function buildRefPanel(categoryKey) {
     if (!recentAudits.length) rows.push(row('&#9998;', '<em>No audits recorded yet.</em>'));
     else recentAudits.slice(0, 8).forEach(a => {
       const stBadge = { planned: 'badge-medium', in_progress: 'badge-high', completed: 'badge-low', cancelled: 'badge-inactive' }[a.status] || 'badge-secondary';
-      rows.push(row('&#9998;', `${esc(a.title)} — ${badge(stBadge, a.status)} ${a.open_ncr_count > 0 ? badge('badge-critical', a.open_ncr_count + ' open NCR' + (a.open_ncr_count !== 1 ? 's' : '')) : ''} ${a.planned_date || ''}`));
+      rows.push(row('&#9998;', `${esc(a.title)} — ${badge(stBadge, a.status)} ${a.open_ncr_count > 0 ? badge('badge-critical', a.open_ncr_count + ' open NCR' + (a.open_ncr_count !== 1 ? 's' : '')) : ''} ${a.planned_date ? esc(a.planned_date) : ''}`));
     });
   }
 
@@ -10753,8 +10753,8 @@ function renderMgmtOutputsList(outputs) {
         <div style="font-size:13px;min-width:0">${esc(o.description)}</div>
         <div><span class="badge badge-info" style="font-size:11px">${typeLabels[o.type] || o.type}</span></div>
         <div style="font-size:12px">${esc(o.assigned_to || '—')}</div>
-        <div style="font-size:12px">${o.due_date || '—'}</div>
-        <div><span class="badge ${statusClasses[o.status] || 'badge-secondary'}">${o.status.replace('_', ' ')}</span></div>
+        <div style="font-size:12px">${o.due_date ? esc(o.due_date) : '—'}</div>
+        <div><span class="badge ${statusClasses[o.status] || 'badge-secondary'}">${esc(o.status.replace('_', ' '))}</span></div>
         <div>${o.linked_action_id
           ? `<span class="badge badge-success" style="font-size:11px" title="Pushed to Actions">&#10003; #${o.linked_action_id}</span>`
           : `<button class="btn btn-secondary btn-xs" onclick="pushOutputToAction(${o.id})">&#8594; Push to Actions</button>`
