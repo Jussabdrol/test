@@ -143,6 +143,10 @@ app.use(helmet({
         'https://cdnjs.cloudflare.com',
         'https://unpkg.com',
       ],
+      // helmet's default is 'none', which blocks every inline onclick
+      // handler in the SPA. Keep this permissive until we migrate to
+      // delegated listeners.
+      'script-src-attr': ["'unsafe-inline'"],
       'style-src': [
         "'self'",
         "'unsafe-inline'",
@@ -221,6 +225,59 @@ function verifyToken(token) {
 const cookieParser = require('cookie-parser');
 app.use(cookieParser());
 
+// ---------------------------------------------------------------------------
+// CSRF protection (double-submit cookie)
+// ---------------------------------------------------------------------------
+// We issue a non-httpOnly csrf_token cookie on first visit. The SPA's fetch
+// wrapper echoes the value back in an X-CSRF-Token header on every state-
+// changing request. SameSite=Lax on the session cookie already blocks the
+// common cross-site POST; the header check closes the remaining gaps
+// (subdomain attacks, browsers that lax-allow top-level POSTs, etc.) and
+// satisfies CodeQL's "missing CSRF middleware" rule.
+const CSRF_COOKIE = 'csrf_token';
+const CSRF_HEADER = 'x-csrf-token';
+const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// Login has no CSRF cookie yet; SAML callbacks are POSTed by the external IdP.
+const CSRF_EXEMPT_PATHS = new Set(['/api/auth/login']);
+
+function csrfTokensMatch(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length || ab.length === 0) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+app.use((req, res, next) => {
+  // Ensure the client has a CSRF cookie. Non-httpOnly by design so the SPA can
+  // read it and echo it back in a header — the attacker cannot read it because
+  // they are on a different origin.
+  if (!req.cookies?.[CSRF_COOKIE]) {
+    const token = crypto.randomBytes(32).toString('base64url');
+    res.cookie(CSRF_COOKIE, token, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production' || req.protocol === 'https',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+    });
+    req.cookies = req.cookies || {};
+    req.cookies[CSRF_COOKIE] = token;
+  }
+  next();
+});
+
+app.use((req, res, next) => {
+  if (!CSRF_UNSAFE_METHODS.has(req.method)) return next();
+  if (CSRF_EXEMPT_PATHS.has(req.path) || req.path.startsWith('/saml/')) return next();
+  const cookieToken = req.cookies?.[CSRF_COOKIE];
+  const headerToken = req.headers[CSRF_HEADER];
+  if (!csrfTokensMatch(cookieToken, headerToken)) {
+    return res.status(403).json({ error: 'CSRF validation failed' });
+  }
+  next();
+});
+
 app.use((req, res, next) => {
   const token = req.cookies?.session_token;
   const payload = verifyToken(token);
@@ -229,12 +286,14 @@ app.use((req, res, next) => {
     userRole: payload?.userRole || null,
     organizationId: payload?.organizationId || null,  // user's home org
     activeOrgId: payload?.activeOrgId || null,         // superadmin's current org context
+    sv: payload?.sv ?? 0,                              // session_version — must match users.session_version
     save(cb) {
       const newToken = createToken({
         userId: req.session.userId,
         userRole: req.session.userRole,
         organizationId: req.session.organizationId,
         activeOrgId: req.session.activeOrgId,
+        sv: req.session.sv ?? 0,
       });
       res.cookie('session_token', newToken, {
         httpOnly: true,
@@ -251,11 +310,39 @@ app.use((req, res, next) => {
       req.session.userRole = null;
       req.session.organizationId = null;
       req.session.activeOrgId = null;
+      req.session.sv = 0;
       if (cb) cb(null);
     },
   };
   next();
 });
+
+// Session revocation: each user has a session_version; bumping it invalidates
+// all outstanding tokens for that user (logout-all, password reset, suspend).
+// Cached briefly so we don't hit the DB on every request during bursty traffic.
+const SV_CACHE_TTL_MS = 30 * 1000;
+const sessionVersionCache = new Map(); // userId -> { sv, expires }
+
+async function getUserSessionVersion(userId) {
+  const now = Date.now();
+  const cached = sessionVersionCache.get(userId);
+  if (cached && cached.expires > now) return cached.sv;
+  const row = await db.prepare('SELECT session_version FROM users WHERE id = ?').get(userId);
+  const sv = row ? (row.session_version ?? 0) : null; // null => user no longer exists
+  sessionVersionCache.set(userId, { sv, expires: now + SV_CACHE_TTL_MS });
+  return sv;
+}
+
+function invalidateSessionVersionCache(userId) {
+  sessionVersionCache.delete(userId);
+}
+
+async function bumpUserSessionVersion(userId) {
+  await db.prepare(
+    "UPDATE users SET session_version = COALESCE(session_version, 0) + 1, updated_at = datetime('now') WHERE id = ?"
+  ).run(userId);
+  invalidateSessionVersionCache(userId);
+}
 
 // ---------------------------------------------------------------------------
 // Multi-tenant helpers
@@ -295,7 +382,7 @@ app.get('/health', async (req, res) => {
 });
 
 // Auth middleware for static files - protect everything except login page
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   // Allow login page, health check, auth endpoints, and SAML SSO flow
   // (/saml/callback is called directly by the IdP with no session cookie)
   if (req.path === '/login' || req.path === '/login.html' || req.path === '/health' ||
@@ -304,12 +391,26 @@ app.use((req, res, next) => {
   }
   // Check authentication for all other routes
   if (!req.session.userId) {
-    // For API requests, return 401
     if (req.path.startsWith('/api/')) {
       return res.status(401).json({ error: 'Authentication required' });
     }
-    // For page requests, redirect to login
     return res.redirect('/login');
+  }
+  // Revocation check: token must carry the current session_version for the user.
+  // This lets admins force-logout a user (password reset, suspend, logout-all)
+  // by bumping users.session_version.
+  try {
+    const currentSv = await getUserSessionVersion(req.session.userId);
+    if (currentSv === null || (req.session.sv ?? 0) !== currentSv) {
+      req.session.destroy();
+      if (req.path.startsWith('/api/')) {
+        return res.status(401).json({ error: 'Session has been revoked. Please sign in again.' });
+      }
+      return res.redirect('/login');
+    }
+  } catch (err) {
+    console.error('[auth] session_version lookup failed:', err.message);
+    return res.status(500).json({ error: 'Authentication check failed' });
   }
   next();
 });
@@ -667,6 +768,7 @@ app.post('/api/auth/login', authRateLimiter, async (req, res) => {
     req.session.organizationId = user.organization_id || null;
     // For non-superadmin users, activeOrgId is always their own org
     req.session.activeOrgId = user.role === 'superadmin' ? null : (user.organization_id || null);
+    req.session.sv = user.session_version ?? 0;
 
     req.session.save((saveErr) => {
       if (saveErr) {
@@ -688,7 +790,7 @@ app.post('/api/auth/login', authRateLimiter, async (req, res) => {
   }
 });
 
-// Logout
+// Logout — clears only the current cookie
 app.post('/api/auth/logout', async (req, res) => {
   req.session.destroy((err) => {
     if (err) {
@@ -696,6 +798,18 @@ app.post('/api/auth/logout', async (req, res) => {
     }
     res.json({ success: true });
   });
+});
+
+// Logout everywhere — bump session_version to invalidate all outstanding tokens
+app.post('/api/auth/logout-all', async (req, res) => {
+  if (!req.session.userId) return res.status(401).json({ error: 'Not signed in' });
+  try {
+    await bumpUserSessionVersion(req.session.userId);
+  } catch (err) {
+    console.error('[logout-all] bump failed:', err.message);
+    return res.status(500).json({ error: 'Logout failed' });
+  }
+  req.session.destroy(() => res.json({ success: true }));
 });
 
 // ===========================================================================
@@ -3746,6 +3860,16 @@ app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
 
   try {
     await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
+
+    // Revoke outstanding sessions when an admin suspends/deactivates a user or
+    // strips superadmin/org_admin privileges.
+    const statusNowRestricted = req.body.status && req.body.status !== 'active';
+    const roleDowngraded = req.body.role && req.body.role !== user.role &&
+      (user.role === 'superadmin' || user.role === 'org_admin') && req.body.role === 'org_user';
+    if (statusNowRestricted || roleDowngraded) {
+      await bumpUserSessionVersion(user.id);
+    }
+
     const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
     await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_updated', 'user', user.id, user.name,
       JSON.stringify(Object.keys(req.body).filter(k => k !== 'password')), req.orgId);
@@ -3777,6 +3901,9 @@ app.put('/api/admin/users/:id/password', requireAdmin, async (req, res) => {
       await supabaseAdmin.auth.admin.updateUserById(user.supabase_uid, { password });
     } catch (_) { /* Non-critical */ }
   }
+
+  // Password reset invalidates any outstanding sessions for this user
+  await bumpUserSessionVersion(user.id);
 
   const admin = await db.prepare('SELECT name FROM users WHERE id = ?').get(req.session.userId);
   await logAuditAction(req.session.userId, admin?.name || 'Admin', 'user_password_reset', 'user', user.id, user.name, '', req.orgId);

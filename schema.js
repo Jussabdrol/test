@@ -365,6 +365,7 @@ const POSTGRES_SCHEMA_SQL = `
     notes TEXT DEFAULT '',
     sso_provider TEXT DEFAULT NULL,
     supabase_uid TEXT DEFAULT NULL,
+    session_version INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
   );
@@ -513,6 +514,9 @@ const POSTGRES_SCHEMA_SQL = `
     REFERENCES task_instances(id) ON DELETE SET NULL;
   ALTER TABLE actions DROP COLUMN IF EXISTS completion_id;
   DROP TABLE IF EXISTS completions CASCADE;
+
+  -- Migrations: session revocation — session_version is bumped to invalidate existing tokens
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0;
 
   -- Migrations: backfill NULL organization_id on audit_checklist from parent audit
   UPDATE audit_checklist SET organization_id = (

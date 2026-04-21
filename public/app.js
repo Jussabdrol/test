@@ -1,3 +1,32 @@
+// CSRF: every state-changing same-origin fetch echoes the csrf_token cookie
+// back in an X-CSRF-Token header so the server can validate double-submit.
+(function installCsrfFetchWrapper() {
+  const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+  function readCsrf() {
+    const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  const origFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    init = init || {};
+    const method = (init.method ||
+      (typeof input === 'object' && input && input.method) ||
+      'GET').toUpperCase();
+    if (!UNSAFE.has(method)) return origFetch(input, init);
+    let url;
+    try {
+      url = new URL(typeof input === 'string' ? input : input.url, window.location.href);
+    } catch { return origFetch(input, init); }
+    if (url.origin !== window.location.origin) return origFetch(input, init);
+    const token = readCsrf();
+    if (!token) return origFetch(input, init);
+    const headers = new Headers(init.headers ||
+      (typeof input === 'object' && input ? input.headers : undefined));
+    if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', token);
+    return origFetch(input, { ...init, headers });
+  };
+})();
+
 // --- State ---
 let currentView = 'mission-control';
 let allTasks = [];
