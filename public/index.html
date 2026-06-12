@@ -286,6 +286,7 @@
           </div>
         </div>
         <div class="filters" id="task-log-filters-bar"></div>
+        <div id="task-log-summary"></div>
         <div class="task-table-wrap">
           <table class="task-table" id="task-log-table">
             <thead>
@@ -312,7 +313,7 @@
             <button class="btn btn-secondary btn-sm" onclick="changeYear(-1)">&larr; Prev</button>
             <button class="btn btn-secondary btn-sm" onclick="changeYear(0)">Today</button>
             <button class="btn btn-secondary btn-sm" onclick="changeYear(1)">Next &rarr;</button>
-            <button class="btn btn-primary" onclick="openTaskModal()">+ New Task</button>
+            <button class="btn btn-primary" onclick="openTaskModal()">+ New Series</button>
           </div>
         </div>
 
@@ -1651,7 +1652,7 @@
     <div class="modal-overlay" onclick="closePostCompleteModal()"></div>
     <div class="modal-content">
       <div class="modal-header">
-        <h3>Task Completed</h3>
+        <h3 id="post-complete-title">Task Completed</h3>
         <button class="modal-close" onclick="closePostCompleteModal()">&times;</button>
       </div>
       <!-- Evidence upload for this completion -->
