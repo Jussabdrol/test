@@ -903,7 +903,13 @@ async function loadTasks() {
     }
   }
 
-  allTasks = await api(`/api/tasks?${params}`);
+  try {
+    allTasks = await api(`/api/tasks?${params}`);
+  } catch (err) {
+    document.getElementById('task-table-body').innerHTML =
+      `<div class="empty-state" style="color:var(--danger)">Failed to load series: ${esc(err.message)}</div>`;
+    return;
+  }
   renderTaskTable();
   updateOverdueBadge();
 }
@@ -954,7 +960,11 @@ function renderTaskTable() {
     tasks = tasks.filter(t => t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
   }
   if (tasks.length === 0) {
-    container.innerHTML = '<div class="empty-state">No tasks found.</div>';
+    container.innerHTML = allTasks.length === 0 && !filters.search
+      ? `<div class="empty-state">No recurring task series yet${opPlanContext.type !== 'all' ? ' in this process context' : ''}.<br>
+          Series define the recurring checks and controls your team executes.<br><br>
+          <button class="btn btn-primary" onclick="openTaskModal()">+ Create your first series</button></div>`
+      : '<div class="empty-state">No series match the current filters or process context.</div>';
     return;
   }
   const recurrenceLabel = r => ({ daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[r] || r);
@@ -1043,7 +1053,14 @@ async function loadTaskLog() {
   if (ctxNames && ctxNames.length && ctxNames.every(n => !n.includes(','))) {
     params.set('categories', ctxNames.join(','));
   }
-  let instances = await api(`/api/task-instances?${params}`);
+  let instances;
+  try {
+    instances = await api(`/api/task-instances?${params}`);
+  } catch (err) {
+    document.getElementById('task-log-table-body').innerHTML =
+      `<tr><td colspan="7" class="empty-state" style="color:var(--danger)">Failed to load task log: ${esc(err.message)}</td></tr>`;
+    return;
+  }
   if (ctxNames) instances = instances.filter(i => ctxNames.includes(i.task_category));
 
   if (taskLogSearch) {
@@ -1056,7 +1073,25 @@ async function loadTaskLog() {
   }
 
   renderTaskLogFilters(instances);
+  renderTaskLogSummary(instances);
   renderTaskLogTable(instances);
+}
+
+// At-a-glance counts for the open tab: the first question this view answers
+// is "what needs attention right now?"
+function renderTaskLogSummary(instances) {
+  const el = document.getElementById('task-log-summary');
+  if (!el) return;
+  if (taskLogTab !== 'pending' || instances.length === 0) { el.innerHTML = ''; return; }
+  const today = new Date().toISOString().split('T')[0];
+  const overdue = instances.filter(i => i.scheduled_date < today).length;
+  const dueToday = instances.filter(i => i.scheduled_date === today).length;
+  const upcoming = instances.length - overdue - dueToday;
+  el.innerHTML = `<div class="task-log-summary-chips">
+    <span class="tl-chip${overdue > 0 ? ' tl-chip-overdue' : ''}">${overdue} overdue</span>
+    <span class="tl-chip${dueToday > 0 ? ' tl-chip-today' : ''}">${dueToday} due today</span>
+    <span class="tl-chip">${upcoming} upcoming</span>
+  </div>`;
 }
 
 function renderTaskLogFilters(instances) {
@@ -1117,8 +1152,21 @@ function renderTaskLogTable(instances) {
     menuItems.push({ label: '&#10133; Follow-up', onclick: `createFollowUpForInstance(${i.id},${i.task_id})` });
     menuItems.push('sep');
     menuItems.push({ label: '&#128203; View series', onclick: `openTaskDetailModal(${i.task_id})` });
+    // Follow-up + evidence indicators (the API already returns these counts)
+    let evidenceFiles = [];
+    try { evidenceFiles = JSON.parse(i.evidence_files || '[]'); } catch (e) {}
+    const indicators = [];
+    if (i.action_count > 0) {
+      const openCount = i.open_action_count || 0;
+      indicators.push(`<span class="ti-indicator${openCount > 0 ? ' ti-indicator-open' : ''}"
+        title="${openCount} open of ${i.action_count} follow-up${i.action_count > 1 ? 's' : ''} — click to view"
+        onclick="event.stopPropagation();viewInstanceActions(${i.id},${i.task_id})">&#9889; ${openCount > 0 ? openCount + ' open' : i.action_count}</span>`);
+    }
+    if (evidenceFiles.length > 0) {
+      indicators.push(`<span class="ti-indicator" title="${esc(evidenceFiles.map(f => f.name).join(', '))}">&#128206; ${evidenceFiles.length}</span>`);
+    }
     return `<tr>
-      <td><strong style="cursor:pointer;color:var(--primary)" onclick="openTaskDetailModal(${i.task_id})">${esc(i.task_title)}</strong></td>
+      <td><strong style="cursor:pointer;color:var(--primary)" onclick="openTaskDetailModal(${i.task_id})">${esc(i.task_title)}</strong>${indicators.length ? `<span class="ti-indicators">${indicators.join('')}</span>` : ''}</td>
       <td>${i.task_category && i.task_category !== 'General' ? `<span class="op-ctx-process-tag">${esc(i.task_category)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
       <td>${esc(i.task_assignee || '-')}</td>
       <td><span class="badge badge-${(i.task_priority || 'Medium').toLowerCase()}">${esc(i.task_priority || 'Medium')}</span></td>
@@ -1133,7 +1181,9 @@ async function openInstanceCompleteModal(instanceId) {
   const inst = await api(`/api/task-instances/${instanceId}`);
   document.getElementById('complete-task-id').value = inst.task_id;
   document.getElementById('complete-title').textContent = inst.task_title;
-  document.getElementById('complete-by').value = currentUser?.name || '';
+  // Populate the dropdown here too — without this the "Completed By" select is
+  // empty when the modal is opened from the Task Log before any series modal.
+  await populateCompletedByOptions(document.getElementById('complete-by'));
   document.getElementById('complete-notes').value = '';
   document.getElementById('complete-evidence-upload').style.display = 'none';
   document.getElementById('complete-evidence-list').innerHTML = '';
@@ -1145,15 +1195,26 @@ async function openInstanceCompleteModal(instanceId) {
 }
 
 async function skipInstance(instanceId) {
-  const notes = prompt('Reason for skipping (optional):') || '';
-  await api(`/api/task-instances/${instanceId}/skip`, { method: 'POST', body: { notes } });
+  const notes = prompt('Reason for skipping (optional):');
+  if (notes === null) return; // cancelled
+  try {
+    await api(`/api/task-instances/${instanceId}/skip`, { method: 'POST', body: { notes } });
+    showToast('Occurrence skipped');
+  } catch (err) {
+    showToast('Could not skip: ' + err.message, 'error');
+  }
   invalidateYearlyCache();
   loadTaskLog();
 }
 
 async function reopenInstance(instanceId) {
   if (!confirm('Reopen this task instance?')) return;
-  await api(`/api/task-instances/${instanceId}/reopen`, { method: 'POST', body: {} });
+  try {
+    await api(`/api/task-instances/${instanceId}/reopen`, { method: 'POST', body: {} });
+    showToast('Occurrence reopened');
+  } catch (err) {
+    showToast('Could not reopen: ' + err.message, 'error');
+  }
   invalidateYearlyCache();
   loadTaskLog();
 }
@@ -1307,11 +1368,16 @@ async function saveTask(e) {
   };
 
   let taskId = id;
-  if (id) {
-    await api(`/api/tasks/${id}`, { method: 'PUT', body });
-  } else {
-    const result = await api('/api/tasks', { method: 'POST', body });
-    taskId = result.id;
+  try {
+    if (id) {
+      await api(`/api/tasks/${id}`, { method: 'PUT', body });
+    } else {
+      const result = await api('/api/tasks', { method: 'POST', body });
+      taskId = result.id;
+    }
+  } catch (err) {
+    showToast('Could not save series: ' + err.message, 'error');
+    return; // keep the modal open so the user can correct the input
   }
 
   // Create cross-links for role and process
@@ -1340,6 +1406,7 @@ async function saveTask(e) {
 
   closeTaskModal();
   invalidateYearlyCache();
+  showToast(id ? 'Series updated' : 'Series created');
   meta = await api('/api/meta'); // refresh meta after adding new assignees/categories
   refreshCurrentView();
 }
@@ -1347,24 +1414,34 @@ async function saveTask(e) {
 // --- Complete Modal ---
 let activeInstanceId = null; // set after first save so evidence can be uploaded
 
+// Populate the "Completed By" dropdown with the org roles plus the logged-in
+// user, preselecting the current user so completing a check is one click.
+async function populateCompletedByOptions(sel) {
+  let roles = [];
+  try { roles = await api('/api/architecture?arch_type=role'); } catch (e) { /* keep dropdown usable without roles */ }
+  const userName = currentUser?.name || '';
+  let options = '<option value="">-- Select --</option>';
+  if (userName && !roles.some(r => r.name === userName)) {
+    options += `<option value="${esc(userName)}">${esc(userName)} (me)</option>`;
+  }
+  options += roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+  sel.innerHTML = options;
+  if (userName) sel.value = userName;
+}
+
 async function openCompleteModal(taskId) {
-  document.getElementById('complete-form').reset();
+  const form = document.getElementById('complete-form');
+  form.reset();
+  // Clear any instance targeting left over from a cancelled Task Log completion,
+  // otherwise this series-level completion would complete that old instance.
+  delete form.dataset.instanceId;
   document.getElementById('complete-task-id').value = taskId;
   activeInstanceId = null;
   document.getElementById('complete-evidence-list').innerHTML = '';
   document.getElementById('complete-evidence-upload').style.display = 'none';
   document.getElementById('complete-modal-title').textContent = 'Mark Complete';
 
-  // Populate role dropdown
-  const roles = await api('/api/architecture?arch_type=role');
-  const sel = document.getElementById('complete-by');
-  sel.innerHTML = '<option value="">-- Select Role --</option>' +
-    roles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
-  // Auto-select from logged-in user name if it matches a role
-  if (currentUser && currentUser.name) {
-    const match = roles.find(r => r.name === currentUser.name);
-    if (match) sel.value = match.name;
-  }
+  await populateCompletedByOptions(document.getElementById('complete-by'));
 
   document.getElementById('complete-modal').classList.remove('hidden');
 }
@@ -1384,20 +1461,25 @@ async function submitComplete(e) {
 
   let result;
   let scheduled = null;
-  if (instanceId) {
-    result = await api(`/api/task-instances/${instanceId}/complete`, {
-      method: 'POST',
-      body: { completed_by: completedBy, notes },
-    });
-    activeInstanceId = parseInt(instanceId);
-    scheduled = result.scheduled_date || null;
-    delete form.dataset.instanceId;
-  } else {
-    result = await api(`/api/tasks/${taskId}/complete`, {
-      method: 'POST',
-      body: { completed_by: completedBy, notes },
-    });
-    activeInstanceId = result.instance_id;
+  try {
+    if (instanceId) {
+      result = await api(`/api/task-instances/${instanceId}/complete`, {
+        method: 'POST',
+        body: { completed_by: completedBy, notes },
+      });
+      activeInstanceId = parseInt(instanceId);
+      scheduled = result.scheduled_date || null;
+      delete form.dataset.instanceId;
+    } else {
+      result = await api(`/api/tasks/${taskId}/complete`, {
+        method: 'POST',
+        body: { completed_by: completedBy, notes },
+      });
+      activeInstanceId = result.instance_id;
+    }
+  } catch (err) {
+    showToast('Could not complete task: ' + err.message, 'error');
+    return;
   }
 
   document.getElementById('complete-evidence-upload').style.display = 'block';
@@ -1405,6 +1487,7 @@ async function submitComplete(e) {
   const savedInstanceId = activeInstanceId; // preserve before closeCompleteModal nullifies it
   closeCompleteModal();
   invalidateYearlyCache();
+  showToast('Task marked complete');
   lastInstanceContext = { instance_id: savedInstanceId, task_id: parseInt(taskId), scheduled_date: scheduled };
   await openPostCompleteModal();
 }
@@ -1427,15 +1510,24 @@ async function uploadInstanceEvidence() {
     return;
   }
   fileInput.value = '';
-  await refreshInstanceEvidence(activeInstanceId);
+  showToast('Evidence uploaded');
+  await refreshInstanceEvidence(activeInstanceId, 'complete-evidence-list');
 }
 
-async function refreshInstanceEvidence(instanceId) {
+async function refreshInstanceEvidence(instanceId, containerId) {
   if (!instanceId) return;
   const inst = await api(`/api/task-instances/${instanceId}`);
   let evidenceFiles = [];
   try { evidenceFiles = JSON.parse(inst?.evidence_files || '[]'); } catch(e) {}
-  const container = document.getElementById('complete-evidence-list') || document.getElementById('post-complete-evidence-list');
+  // Both evidence lists are always in the DOM, so target the one in the modal
+  // that is actually open (the old "first match" approach always picked the
+  // hidden complete-modal list, leaving the post-complete list empty).
+  let container = containerId ? document.getElementById(containerId) : null;
+  if (!container) {
+    const postModal = document.getElementById('post-complete-modal');
+    const postModalOpen = postModal && !postModal.classList.contains('hidden');
+    container = document.getElementById(postModalOpen ? 'post-complete-evidence-list' : 'complete-evidence-list');
+  }
   if (!container) return;
   if (evidenceFiles.length === 0) {
     container.innerHTML = '<div style="color:var(--text-muted);font-size:12px;font-style:italic">No evidence attached</div>';
@@ -1445,14 +1537,19 @@ async function refreshInstanceEvidence(instanceId) {
     <span>&#128206;</span>
     <span style="cursor:pointer;text-decoration:underline;flex:1" onclick="window.open('/api/task-instances/${instanceId}/evidence/${ef.id}/download','_blank')">${esc(ef.name)}</span>
     <span style="color:var(--text-muted);font-size:11px">${ef.size ? (ef.size / 1024).toFixed(1) + ' KB' : ''}</span>
-    <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 6px" onclick="removeInstanceEvidence(${instanceId},${ef.id})">&times;</button>
+    <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 6px" onclick="removeInstanceEvidence(${instanceId},${ef.id},'${container.id}')">&times;</button>
   </div>`).join('');
 }
 
-async function removeInstanceEvidence(instanceId, fileId) {
+async function removeInstanceEvidence(instanceId, fileId, containerId) {
   if (!confirm('Remove this evidence file?')) return;
-  await api(`/api/task-instances/${instanceId}/evidence/${fileId}`, { method: 'DELETE' });
-  await refreshInstanceEvidence(instanceId);
+  try {
+    await api(`/api/task-instances/${instanceId}/evidence/${fileId}`, { method: 'DELETE' });
+    showToast('Evidence removed');
+  } catch (err) {
+    showToast('Could not remove evidence: ' + err.message, 'error');
+  }
+  await refreshInstanceEvidence(instanceId, containerId);
 }
 
 async function uploadPostCompleteEvidence() {
@@ -1461,22 +1558,40 @@ async function uploadPostCompleteEvidence() {
   if (!fileInput.files.length) return;
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
-  await fetch(`/api/task-instances/${lastInstanceContext.instance_id}/evidence`, { method: 'POST', body: formData });
+  try {
+    const res = await fetch(`/api/task-instances/${lastInstanceContext.instance_id}/evidence`, { method: 'POST', body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+      showToast(err.error || 'Evidence upload failed', 'error');
+      return;
+    }
+    showToast('Evidence uploaded');
+  } catch (e) {
+    showToast('Evidence upload failed: network error', 'error');
+    return;
+  }
   fileInput.value = '';
-  await refreshInstanceEvidence(lastInstanceContext.instance_id);
+  await refreshInstanceEvidence(lastInstanceContext.instance_id, 'post-complete-evidence-list');
 }
 
 
 // --- Delete (soft-delete: deactivates task, preserves history) ---
 async function deleteTask(id) {
   if (!confirm('Deactivate this task? Its completion history will be preserved.')) return;
-  await api(`/api/tasks/${id}`, { method: 'PUT', body: { is_active: 0 } });
+  try {
+    await api(`/api/tasks/${id}`, { method: 'PUT', body: { is_active: 0 } });
+    showToast('Series deactivated — history preserved');
+  } catch (err) {
+    showToast('Could not deactivate series: ' + err.message, 'error');
+  }
   invalidateYearlyCache();
   refreshCurrentView();
 }
 
 // --- Post-completion Actions ---
 async function openPostCompleteModal() {
+  const titleEl = document.getElementById('post-complete-title');
+  if (titleEl) titleEl.textContent = 'Task Completed';
   document.getElementById('post-complete-actions-list').innerHTML = '';
   document.getElementById('quick-action-title').value = '';
   document.getElementById('quick-action-priority').value = 'Medium';
@@ -1493,7 +1608,7 @@ async function openPostCompleteModal() {
   if (evidenceWrap && lastInstanceContext) {
     evidenceWrap.style.display = 'block';
     activeInstanceId = lastInstanceContext.instance_id;
-    await refreshInstanceEvidence(lastInstanceContext.instance_id);
+    await refreshInstanceEvidence(lastInstanceContext.instance_id, 'post-complete-evidence-list');
   }
 
   document.getElementById('post-complete-modal').classList.remove('hidden');
@@ -1570,17 +1685,24 @@ async function addQuickAction() {
   const assigneeName = document.getElementById('quick-action-assignee').value;
   const taskId = lastInstanceContext.task_id;
 
-  const action = await api('/api/actions', {
-    method: 'POST',
-    body: {
-      instance_id: lastInstanceContext.instance_id,
-      task_id: taskId,
-      title,
-      assignee: assigneeName,
-      priority: document.getElementById('quick-action-priority').value,
-      due_date: document.getElementById('quick-action-due').value || null,
-    },
-  });
+  let action;
+  try {
+    action = await api('/api/actions', {
+      method: 'POST',
+      body: {
+        instance_id: lastInstanceContext.instance_id,
+        task_id: taskId,
+        title,
+        assignee: assigneeName,
+        priority: document.getElementById('quick-action-priority').value,
+        due_date: document.getElementById('quick-action-due').value || null,
+      },
+    });
+    showToast('Follow-up created');
+  } catch (err) {
+    showToast('Could not create follow-up: ' + err.message, 'error');
+    return;
+  }
 
   // Create cross-links for role and source task
   if (action.id) {
@@ -1627,10 +1749,17 @@ async function loadActions() {
     if (bundleIds.length) params.set('process_ids', bundleIds.join(','));
   }
 
-  const [actions, roles] = await Promise.all([
-    api(`/api/actions?${params}`),
-    api('/api/architecture?arch_type=role'),
-  ]);
+  let actions, roles;
+  try {
+    [actions, roles] = await Promise.all([
+      api(`/api/actions?${params}`),
+      api('/api/architecture?arch_type=role'),
+    ]);
+  } catch (err) {
+    document.getElementById('action-table-body').innerHTML =
+      `<tr><td colspan="8" class="empty-state" style="color:var(--danger)">Failed to load follow-ups: ${esc(err.message)}</td></tr>`;
+    return;
+  }
   renderActionFilters(roles);
   // An empty bundle contains no processes, so it can't have any actions
   let filtered = bundleIds && bundleIds.length === 0 ? [] : actions;
@@ -1667,7 +1796,9 @@ function renderActionTable(actions) {
   const tbody = document.getElementById('action-table-body');
   const today = new Date().toISOString().split('T')[0];
   if (actions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No actions found</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state">No follow-ups found for the current filters or process context.<br>
+      Follow-ups track corrective work coming out of your recurring checks.<br><br>
+      <button class="btn btn-primary btn-sm" onclick="openActionModal()">+ New Follow-up</button></td></tr>`;
     return;
   }
   tbody.innerHTML = actions.map(a => {
@@ -1694,25 +1825,39 @@ function renderActionTable(actions) {
 }
 
 async function updateActionStatus(id, status) {
-  await api(`/api/actions/${id}`, { method: 'PUT', body: { status } });
+  try {
+    await api(`/api/actions/${id}`, { method: 'PUT', body: { status } });
+    showToast(status === 'in_progress' ? 'Follow-up started' : 'Follow-up updated');
+  } catch (err) {
+    showToast('Could not update follow-up: ' + err.message, 'error');
+  }
   refreshCurrentView();
 }
 
 async function updateActionStatusAndRefresh(id, status) {
-  await api(`/api/actions/${id}`, { method: 'PUT', body: { status } });
-  refreshCurrentView();
+  return updateActionStatus(id, status);
 }
 
 async function resolveAction(id) {
-  const resolvedBy = prompt('Resolved by (your name):');
+  const resolvedBy = prompt('Resolved by:', currentUser?.name || '');
   if (resolvedBy === null) return;
-  await api(`/api/actions/${id}`, { method: 'PUT', body: { status: 'resolved', resolved_by: resolvedBy } });
+  try {
+    await api(`/api/actions/${id}`, { method: 'PUT', body: { status: 'resolved', resolved_by: resolvedBy } });
+    showToast('Follow-up resolved');
+  } catch (err) {
+    showToast('Could not resolve follow-up: ' + err.message, 'error');
+  }
   refreshCurrentView();
 }
 
 async function deleteAction(id) {
   if (!confirm('Delete this action?')) return;
-  await api(`/api/actions/${id}`, { method: 'DELETE' });
+  try {
+    await api(`/api/actions/${id}`, { method: 'DELETE' });
+    showToast('Follow-up deleted');
+  } catch (err) {
+    showToast('Could not delete follow-up: ' + err.message, 'error');
+  }
   refreshCurrentView();
 }
 
@@ -1799,15 +1944,20 @@ async function saveAction(e) {
 
   let actionId = id;
   let taskId = null;
-  if (id) {
-    await api(`/api/actions/${id}`, { method: 'PUT', body });
-  } else {
-    const instVal = document.getElementById('action-instance-id').value;
-    body.instance_id = instVal ? parseInt(instVal) : null;
-    taskId = document.getElementById('action-task-id').value;
-    body.task_id = taskId;
-    const result = await api('/api/actions', { method: 'POST', body });
-    actionId = result.id;
+  try {
+    if (id) {
+      await api(`/api/actions/${id}`, { method: 'PUT', body });
+    } else {
+      const instVal = document.getElementById('action-instance-id').value;
+      body.instance_id = instVal ? parseInt(instVal) : null;
+      taskId = document.getElementById('action-task-id').value;
+      body.task_id = taskId;
+      const result = await api('/api/actions', { method: 'POST', body });
+      actionId = result.id;
+    }
+  } catch (err) {
+    showToast('Could not save follow-up: ' + err.message, 'error');
+    return; // keep the modal open so the user can correct the input
   }
 
   // Create cross-links for role and source task
@@ -1831,6 +1981,7 @@ async function saveAction(e) {
   }
 
   closeActionModal();
+  showToast(id ? 'Follow-up updated' : 'Follow-up created');
   refreshCurrentView();
 }
 
@@ -1839,8 +1990,21 @@ async function viewInstanceActions(instanceId, taskId) {
   lastInstanceContext = { instance_id: instanceId, task_id: taskId, scheduled_date: null };
   const actions = await api(`/api/actions?instance_id=${instanceId}`);
 
+  const titleEl = document.getElementById('post-complete-title');
+  if (titleEl) titleEl.textContent = 'Follow-ups for this occurrence';
+
+  // Show this occurrence's evidence alongside its follow-ups
+  const evidenceWrap = document.getElementById('post-complete-evidence-wrap');
+  if (evidenceWrap) {
+    evidenceWrap.style.display = 'block';
+    activeInstanceId = instanceId;
+    refreshInstanceEvidence(instanceId, 'post-complete-evidence-list');
+  }
+
   const list = document.getElementById('post-complete-actions-list');
-  list.innerHTML = actions.map(a => {
+  if (actions.length === 0) {
+    list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;font-style:italic;padding:4px 0">No follow-ups for this occurrence yet — add one below.</div>';
+  } else list.innerHTML = actions.map(a => {
     const statusClass = a.status === 'open' ? 'badge-high' : a.status === 'in_progress' ? 'badge-medium' : 'badge-low';
     return `<div class="task-card" style="margin-bottom:8px">
       <div class="task-card-info">
@@ -2071,7 +2235,16 @@ async function loadYearlyPlan() {
 }
 
 async function quickComplete(taskId, dateStr) {
-  // Open the full complete modal so the user can record who did it, add notes & evidence
+  // Complete the specific occurrence that was clicked when its instance exists
+  // (otherwise an overdue series with several pending occurrences would always
+  // complete the next-due one). Falls back to the series-level modal.
+  if (dateStr) {
+    try {
+      const instances = await api(`/api/task-instances?task_id=${taskId}&from=${dateStr}&to=${dateStr}`);
+      const inst = instances.find(i => i.status === 'pending');
+      if (inst) return openInstanceCompleteModal(inst.id);
+    } catch (e) { /* fall through to series-level completion */ }
+  }
   openCompleteModal(taskId);
 }
 
@@ -8802,6 +8975,29 @@ async function loadMyTasks() {
   }
 }
 
+// Quick status changes on follow-ups straight from the My Tasks inbox
+async function myTasksUpdateAction(id, status) {
+  try {
+    await api(`/api/actions/${id}`, { method: 'PUT', body: { status } });
+    showToast(status === 'in_progress' ? 'Follow-up started' : 'Follow-up updated');
+  } catch (err) {
+    showToast('Could not update follow-up: ' + err.message, 'error');
+  }
+  loadMyTasks();
+}
+
+async function myTasksResolveAction(id) {
+  const resolvedBy = prompt('Resolved by:', currentUser?.name || '');
+  if (resolvedBy === null) return;
+  try {
+    await api(`/api/actions/${id}`, { method: 'PUT', body: { status: 'resolved', resolved_by: resolvedBy } });
+    showToast('Follow-up resolved');
+  } catch (err) {
+    showToast('Could not resolve follow-up: ' + err.message, 'error');
+  }
+  loadMyTasks();
+}
+
 function renderMyTasksContent(data) {
   const { tasks = [], actions = [], ncrs = [], audits = [], treatments = [], mgmtOutputs = [], assignedRoles = [] } = data;
   const today = new Date().toISOString().split('T')[0];
@@ -8869,6 +9065,10 @@ function renderMyTasksContent(data) {
   }
 
   // ── Recurring Tasks ────────────────────────────────────────────────────────
+  // Quick actions are only shown when the user can reach the underlying module
+  const canCompleteTasks = hasPermissionForView('tasks');
+  const canActOnActions = hasPermissionForView('actions');
+
   let tasksBody = '';
   if (tasks.length === 0) {
     tasksBody = emptyMsg('No recurring tasks assigned to you or your roles.');
@@ -8888,6 +9088,7 @@ function renderMyTasksContent(data) {
             ${priorityBadge(t.priority)}
             <span class="my-tasks-recurrence">&#8635; ${t.recurrence}</span>
             ${dueDateLabel(t.next_due)}
+            ${canCompleteTasks ? `<button class="btn btn-primary btn-sm" style="font-size:11px" title="Mark this check as done" onclick="event.stopPropagation();openCompleteModal(${t.id})">&#10003; Complete</button>` : ''}
           </div>
         </div>`;
     }
@@ -8902,6 +9103,9 @@ function renderMyTasksContent(data) {
   } else {
     actionsBody = '<div class="my-tasks-list">';
     for (const a of actions) {
+      const quickBtn = !canActOnActions ? '' :
+        a.status === 'open' ? `<button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="event.stopPropagation();myTasksUpdateAction(${a.id},'in_progress')">&#9654; Start</button>` :
+        a.status === 'in_progress' ? `<button class="btn btn-primary btn-sm" style="font-size:11px" onclick="event.stopPropagation();myTasksResolveAction(${a.id})">&#10003; Resolve</button>` : '';
       actionsBody += `
         <div class="${itemRowCls(a.due_date)}" onclick="switchView('actions')">
           <div class="my-tasks-item-main">
@@ -8915,6 +9119,7 @@ function renderMyTasksContent(data) {
             ${priorityBadge(a.priority)}
             ${statusBadge(a.status, actionStatusMap)}
             ${dueDateLabel(a.due_date)}
+            ${quickBtn}
           </div>
         </div>`;
     }

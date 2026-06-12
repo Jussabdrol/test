@@ -4515,3 +4515,48 @@ body.has-org-banner .user-widget {
   margin: 6px 0 0;
   flex-shrink: 0;
 }
+
+/* ── Operational Planning UX: Task Log summary chips & row indicators ── */
+.task-log-summary-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px;
+}
+.tl-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-secondary, #f3f4f6);
+  color: var(--text-muted, #6b7280);
+}
+.tl-chip-overdue { background: #fee2e2; color: #991b1b; }
+.tl-chip-today   { background: #fef3c7; color: #92400e; }
+
+.ti-indicators {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.ti-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-secondary, #f3f4f6);
+  color: var(--text-muted, #6b7280);
+  cursor: default;
+}
+.ti-indicator-open {
+  background: #fef3c7;
+  color: #92400e;
+  cursor: pointer;
+}
+.ti-indicator-open:hover { background: #fde68a; }
