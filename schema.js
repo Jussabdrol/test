@@ -61,9 +61,24 @@ const POSTGRES_SCHEMA_SQL = `
     resolved_by TEXT DEFAULT '',
     resolved_at TIMESTAMP DEFAULT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
+    process_id INTEGER DEFAULT NULL,
     FOREIGN KEY (instance_id) REFERENCES task_instances(id) ON DELETE SET NULL,
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
   );
+
+  -- Named groups of processes shown as tabs in the Operational Planning context
+  -- bar. process_ids stores a JSON array of org_architecture IDs, e.g. [1, 4, 7]
+  CREATE TABLE IF NOT EXISTS plan_bundles (
+    id              SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name            TEXT    NOT NULL,
+    process_ids     TEXT    NOT NULL DEFAULT '[]',
+    color           TEXT    NOT NULL DEFAULT '#6366f1',
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_plan_bundles_org ON plan_bundles (organization_id);
 
   CREATE TABLE IF NOT EXISTS audits (
     id SERIAL PRIMARY KEY,
@@ -635,6 +650,10 @@ const POSTGRES_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_task_instances_org_status ON task_instances (organization_id, status);
   CREATE INDEX IF NOT EXISTS idx_task_instances_scheduled  ON task_instances (organization_id, scheduled_date);
   CREATE INDEX IF NOT EXISTS idx_task_instances_completed  ON task_instances (organization_id, completed_at);
+
+  -- actions: process linkage column for databases created before it was added
+  -- to the CREATE TABLE above (mirrors add-process-id-to-actions.sql)
+  ALTER TABLE actions ADD COLUMN IF NOT EXISTS process_id INTEGER DEFAULT NULL;
 
   -- actions: linked entity lookups
   CREATE INDEX IF NOT EXISTS idx_actions_instance_id    ON actions (instance_id);

@@ -369,6 +369,34 @@ function requireOrgContext(req, res, next) {
   next();
 }
 
+// Middleware factory: require one of the given module permissions ('org',
+// 'risk', 'ops', 'audit'). Mirrors the rules already used by the AI agent and
+// import endpoints: superadmins, org admins and users holding the 'admin'
+// permission always pass; everyone else needs at least one of the listed
+// module permissions in users.permissions (JSON array).
+function requireModulePermission(...allowed) {
+  return async (req, res, next) => {
+    try {
+      if (req.session.userRole === 'superadmin') return next();
+      const user = await db.prepare('SELECT role, permissions FROM users WHERE id = ?').get(req.session.userId);
+      if (!user) return res.status(401).json({ error: 'Authentication required' });
+      let perms = [];
+      try { perms = JSON.parse(user.permissions || '[]'); } catch (_) { perms = []; }
+      if (user.role === 'org_admin' || user.role === 'admin' || perms.includes('admin')) return next();
+      if (allowed.some(p => perms.includes(p))) return next();
+      return res.status(403).json({ error: `Access denied: requires the ${allowed.join(' or ')} module permission` });
+    } catch (err) {
+      console.error('[auth] module permission check failed:', err.message);
+      return res.status(500).json({ error: 'Permission check failed' });
+    }
+  };
+}
+
+// Operational Planning endpoints: accessible to users with the Operational
+// Planning ('ops') module, plus 'org' because the Org Planning dashboard /
+// Mission Control surfaces tasks and follow-up actions.
+const requireOpsAccess = requireModulePermission('ops', 'org');
+
 // Middleware: require superadmin role
 function requireSuperadmin(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Authentication required' });
@@ -477,22 +505,40 @@ async function ensureTaskInstances(orgId, horizonDays = 14) {
   const horizonStr = horizon.toISOString().split('T')[0];
 
   const tasks = await db.prepare('SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1').all(orgId);
+  if (tasks.length === 0) return;
+
+  // One grouped query for the latest scheduled date of every series in the org
+  const lastRows = await db.prepare(
+    'SELECT task_id, MAX(scheduled_date) AS d FROM task_instances WHERE organization_id = ? GROUP BY task_id'
+  ).all(orgId);
+  const lastByTask = new Map(lastRows.map(r => [r.task_id, r.d]));
+
+  const rows = []; // [task_id, scheduled_date] pairs to insert
   for (const task of tasks) {
-    const last = await db.prepare(
-      'SELECT MAX(scheduled_date) AS d FROM task_instances WHERE task_id = ? AND organization_id = ?'
-    ).get(task.id, orgId);
-    let cursor = last && last.d
-      ? computeNextDue(last.d, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month)
+    const last = lastByTask.get(task.id);
+    let cursor = last
+      ? computeNextDue(last, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month)
       : task.start_date;
     let safety = 0;
     while (cursor <= horizonStr && safety < 400) {
-      await db.prepare(
-        `INSERT INTO task_instances (organization_id, task_id, scheduled_date)
-         VALUES (?, ?, ?) ON CONFLICT (task_id, scheduled_date) DO NOTHING`
-      ).run(orgId, task.id, cursor);
-      cursor = computeNextDue(cursor, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
+      rows.push([task.id, cursor]);
+      const next = computeNextDue(cursor, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
+      if (next <= cursor) break; // schedule not advancing — misconfigured series
+      cursor = next;
       safety++;
     }
+  }
+
+  // Batched insert; UNIQUE(task_id, scheduled_date) keeps this idempotent
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    const values = chunk.map(() => '(?, ?, ?)').join(', ');
+    const params = chunk.flatMap(([taskId, date]) => [orgId, taskId, date]);
+    await db.prepare(
+      `INSERT INTO task_instances (organization_id, task_id, scheduled_date)
+       VALUES ${values} ON CONFLICT (task_id, scheduled_date) DO NOTHING`
+    ).run(...params);
   }
 }
 
@@ -512,6 +558,28 @@ function isValidDateStr(v) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
   const d = new Date(v + 'T00:00:00Z');
   return !isNaN(d.getTime()) && d.toISOString().startsWith(v);
+}
+
+// Valid recurrence configuration for task series. Guards both the DB CHECK
+// constraint and computeNextDue(): a non-positive custom_days would make the
+// schedule stand still or run backwards, which the yearly-plan projection and
+// instance-generation loops cannot terminate on.
+const VALID_RECURRENCES = new Set(['daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly', 'custom']);
+
+function validateRecurrenceFields(body) {
+  const { recurrence, custom_days, day_of_week, day_of_month } = body;
+  if (recurrence !== undefined && recurrence !== null && recurrence !== '' && !VALID_RECURRENCES.has(recurrence)) {
+    return `recurrence must be one of: ${[...VALID_RECURRENCES].join(', ')}`;
+  }
+  const ranges = [['custom_days', custom_days, 1, 3650], ['day_of_week', day_of_week, 0, 6], ['day_of_month', day_of_month, 1, 31]];
+  for (const [name, value, min, max] of ranges) {
+    if (value === undefined || value === null || value === '') continue;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < min || n > max) {
+      return `${name} must be an integer between ${min} and ${max}`;
+    }
+  }
+  return null;
 }
 
 // Improvement 13: allowed entity types for cross-link operations
@@ -912,8 +980,8 @@ app.get('/api/msp/dashboard', requireSuperadmin, async (req, res) => {
 // --- API Routes ---
 
 // Get all tasks with optional filters
-app.get('/api/tasks', requireOrgContext, async (req, res) => {
-  const { active, assignee, category, priority, overdue } = req.query;
+app.get('/api/tasks', requireOrgContext, requireOpsAccess, async (req, res) => {
+  const { active, assignee, category, categories, priority, overdue } = req.query;
   let sql = 'SELECT * FROM tasks WHERE organization_id = ?';
   const params = [req.orgId];
 
@@ -929,6 +997,14 @@ app.get('/api/tasks', requireOrgContext, async (req, res) => {
     sql += ' AND category = ?';
     params.push(category);
   }
+  // Process-context filter: comma-separated list of categories (bundle support)
+  if (categories) {
+    const list = String(categories).split(',').map(s => s.trim()).filter(Boolean).slice(0, 100);
+    if (list.length) {
+      sql += ` AND category IN (${list.map(() => '?').join(',')})`;
+      params.push(...list);
+    }
+  }
   if (priority) {
     sql += ' AND priority = ?';
     params.push(priority);
@@ -943,7 +1019,7 @@ app.get('/api/tasks', requireOrgContext, async (req, res) => {
 });
 
 // Get dashboard stats
-app.get('/api/dashboard', requireOrgContext, async (req, res) => {
+app.get('/api/dashboard', requireOrgContext, requireOpsAccess, async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
   const oid = req.orgId;
   const stats = {
@@ -1022,7 +1098,7 @@ app.get('/api/dashboard', requireOrgContext, async (req, res) => {
 });
 
 // Get single task series with recent instance history
-app.get('/api/tasks/:id', requireOrgContext, async (req, res) => {
+app.get('/api/tasks/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
   const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!task) return res.status(404).json({ error: 'Task not found' });
   const instances = await db.prepare(
@@ -1034,12 +1110,14 @@ app.get('/api/tasks/:id', requireOrgContext, async (req, res) => {
 });
 
 // Create task
-app.post('/api/tasks', requireOrgContext, async (req, res) => {
+app.post('/api/tasks', requireOrgContext, requireOpsAccess, async (req, res) => {
   const { title, description, assignee, category, priority, recurrence, custom_days, day_of_week, day_of_month, start_date } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
   if (start_date !== undefined && start_date !== null && start_date !== '' && !isValidDateStr(start_date)) {
     return res.status(400).json({ error: 'start_date must be in YYYY-MM-DD format' });
   }
+  const recurrenceError = validateRecurrenceFields(req.body);
+  if (recurrenceError) return res.status(400).json({ error: recurrenceError });
 
   const startDt = (start_date && isValidDateStr(start_date))
     ? start_date
@@ -1069,7 +1147,7 @@ app.post('/api/tasks', requireOrgContext, async (req, res) => {
 });
 
 // Update task
-app.put('/api/tasks/:id', requireOrgContext, async (req, res) => {
+app.put('/api/tasks/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
   const existing = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Task not found' });
 
@@ -1079,6 +1157,8 @@ app.put('/api/tasks/:id', requireOrgContext, async (req, res) => {
       return res.status(400).json({ error: `${dateField} must be in YYYY-MM-DD format` });
     }
   }
+  const recurrenceError = validateRecurrenceFields(req.body);
+  if (recurrenceError) return res.status(400).json({ error: recurrenceError });
 
   const fields = ['title', 'description', 'assignee', 'category', 'priority', 'recurrence', 'custom_days', 'day_of_week', 'day_of_month', 'start_date', 'next_due', 'is_active'];
   const updates = [];
@@ -1101,7 +1181,7 @@ app.put('/api/tasks/:id', requireOrgContext, async (req, res) => {
 });
 
 // Complete a task series (upsert the instance for next_due, mark completed, advance next_due)
-app.post('/api/tasks/:id/complete', requireOrgContext, async (req, res) => {
+app.post('/api/tasks/:id/complete', requireOrgContext, requireOpsAccess, async (req, res) => {
   const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
@@ -1140,7 +1220,7 @@ app.post('/api/tasks/:id/complete', requireOrgContext, async (req, res) => {
 });
 
 // Delete task
-app.delete('/api/tasks/:id', requireOrgContext, async (req, res) => {
+app.delete('/api/tasks/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
   const result = await db.prepare('DELETE FROM tasks WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'Task not found' });
   res.json({ success: true });
@@ -1149,8 +1229,8 @@ app.delete('/api/tasks/:id', requireOrgContext, async (req, res) => {
 // --- Task Log (task_instances) API ---
 
 // List task instances (auto-generates missing pending rows for active series up to today+14d)
-app.get('/api/task-instances', requireOrgContext, async (req, res) => {
-  const { status, task_id, from, to, completed_by, limit } = req.query;
+app.get('/api/task-instances', requireOrgContext, requireOpsAccess, async (req, res) => {
+  const { status, task_id, from, to, completed_by, categories, limit } = req.query;
 
   // Ensure pending instances exist up to the horizon before querying (idempotent)
   if (!from && !to) {
@@ -1160,14 +1240,30 @@ app.get('/api/task-instances', requireOrgContext, async (req, res) => {
 
   let sql = `SELECT ti.*, t.title AS task_title, t.category AS task_category,
     t.assignee AS task_assignee, t.priority AS task_priority, t.recurrence AS task_recurrence,
-    (SELECT COUNT(*) FROM actions a WHERE a.instance_id = ti.id) AS action_count,
-    (SELECT COUNT(*) FROM actions a WHERE a.instance_id = ti.id AND a.status IN ('open','in_progress')) AS open_action_count
+    COALESCE(ac.action_count, 0)::int AS action_count,
+    COALESCE(ac.open_action_count, 0)::int AS open_action_count
     FROM task_instances ti JOIN tasks t ON ti.task_id = t.id
+    LEFT JOIN (
+      SELECT instance_id,
+             COUNT(*) AS action_count,
+             COUNT(*) FILTER (WHERE status IN ('open','in_progress')) AS open_action_count
+      FROM actions
+      WHERE organization_id = ? AND instance_id IS NOT NULL
+      GROUP BY instance_id
+    ) ac ON ac.instance_id = ti.id
     WHERE ti.organization_id = ?`;
-  const params = [req.orgId];
+  const params = [req.orgId, req.orgId];
   if (status) { sql += ' AND ti.status = ?'; params.push(status); }
   if (task_id) { sql += ' AND ti.task_id = ?'; params.push(task_id); }
   if (completed_by) { sql += ' AND ti.completed_by = ?'; params.push(completed_by); }
+  // Process-context filter: comma-separated list of task categories (process names)
+  if (categories) {
+    const list = String(categories).split(',').map(s => s.trim()).filter(Boolean).slice(0, 100);
+    if (list.length) {
+      sql += ` AND t.category IN (${list.map(() => '?').join(',')})`;
+      params.push(...list);
+    }
+  }
   if (from) { sql += ' AND ti.scheduled_date >= ?'; params.push(from); }
   if (to)   { sql += ' AND ti.scheduled_date <= ?'; params.push(to); }
   sql += ` ORDER BY CASE WHEN ti.status = 'pending' THEN ti.scheduled_date END ASC,
@@ -1179,7 +1275,7 @@ app.get('/api/task-instances', requireOrgContext, async (req, res) => {
 });
 
 // Get single instance
-app.get('/api/task-instances/:id', requireOrgContext, async (req, res) => {
+app.get('/api/task-instances/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const row = await db.prepare(
     `SELECT ti.*, t.title AS task_title, t.category AS task_category, t.assignee AS task_assignee
@@ -1191,7 +1287,7 @@ app.get('/api/task-instances/:id', requireOrgContext, async (req, res) => {
 });
 
 // Complete an instance
-app.post('/api/task-instances/:id/complete', requireOrgContext, async (req, res) => {
+app.post('/api/task-instances/:id/complete', requireOrgContext, requireOpsAccess, async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
@@ -1224,7 +1320,7 @@ app.post('/api/task-instances/:id/complete', requireOrgContext, async (req, res)
 });
 
 // Skip an instance
-app.post('/api/task-instances/:id/skip', requireOrgContext, async (req, res) => {
+app.post('/api/task-instances/:id/skip', requireOrgContext, requireOpsAccess, async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
@@ -1243,7 +1339,7 @@ app.post('/api/task-instances/:id/skip', requireOrgContext, async (req, res) => 
 });
 
 // Reopen an instance (back to pending)
-app.post('/api/task-instances/:id/reopen', requireOrgContext, async (req, res) => {
+app.post('/api/task-instances/:id/reopen', requireOrgContext, requireOpsAccess, async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
@@ -1256,7 +1352,7 @@ app.post('/api/task-instances/:id/reopen', requireOrgContext, async (req, res) =
 });
 
 // Upload evidence to an instance
-app.post('/api/task-instances/:id/evidence', requireOrgContext, upload.single('file'), async (req, res) => {
+app.post('/api/task-instances/:id/evidence', requireOrgContext, requireOpsAccess, upload.single('file'), async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
@@ -1305,7 +1401,7 @@ app.post('/api/task-instances/:id/evidence', requireOrgContext, upload.single('f
 });
 
 // Download instance evidence file
-app.get('/api/task-instances/:id/evidence/:fileId/download', requireOrgContext, async (req, res) => {
+app.get('/api/task-instances/:id/evidence/:fileId/download', requireOrgContext, requireOpsAccess, async (req, res) => {
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
   let evidenceFiles = [];
@@ -1321,7 +1417,7 @@ app.get('/api/task-instances/:id/evidence/:fileId/download', requireOrgContext, 
 });
 
 // Delete instance evidence file
-app.delete('/api/task-instances/:id/evidence/:fileId', requireOrgContext, async (req, res) => {
+app.delete('/api/task-instances/:id/evidence/:fileId', requireOrgContext, requireOpsAccess, async (req, res) => {
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
   let evidenceFiles = [];
@@ -1336,15 +1432,16 @@ app.delete('/api/task-instances/:id/evidence/:fileId', requireOrgContext, async 
 });
 
 // Get unique assignees and categories for filters
-app.get('/api/meta', requireOrgContext, async (req, res) => {
+app.get('/api/meta', requireOrgContext, requireOpsAccess, async (req, res) => {
   const assignees = (await db.prepare("SELECT DISTINCT assignee FROM tasks WHERE organization_id = ? AND assignee != '' ORDER BY assignee").all(req.orgId)).map(r => r.assignee);
   const categories = (await db.prepare('SELECT DISTINCT category FROM tasks WHERE organization_id = ? ORDER BY category').all(req.orgId)).map(r => r.category);
   res.json({ assignees, categories });
 });
 
 // Get yearly plan data (all due dates + completions for a year)
-app.get('/api/yearly', requireOrgContext, async (req, res) => {
-  const year = parseInt(req.query.year) || new Date().getFullYear();
+app.get('/api/yearly', requireOrgContext, requireOpsAccess, async (req, res) => {
+  const currentYear = new Date().getFullYear();
+  const year = parseIntParam(req.query.year, currentYear, { min: 2000, max: currentYear + 10 });
   const startDate = `${year}-01-01`;
   const endDate = `${year}-12-31`;
 
@@ -1354,11 +1451,17 @@ app.get('/api/yearly', requireOrgContext, async (req, res) => {
 
   for (const task of tasks) {
     let d = new Date(task.start_date);
-    // If task started before this year, advance to first occurrence in this year
+    // If task started before this year, advance to first occurrence in this year.
+    // Bounded so a stuck/backwards recurrence config can never hang the request.
     const yearStart = new Date(startDate);
-    while (d < yearStart) {
-      d = new Date(computeNextDue(d.toISOString().split('T')[0], task.recurrence, task.custom_days, task.day_of_week, task.day_of_month));
+    let advanceSafety = 0;
+    while (d < yearStart && advanceSafety < 20000) {
+      const next = new Date(computeNextDue(d.toISOString().split('T')[0], task.recurrence, task.custom_days, task.day_of_week, task.day_of_month));
+      if (next <= d) break; // schedule not advancing — bail out
+      d = next;
+      advanceSafety++;
     }
+    if (d < yearStart) continue; // could not reach this year (misconfigured series)
     // Generate all occurrences within the year
     const yearEnd = new Date(endDate);
     let safety = 0;
@@ -1409,8 +1512,8 @@ app.get('/api/yearly', requireOrgContext, async (req, res) => {
 // --- Follow-up Actions API ---
 
 // Get all follow-ups (actions) with optional filters
-app.get('/api/actions', requireOrgContext, async (req, res) => {
-  const { task_id, instance_id, status, process_id } = req.query;
+app.get('/api/actions', requireOrgContext, requireOpsAccess, async (req, res) => {
+  const { task_id, instance_id, status, process_id, process_ids } = req.query;
   let sql = `SELECT a.*, COALESCE(t.title, 'Standalone') as task_title, p.name as process_name,
     ti.scheduled_date AS instance_scheduled_date
     FROM actions a
@@ -1423,12 +1526,20 @@ app.get('/api/actions', requireOrgContext, async (req, res) => {
   if (instance_id) { sql += ' AND a.instance_id = ?'; params.push(instance_id); }
   if (status) { sql += ' AND a.status = ?'; params.push(status); }
   if (process_id) { sql += ' AND a.process_id = ?'; params.push(process_id); }
+  // Bundle-context filter: comma-separated list of process ids
+  if (process_ids) {
+    const ids = String(process_ids).split(',').map(s => parseInt(s.trim(), 10)).filter(Number.isInteger).slice(0, 100);
+    if (ids.length) {
+      sql += ` AND a.process_id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    }
+  }
   sql += ' ORDER BY a.created_at DESC';
   res.json(await db.prepare(sql).all(...params));
 });
 
 // Get single action
-app.get('/api/actions/:id', requireOrgContext, async (req, res) => {
+app.get('/api/actions/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
   const action = await db.prepare(`SELECT a.*, t.title as task_title, p.name as process_name
     FROM actions a
     LEFT JOIN tasks t ON a.task_id = t.id
@@ -1439,7 +1550,7 @@ app.get('/api/actions/:id', requireOrgContext, async (req, res) => {
 });
 
 // Create follow-up (optionally linked to an instance/task/process, or standalone)
-app.post('/api/actions', requireOrgContext, async (req, res) => {
+app.post('/api/actions', requireOrgContext, requireOpsAccess, async (req, res) => {
   const { instance_id, task_id, process_id, title, description, assignee, priority, due_date } = req.body;
   if (!title) return res.status(400).json({ error: 'title is required' });
 
@@ -1460,7 +1571,7 @@ app.post('/api/actions', requireOrgContext, async (req, res) => {
 });
 
 // Update action
-app.put('/api/actions/:id', requireOrgContext, async (req, res) => {
+app.put('/api/actions/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
   const existing = await db.prepare('SELECT * FROM actions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Action not found' });
 
@@ -1486,7 +1597,7 @@ app.put('/api/actions/:id', requireOrgContext, async (req, res) => {
 });
 
 // Delete action
-app.delete('/api/actions/:id', requireOrgContext, async (req, res) => {
+app.delete('/api/actions/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
   const result = await db.prepare('DELETE FROM actions WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'Action not found' });
   res.json({ success: true });
@@ -1494,11 +1605,11 @@ app.delete('/api/actions/:id', requireOrgContext, async (req, res) => {
 
 // --- Plan Bundles API ---
 
-app.get('/api/plan-bundles', requireOrgContext, async (req, res) => {
+app.get('/api/plan-bundles', requireOrgContext, requireOpsAccess, async (req, res) => {
   res.json(await db.prepare('SELECT * FROM plan_bundles WHERE organization_id = ? ORDER BY sort_order, name').all(req.orgId));
 });
 
-app.post('/api/plan-bundles', requireOrgContext, async (req, res) => {
+app.post('/api/plan-bundles', requireOrgContext, requireOpsAccess, async (req, res) => {
   const { name, process_ids, color } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
   const result = await db.prepare(
@@ -1507,7 +1618,7 @@ app.post('/api/plan-bundles', requireOrgContext, async (req, res) => {
   res.status(201).json(await db.prepare('SELECT * FROM plan_bundles WHERE id = ?').get(result.lastInsertRowid));
 });
 
-app.put('/api/plan-bundles/:id', requireOrgContext, async (req, res) => {
+app.put('/api/plan-bundles/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
   const existing = await db.prepare('SELECT * FROM plan_bundles WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!existing) return res.status(404).json({ error: 'Bundle not found' });
   const { name, process_ids, color, sort_order } = req.body;
@@ -1523,7 +1634,7 @@ app.put('/api/plan-bundles/:id', requireOrgContext, async (req, res) => {
   res.json(await db.prepare('SELECT * FROM plan_bundles WHERE id = ?').get(req.params.id));
 });
 
-app.delete('/api/plan-bundles/:id', requireOrgContext, async (req, res) => {
+app.delete('/api/plan-bundles/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
   const result = await db.prepare('DELETE FROM plan_bundles WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'Bundle not found' });
   res.json({ success: true });
@@ -5033,7 +5144,7 @@ app.post('/api/management-reviews/:id/outputs/:outputId/push-to-actions', requir
   ).get(req.params.outputId, req.params.id, req.orgId);
   if (!output) return res.status(404).json({ error: 'Output not found' });
 
-  const review = await db.prepare('SELECT title FROM management_reviews WHERE id = ?').get(req.params.id);
+  const review = await db.prepare('SELECT title FROM management_reviews WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
 
   const actionResult = await db.prepare(
     `INSERT INTO actions (organization_id, title, description, assignee, priority, status, due_date)

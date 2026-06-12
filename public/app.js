@@ -893,6 +893,15 @@ async function loadTasks() {
   if (filters.assignee) params.set('assignee', filters.assignee);
   if (filters.category) params.set('category', filters.category);
   if (filters.priority) params.set('priority', filters.priority);
+  // Bundle context: filter by the bundle's process names server-side
+  // (single-process context is already covered via filters.category; names
+  // containing commas fall back to the client-side filter in renderTaskTable)
+  if (opPlanContext.type === 'bundle') {
+    const ctxNames = getOpPlanContextNames();
+    if (ctxNames && ctxNames.length && ctxNames.every(n => !n.includes(','))) {
+      params.set('categories', ctxNames.join(','));
+    }
+  }
 
   allTasks = await api(`/api/tasks?${params}`);
   renderTaskTable();
@@ -1027,10 +1036,14 @@ async function loadTaskLog() {
   const params = new URLSearchParams({ status: taskLogTab, limit: '500' });
   if (taskLogFilters.task_id) params.set('task_id', taskLogFilters.task_id);
   if (taskLogFilters.completed_by) params.set('completed_by', taskLogFilters.completed_by);
-  let instances = await api(`/api/task-instances?${params}`);
-
-  // Apply process context filter (matches on task_category like the rest of Operational Planning)
+  // Process context filter (matches on task_category like the rest of Operational
+  // Planning). Applied server-side so the row limit can't truncate context rows;
+  // names containing commas fall back to the client-side filter below.
   const ctxNames = getOpPlanContextNames();
+  if (ctxNames && ctxNames.length && ctxNames.every(n => !n.includes(','))) {
+    params.set('categories', ctxNames.join(','));
+  }
+  let instances = await api(`/api/task-instances?${params}`);
   if (ctxNames) instances = instances.filter(i => ctxNames.includes(i.task_category));
 
   if (taskLogSearch) {
@@ -1606,19 +1619,21 @@ async function loadActions() {
   const params = new URLSearchParams();
   if (actionFilters.status) params.set('status', actionFilters.status);
   if (opPlanContext.type === 'process' && opPlanContext.id) params.set('process_id', opPlanContext.id);
+  // Bundle context: filter by process_id membership server-side
+  let bundleIds = null;
+  if (opPlanContext.type === 'bundle') {
+    const bundle = opPlanBundles.find(b => b.id === opPlanContext.id);
+    bundleIds = bundle ? JSON.parse(bundle.process_ids || '[]') : [];
+    if (bundleIds.length) params.set('process_ids', bundleIds.join(','));
+  }
 
   const [actions, roles] = await Promise.all([
     api(`/api/actions?${params}`),
     api('/api/architecture?arch_type=role'),
   ]);
   renderActionFilters(roles);
-  // For bundle context: filter client-side by process_id membership
-  let filtered = actions;
-  if (opPlanContext.type === 'bundle') {
-    const bundle = opPlanBundles.find(b => b.id === opPlanContext.id);
-    const ids = bundle ? JSON.parse(bundle.process_ids || '[]') : [];
-    filtered = actions.filter(a => ids.includes(a.process_id));
-  }
+  // An empty bundle contains no processes, so it can't have any actions
+  let filtered = bundleIds && bundleIds.length === 0 ? [] : actions;
   if (actionFilters.priority) filtered = filtered.filter(a => a.priority === actionFilters.priority);
   if (actionFilters.assignee) filtered = filtered.filter(a => a.assignee === actionFilters.assignee);
   renderActionTable(filtered);
