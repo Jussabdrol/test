@@ -1,16 +1,21 @@
 {
-  "name": "recurring-task-manager",
+  "name": "bop",
   "version": "2.0.0",
-  "description": "Track and manage recurring tasks within a business context – Supabase PostgreSQL backend",
+  "description": "BOP (Business Orchestration Platform) — multi-tenant compliance management",
   "main": "server.js",
   "scripts": {
+    "build": "node scripts/build-client.js",
+    "prestart": "npm run build",
     "start": "node server.js",
-    "dev": "node server.js",
-    "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check db.js && node --check public/app.js && node --check public/relationships-ui.js"
+    "dev": "npm run build && node --env-file=.env server.js",
+    "pretest": "npm run build",
+    "test": "node --require ./test/support/isolate-env.js --test --test-timeout=60000 test/unit/*.test.js test/integration/*.test.js",
+    "lint": "eslint .",
+    "check": "npm run build && node scripts/check-syntax.js && npm run lint",
+    "verify": "npm run check && npm test"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.13.0"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",
@@ -29,6 +34,8 @@
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.8"
+    "@electric-sql/pglite": "^0.5.8",
+    "eslint": "10.10.0",
+    "globals": "17.12.0"
   }
 }

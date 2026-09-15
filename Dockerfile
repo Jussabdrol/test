@@ -13,6 +13,9 @@ RUN npm ci --omit=dev
 # Copy app source
 COPY . .
 
+# Assemble the classic browser script (no development dependencies required)
+RUN npm run build
+
 # Expose port
 EXPOSE 3000
 
