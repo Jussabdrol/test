@@ -7,3 +7,13 @@ npm-debug.log
 .env.*
 *.log
 .DS_Store
+public/app.js
+test
+docs
+templates
+database/legacy
+.github
+coverage
+eslint.config.cjs
+.editorconfig
+.nvmrc

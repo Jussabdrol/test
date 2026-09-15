@@ -7,12 +7,28 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run check
-      - run: npm test
+      - run: npm run verify
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t bop-ci .
+      - name: Verify packaged app without database startup
+        run: >-
+          docker run --rm
+          -e SESSION_SECRET=ci-container-smoke-test-secret-at-least-32-characters
+          --entrypoint node bop-ci
+          -e "require('node:fs').accessSync('public/app.js'); require('./src/server/app');"
