@@ -217,6 +217,21 @@ const POSTGRES_SCHEMA_SQL = `
     updated_at TIMESTAMP DEFAULT NOW()
   );
 
+  CREATE TABLE IF NOT EXISTS org_architecture (
+    id SERIAL PRIMARY KEY,
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    arch_type TEXT NOT NULL CHECK(arch_type IN ('role','process','system','asset','facility','ai_model','ai_dataset','ai_usecase')),
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    parent_id INTEGER DEFAULT NULL,
+    owner TEXT DEFAULT '',
+    status TEXT DEFAULT 'active',
+    metadata TEXT DEFAULT '{}',
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+  );
+
   CREATE TABLE IF NOT EXISTS org_kpis (
     id SERIAL PRIMARY KEY,
     organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -240,21 +255,6 @@ const POSTGRES_SCHEMA_SQL = `
     period TEXT NOT NULL,
     recorded_at TIMESTAMP DEFAULT NOW(),
     FOREIGN KEY (kpi_id) REFERENCES org_kpis(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS org_architecture (
-    id SERIAL PRIMARY KEY,
-    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    arch_type TEXT NOT NULL CHECK(arch_type IN ('role','process','system','asset','facility','ai_model','ai_dataset','ai_usecase')),
-    name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    parent_id INTEGER DEFAULT NULL,
-    owner TEXT DEFAULT '',
-    status TEXT DEFAULT 'active',
-    metadata TEXT DEFAULT '{}',
-    sort_order INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS documents (
@@ -288,6 +288,26 @@ const POSTGRES_SCHEMA_SQL = `
     target_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(organization_id, source_type, source_id, target_type, target_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT DEFAULT NULL,
+    role TEXT DEFAULT 'org_user' CHECK(role IN ('superadmin','org_admin','org_user')),
+    department TEXT DEFAULT '',
+    permissions TEXT DEFAULT '["org","risk","ops","audit"]',
+    status TEXT DEFAULT 'active' CHECK(status IN ('active','pending','suspended','inactive')),
+    last_active TEXT DEFAULT NULL,
+    expiry_date TEXT DEFAULT NULL,
+    notes TEXT DEFAULT '',
+    sso_provider TEXT DEFAULT NULL,
+    supabase_uid TEXT DEFAULT NULL,
+    session_version INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS use_cases (
@@ -363,26 +383,6 @@ const POSTGRES_SCHEMA_SQL = `
     fetched_at TIMESTAMP DEFAULT NOW(),
     FOREIGN KEY (feed_id) REFERENCES threat_feeds(id) ON DELETE CASCADE,
     UNIQUE(feed_id, guid)
-  );
-
-  CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT DEFAULT NULL,
-    role TEXT DEFAULT 'org_user' CHECK(role IN ('superadmin','org_admin','org_user')),
-    department TEXT DEFAULT '',
-    permissions TEXT DEFAULT '["org","risk","ops","audit"]',
-    status TEXT DEFAULT 'active' CHECK(status IN ('active','pending','suspended','inactive')),
-    last_active TEXT DEFAULT NULL,
-    expiry_date TEXT DEFAULT NULL,
-    notes TEXT DEFAULT '',
-    sso_provider TEXT DEFAULT NULL,
-    supabase_uid TEXT DEFAULT NULL,
-    session_version INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS system_settings (
