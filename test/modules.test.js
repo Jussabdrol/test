@@ -5,14 +5,14 @@ const { installTestDatabase } = require('./database');
 const db = installTestDatabase();
 process.env.SESSION_SECRET = 'isolated-test-session-secret';
 const { app, executeAgentTool } = require('../server');
-let server, base, org, otherOrg, cookie;
+let server, base, org, otherOrg, cookie, csrfToken;
 function token(payload) {
   const h=Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url');
   const b=Buffer.from(JSON.stringify({...payload,exp:Date.now()+3600000})).toString('base64url');
   return `${h}.${b}.${crypto.createHmac('sha256',process.env.SESSION_SECRET).update(`${h}.${b}`).digest('base64url')}`;
 }
 async function api(path, method='GET', body) {
-  const response=await fetch(base+path,{method,headers:{cookie,'Content-Type':'application/json','X-CSRF-Token':'isolated-csrf-token'},body:body===undefined?undefined:JSON.stringify(body)});
+  const response=await fetch(base+path,{method,headers:{cookie,'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:body===undefined?undefined:JSON.stringify(body)});
   return {status:response.status,body:await response.json()};
 }
 async function create(path,body) {const r=await api(path,'POST',body);assert.equal(r.status,201,JSON.stringify(r.body));return r.body;}
@@ -21,8 +21,12 @@ before(async()=>{
   org=(await db.get('SELECT id FROM organizations LIMIT 1')).id;
   otherOrg=(await db.run("INSERT INTO organizations(name,slug) VALUES ('Other','other')")).lastInsertRowid;
   const user=(await db.run("INSERT INTO users(organization_id,name,email,role,status) VALUES (?,'Test','test@example.invalid','org_admin','active')",org)).lastInsertRowid;
-  cookie='csrf_token=isolated-csrf-token; session_token='+token({userId:user,userRole:'org_admin',activeOrgId:org,organizationId:org,sv:0});
+  cookie='session_token='+token({userId:user,userRole:'org_admin',activeOrgId:org,organizationId:org,sv:0});
   server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));base=`http://127.0.0.1:${server.address().port}`;
+  const response = await fetch(base+'/health',{headers:{cookie}});
+  const csrfCookie = response.headers.getSetCookie().find(value=>value.startsWith('csrf_token=')).split(';')[0];
+  csrfToken = decodeURIComponent(csrfCookie.slice('csrf_token='.length));
+  cookie += '; '+csrfCookie;
 });
 after(async()=>{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await db.close();});
 
@@ -158,4 +162,49 @@ test('Excel and Word document conversion still produce usable files after depend
   const bytes=await require('html-to-docx')('<h1>Control report</h1><p>Evidence retained.</p>');
   const parsed=await require('mammoth').extractRawText({buffer:Buffer.from(bytes)});
   assert.match(parsed.value,/Control report/);assert.match(parsed.value,/Evidence retained/);
+});
+
+
+test('CSRF rejects missing, forged and session-mismatched tokens without writes', async () => {
+  const before = await db.get('SELECT COUNT(*)::int AS count FROM risks');
+  const sessionCookie = cookie.split(';')[0];
+  for (const headers of [
+    {cookie},
+    {cookie, 'X-CSRF-Token':'forged'},
+    {cookie: sessionCookie+'; csrf_token=forged', 'X-CSRF-Token':'forged'},
+    {cookie:'session_token=different; csrf_token='+csrfToken, 'X-CSRF-Token':csrfToken},
+  ]) {
+    const response=await fetch(base+'/api/risks',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({title:'forged request'})});
+    assert.equal(response.status,403);
+  }
+  assert.deepEqual(await db.get('SELECT COUNT(*)::int AS count FROM risks'),before);
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  assert.equal(login.status,403);
+});
+
+test('prepared statements keep SQL-looking values separate from query text', async () => {
+  const value="x'); DROP TABLE risks; --";
+  await db.transaction(async()=>{
+    const row=await db.prepare('INSERT INTO risks(organization_id,title) VALUES (?,?)').run(org,value);
+    assert.equal((await db.prepare('SELECT title FROM risks WHERE id=?').get([row.lastInsertRowid])).title,value);
+    assert.equal((await db.prepare('SELECT title FROM risks WHERE title=?').all(value))[0].title,value);
+    await db.prepare('DELETE FROM risks WHERE id=?').run([row.lastInsertRowid]);
+  });
+});
+
+test('browser login rotates the CSRF token and allows the next protected request', async () => {
+  const password=crypto.randomBytes(24).toString('hex');
+  const hash=await require('bcryptjs').hash(password,4);
+  await db.run('UPDATE users SET password=? WHERE email=?',hash,'test@example.invalid');
+  const page=await fetch(base+'/login');
+  const jar=new Map(page.headers.getSetCookie().map(c=>c.split(';')[0].split('=')));
+  const anonymousToken=decodeURIComponent(jar.get('csrf_token'));
+  const login=await fetch(base+'/api/auth/login',{method:'POST',headers:{cookie:[...jar].map(([k,v])=>`${k}=${v}`).join('; '),'Content-Type':'application/json','X-CSRF-Token':anonymousToken},body:JSON.stringify({email:'test@example.invalid',password})});
+  assert.equal(login.status,200,await login.text());
+  for(const c of login.headers.getSetCookie()){const [key,value]=c.split(';')[0].split('=');jar.set(key,value);}
+  const signedToken=decodeURIComponent(jar.get('csrf_token'));
+  assert.notEqual(signedToken,anonymousToken);
+  const created=await fetch(base+'/api/risks',{method:'POST',headers:{cookie:[...jar].map(([k,v])=>`${k}=${v}`).join('; '),'Content-Type':'application/json','X-CSRF-Token':signedToken},body:JSON.stringify({title:'Login session check'})});
+  assert.equal(created.status,201);
+  await db.run('DELETE FROM risks WHERE id=?',(await created.json()).id);
 });

@@ -1,7 +1,7 @@
 {
   "name": "recurring-task-manager",
   "version": "2.0.0",
-  "description": "Track and manage recurring tasks within a business context \u2013 Supabase PostgreSQL backend",
+  "description": "Track and manage recurring tasks within a business context – Supabase PostgreSQL backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -16,6 +16,7 @@
     "@supabase/supabase-js": "^2.97.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
+    "csrf-csrf": "^4.0.3",
     "express": "^4.21.0",
     "express-async-errors": "^3.1.1",
     "express-rate-limit": "^8.3.2",

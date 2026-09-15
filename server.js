@@ -228,57 +228,37 @@ const cookieParser = require('cookie-parser');
 app.use(cookieParser());
 
 // ---------------------------------------------------------------------------
-// CSRF protection (double-submit cookie)
+// CSRF protection: signed double-submit tokens bound to the session.
 // ---------------------------------------------------------------------------
-// We issue a non-httpOnly csrf_token cookie on first visit. The SPA's fetch
-// wrapper echoes the value back in an X-CSRF-Token header on every state-
-// changing request. SameSite=Lax on the session cookie already blocks the
-// common cross-site POST; the header check closes the remaining gaps
-// (subdomain attacks, browsers that lax-allow top-level POSTs, etc.) and
-// satisfies CodeQL's "missing CSRF middleware" rule.
+const { doubleCsrf } = require('csrf-csrf');
 const CSRF_COOKIE = 'csrf_token';
-const CSRF_HEADER = 'x-csrf-token';
-const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-// Login has no CSRF cookie yet; SAML callbacks are POSTed by the external IdP.
-const CSRF_EXEMPT_PATHS = new Set(['/api/auth/login']);
-
-function csrfTokensMatch(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ab.length !== bb.length || ab.length === 0) return false;
-  return crypto.timingSafeEqual(ab, bb);
-}
-
+const CSRF_SESSION_COOKIE = IS_PRODUCTION ? '__Host-bop_csrf_session' : 'bop_csrf_session';
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const csrfCookieOptions = {
+  httpOnly: false, secure: IS_PRODUCTION, sameSite: 'lax', path: '/', maxAge: TOKEN_MAX_AGE,
+};
+const { generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
+  getSecret: () => TOKEN_SECRET,
+  getSessionIdentifier: req => req.cookies.session_token || req.cookies[CSRF_SESSION_COOKIE] || '',
+  cookieName: CSRF_COOKIE,
+  cookieOptions: csrfCookieOptions,
+  getCsrfTokenFromRequest: req => req.headers['x-csrf-token'],
+  // The external IdP posts the SAML response; the SAML handler verifies it.
+  skipCsrfProtection: req => req.path.startsWith('/saml/'),
+});
 app.use((req, res, next) => {
-  // Ensure the client has a CSRF cookie. Non-httpOnly by design so the SPA can
-  // read it and echo it back in a header — the attacker cannot read it because
-  // they are on a different origin.
-  if (!req.cookies?.[CSRF_COOKIE]) {
-    const token = crypto.randomBytes(32).toString('base64url');
-    res.cookie(CSRF_COOKIE, token, {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === 'production' || req.protocol === 'https',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 365 * 24 * 60 * 60 * 1000,
-    });
-    req.cookies = req.cookies || {};
-    req.cookies[CSRF_COOKIE] = token;
+  if (SAFE_METHODS.has(req.method)) {
+    if (!req.cookies.session_token && !req.cookies[CSRF_SESSION_COOKIE]) {
+      const anonymousSession = crypto.randomBytes(32).toString('base64url');
+      res.cookie(CSRF_SESSION_COOKIE, anonymousSession, { ...csrfCookieOptions, httpOnly: true });
+      req.cookies[CSRF_SESSION_COOKIE] = anonymousSession;
+    }
+    // GET also refreshes legacy tokens and tokens from the previous login.
+    req.cookies.csrf_token = generateCsrfToken(req, res);
   }
   next();
 });
-
-app.use((req, res, next) => {
-  if (!CSRF_UNSAFE_METHODS.has(req.method)) return next();
-  if (CSRF_EXEMPT_PATHS.has(req.path) || req.path.startsWith('/saml/')) return next();
-  const cookieToken = req.cookies?.[CSRF_COOKIE];
-  const headerToken = req.headers[CSRF_HEADER];
-  if (!csrfTokensMatch(cookieToken, headerToken)) {
-    return res.status(403).json({ error: 'CSRF validation failed' });
-  }
-  next();
-});
+app.use(doubleCsrfProtection);
 
 app.use((req, res, next) => {
   const token = req.cookies?.session_token;
@@ -304,6 +284,8 @@ app.use((req, res, next) => {
         maxAge: TOKEN_MAX_AGE,
         path: '/',
       });
+      req.cookies.session_token = newToken;
+      req.cookies.csrf_token = generateCsrfToken(req, res);
       if (cb) cb(null);
     },
     destroy(cb) {
@@ -6984,6 +6966,7 @@ app.get('*', async (req, res) => {
 
 // Global error handler - must be last middleware
 app.use((err, req, res, next) => {
+  if (err.code === 'EBADCSRFTOKEN') return res.status(403).json({error:'CSRF validation failed. Reload the page and try again.'});
   if (err instanceof HttpError) return res.status(err.status).json({error:err.message});
   if (['23503','23505','23514','22P02','22007','22008'].includes(err.code)) return res.status(err.code === '23505' ? 409 : 400).json({error:'Invalid value or conflicting reference. Check the linked records and fields.'});
   // Surface upload validation failures as 400 so the UI can show a helpful message

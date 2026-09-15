@@ -412,9 +412,9 @@ function deferUntilCommit(effect) {
 
 function prepare(sql) {
   return {
-    get: (...params) => get(sql, ...params),
-    all: (...params) => all(sql, ...params),
-    run: (...params) => run(sql, ...params),
+    get: (...params) => get(sql, params.length === 1 && Array.isArray(params[0]) ? params[0] : params),
+    all: (...params) => all(sql, params.length === 1 && Array.isArray(params[0]) ? params[0] : params),
+    run: (...params) => run(sql, params.length === 1 && Array.isArray(params[0]) ? params[0] : params),
   };
 }
 

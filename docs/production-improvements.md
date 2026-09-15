@@ -26,12 +26,12 @@ The entity registry supports 25 identifiers, including the existing `usecase` / 
 
 ## Verification
 
-- 14 local regression tests pass, using an isolated PGlite PostgreSQL engine and synthetic data.
+- 17 local regression tests pass, using an isolated PGlite PostgreSQL engine and synthetic data.
 - 23 production module entry points and all registered linkable entity types are exercised.
 - Concurrent HTTP workflows, rollback, separate transaction clients, tenant boundaries, recurrence, AI workflows and Word/Excel conversion are covered.
 - JavaScript syntax checks pass.
 - Desktop and 390px mobile layout checked; search and navigation to the exact linked process checked in the browser.
-- Local execution used Node 24. The Dockerfile and proposed CI target Node 22, supported by the current Supabase libraries. A Node 22 container build and hosted CI have not run here.
+- Local execution used Node 24. The Dockerfile and proposed CI target Node 22, supported by the current Supabase libraries. The Node 22 GitHub Actions suite has also passed. A local container build has not run here.
 
 The PGlite API suite has one database connection; a separate test verifies independent client routing. It does not replace a production PostgreSQL load or race test.
 
@@ -40,3 +40,5 @@ The PGlite API suite has one database connection; a separate test verifies indep
 Use the pull request checks to verify the Node 22 runtime before merging. After deployment, verify the health endpoint, real login, storage, task completion, review promotion and module access. The schema change only reorders existing table declarations for fresh installations; it does not introduce a new migration.
 
 Infrastructure observations and the separate security follow-up are maintained outside this source change. This is a tested first change set, not a statement that every module and security path has been exhaustively audited.
+
+CSRF tokens are now signed and bound to the authenticated session (or an anonymous browser session before login). Login echoes the token and session changes refresh it. Regression tests reject forged and cross-session tokens and verify that SQL-looking values remain query parameters. The container enables production cookie and session-secret checks.
