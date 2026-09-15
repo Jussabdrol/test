@@ -26,7 +26,7 @@ The entity registry supports 25 identifiers, including the existing `usecase` / 
 
 ## Verification
 
-- 17 local regression tests pass, using an isolated PGlite PostgreSQL engine and synthetic data.
+- 18 local regression tests pass, using an isolated PGlite PostgreSQL engine and synthetic data.
 - 23 production module entry points and all registered linkable entity types are exercised.
 - Concurrent HTTP workflows, rollback, separate transaction clients, tenant boundaries, recurrence, AI workflows and Word/Excel conversion are covered.
 - JavaScript syntax checks pass.
@@ -42,3 +42,5 @@ Use the pull request checks to verify the Node 22 runtime before merging. After 
 Infrastructure observations and the separate security follow-up are maintained outside this source change. This is a tested first change set, not a statement that every module and security path has been exhaustively audited.
 
 CSRF tokens are now signed and bound to the authenticated session (or an anonymous browser session before login). Login echoes the token and session changes refresh it. Regression tests reject forged and cross-session tokens and verify that SQL-looking values remain query parameters. The container enables production cookie and session-secret checks.
+
+The /health endpoint runs a database probe and returns 503 when the database is unavailable, without exposing connection errors.

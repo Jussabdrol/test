@@ -208,3 +208,16 @@ test('browser login rotates the CSRF token and allows the next protected request
   assert.equal(created.status,201);
   await db.run('DELETE FROM risks WHERE id=?',(await created.json()).id);
 });
+
+test('deployment health checks the database and fails closed without error details', async () => {
+  const healthy=await api('/health');
+  assert.equal(healthy.status,200);
+  assert.equal(healthy.body.database,'ready');
+  const original=db.get;
+  db.get=async sql=>{assert.equal(sql,'SELECT 1 AS ready');throw Error('private connection details');};
+  try {
+    const failed=await api('/health');
+    assert.equal(failed.status,503);
+    assert.deepEqual(failed.body,{status:'unavailable',database:'unavailable'});
+  } finally {db.get=original;}
+});

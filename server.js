@@ -390,7 +390,13 @@ function requireSuperadmin(req, res, next) {
 
 // Health check endpoint for Cloud Run (must be before auth middleware)
 app.get('/health', async (req, res) => {
-  res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+  res.set('Cache-Control', 'no-store');
+  try {
+    await db.get('SELECT 1 AS ready');
+    res.status(200).json({ status: 'healthy', database: 'ready', timestamp: new Date().toISOString() });
+  } catch {
+    res.status(503).json({ status: 'unavailable', database: 'unavailable' });
+  }
 });
 
 // Auth middleware for static files - protect everything except login page
