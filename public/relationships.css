@@ -1,0 +1,30 @@
+.relation-link { border:0; background:transparent; color:var(--primary,#256b57); font:inherit; text-align:left; padding:6px 0; cursor:pointer; text-decoration:underline; text-underline-offset:3px; overflow-wrap:anywhere; }
+#attention-overview { padding:24px; margin:20px 0 28px; background:#f7faf8; border:1px solid #d5e4dc; border-radius:16px; }
+.attention-heading { display:flex; justify-content:space-between; gap:16px; align-items:center; }
+.attention-heading h3 { margin:4px 0 8px; font-size:22px; color:#203e30; }
+.attention-heading p { margin:0; color:#547063; }
+.attention-eyebrow { font-size:10px; letter-spacing:1.2px; font-weight:700; }
+.attention-count { font-size:32px; font-weight:700; background:#e4eee8; border-radius:12px; padding:10px 18px; color:#2d5943; }
+.attention-filters { display:flex; gap:14px; margin:20px 0 14px; }
+.attention-filters label { display:grid; gap:6px; flex:1; min-width:0; font-size:12px; font-weight:600; color:#486453; }
+.attention-filters input,.attention-filters select { width:100%; min-height:42px; box-sizing:border-box; border:1px solid #cbd9d0; border-radius:8px; background:white; padding:8px 12px; }
+.attention-list { list-style:none; padding:0; margin:0; max-height:480px; overflow:auto; }
+.attention-list li+li { border-top:1px solid #e0e9e3; }
+.attention-list button { width:100%; display:flex; gap:16px; align-items:center; text-align:left; background:white; border:0; padding:14px; cursor:pointer; color:#263d30; font:inherit; }
+.attention-list button:hover { background:#edf5ef; }
+.attention-list button>span:first-child { flex:1; min-width:0; overflow-wrap:anywhere; }
+.attention-list small { display:block; margin-top:4px; font-size:11px; color:#64746a; }
+.attention-reason { font-size:12px; font-weight:600; }
+.attention-note,.attention-empty { font-size:12px; color:#607467; margin-top:14px; }
+@media(max-width:600px) { #attention-overview { padding:16px; } .attention-filters { flex-direction:column; } .attention-heading h3 { font-size:18px; } .attention-list button { padding:12px 8px; gap:10px; } }
+.cross-link-item { gap:10px; align-items:center; }
+.workflow-relation-label { margin-left:auto; flex-shrink:0; border-radius:12px; padding:3px 8px; font-size:11px; background:#eaf2ee; color:#365c4c; }
+[data-relationships] { margin-top:20px; border-top:1px solid #dfe7e3; padding-top:12px; }
+button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px solid #397a68; outline-offset:3px; }
+#relationship-inspector { width:min(640px,calc(100vw - 32px)); box-sizing:border-box; border:1px solid #dfe7e3; border-radius:16px; padding:24px; max-height:85vh; overflow:auto; color:#20392f; }
+#relationship-inspector::backdrop { background:rgb(15 30 24 / 45%); }
+#relationship-inspector header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+#relationship-inspector header button { border:0; background:transparent; font-size:28px; min-height:44px; min-width:44px; cursor:pointer; }
+#relationship-inspector h2 { font-size:20px; }
+@media(max-width:600px) { .cross-link-item { flex-wrap:wrap; } .workflow-relation-label { margin-left:0; } .cross-links-header { gap:10px; flex-wrap:wrap; } .cross-link-remove { min-width:40px; min-height:40px; } }
+@media(prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; } }

@@ -497,7 +497,7 @@ function showViewLoadingState(viewId) {
     </div>`;
 }
 
-function switchView(view) {
+async function switchView(view) {
   if (!hasPermissionForView(view)) return;
   currentView = view;
   closeDayDetail();
@@ -535,31 +535,31 @@ function switchView(view) {
     }
   }
 
-  if (view === 'tasks') loadTasks();
-  else if (view === 'yearly') loadYearlyPlan();
-  else if (view === 'actions') loadActions();
-  else if (view === 'task-log') loadTaskLog();
-  else if (view === 'audit-plan') loadAuditPlan();
-  else if (view === 'audit-execute') loadAuditExecuteView();
-  else if (view === 'audit-ncrs') loadNcrs();
-  else if (view === 'audit-requirements') loadRequirements();
-  else if (view === 'threat-intelligence') loadThreatIntelligence();
-  else if (view === 'risk-identification') loadRiskIdentification();
-  else if (view === 'risk-treatment') loadRiskTreatmentView();
-  else if (view === 'risk-soa') loadSoA();
-  else if (view === 'mission-control') loadMissionControl();
-  else if (view === 'architecture') loadArchitecture();
-  else if (view === 'document-control') loadDocumentControl();
-  else if (view === 'my-tasks') loadMyTasks();
-  else if (view === 'management-reviews') loadManagementReviews();
-  else if (view === 'use-cases') loadUseCases();
+  if (view === 'tasks') await loadTasks();
+  else if (view === 'yearly') await loadYearlyPlan();
+  else if (view === 'actions') await loadActions();
+  else if (view === 'task-log') await loadTaskLog();
+  else if (view === 'audit-plan') await loadAuditPlan();
+  else if (view === 'audit-execute') await loadAuditExecuteView();
+  else if (view === 'audit-ncrs') await loadNcrs();
+  else if (view === 'audit-requirements') await loadRequirements();
+  else if (view === 'threat-intelligence') await loadThreatIntelligence();
+  else if (view === 'risk-identification') await loadRiskIdentification();
+  else if (view === 'risk-treatment') await loadRiskTreatmentView();
+  else if (view === 'risk-soa') await loadSoA();
+  else if (view === 'mission-control') await loadMissionControl();
+  else if (view === 'architecture') await loadArchitecture();
+  else if (view === 'document-control') await loadDocumentControl();
+  else if (view === 'my-tasks') await loadMyTasks();
+  else if (view === 'management-reviews') await loadManagementReviews();
+  else if (view === 'use-cases') await loadUseCases();
   // Admin views
-  else if (view === 'admin-users') loadAdminUsers();
-  else if (view === 'admin-audit-log') loadAdminAuditLog();
-  else if (view === 'admin-settings') loadAdminSettings();
-  else if (view === 'admin-data') loadAdminData();
-  else if (view === 'admin-integrations') loadAdminIntegrations();
-  else if (view === 'ai-agent') loadAIAgent();
+  else if (view === 'admin-users') await loadAdminUsers();
+  else if (view === 'admin-audit-log') await loadAdminAuditLog();
+  else if (view === 'admin-settings') await loadAdminSettings();
+  else if (view === 'admin-data') await loadAdminData();
+  else if (view === 'admin-integrations') await loadAdminIntegrations();
+  else if (view === 'ai-agent') await loadAIAgent();
 }
 
 // --- API helpers ---
@@ -644,7 +644,7 @@ const linkableTypes = {
 async function renderCrossLinks(entityType, entityId, containerId) {
   const container = document.getElementById(containerId);
   if (!container) return;
-  const links = await api(`/api/cross-links/${entityType}/${entityId}`);
+  const links = await api(`/api/relations/${entityType}/${entityId}`);
   const allowed = linkableTypes[entityType]?.canLink || [];
 
   const typeIcons = {};
@@ -665,18 +665,18 @@ async function renderCrossLinks(entityType, entityId, containerId) {
   html += `<span class="cross-links-title" style="cursor:pointer" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">&#128279; Linked Items (${links.length}) <span class="cl-toggle-icon">−</span></span>`;
   html += `<button class="btn btn-secondary btn-sm" onclick="openCrossLinkPicker('${entityType}',${entityId},'${containerId}')">+ Link</button>`;
   html += '</div>';
-  html += `<div id="${collapseId}" class="cross-links-body collapsed">`;
+  html += `<div id="${collapseId}" class="cross-links-body">`;
 
   if (links.length === 0) {
     html += '<div class="cross-links-empty">No linked items yet.</div>';
   } else {
     for (const [type, items] of Object.entries(grouped)) {
-      html += `<div class="cross-link-group"><span class="cross-link-group-label">${typeIcons[type] || ''} ${typeLabels[type] || type}s</span>`;
+      html += `<div class="cross-link-group"><span class="cross-link-group-label">${typeIcons[type] || ''} ${typeLabels[type] || type}</span>`;
       for (const item of items) {
         const viewTarget = getViewForType(item.type, item.id);
         html += `<div class="cross-link-item">
-          <span class="cross-link-name"${viewTarget ? ` onclick="${viewTarget}" style="cursor:pointer;text-decoration:underline"` : ''}>${esc(item.name)}</span>
-          <button class="cross-link-remove" onclick="removeCrossLink(${item.link_id},'${entityType}',${entityId},'${containerId}')" title="Remove link">&times;</button>
+          <button type="button" class="cross-link-name relation-link"${viewTarget ? ` onclick="${viewTarget}"` : ' disabled'}>${esc(item.name)}</button>
+          ${item.read_only ? '<span class="workflow-relation-label">From workflow</span>' : `<button type="button" class="cross-link-remove" onclick="removeCrossLink(${item.link_id},'${entityType}',${entityId},'${containerId}')" title="Remove link">&times;</button>`}
         </div>`;
       }
       html += '</div>';
@@ -687,19 +687,8 @@ async function renderCrossLinks(entityType, entityId, containerId) {
 }
 
 function getViewForType(type, id) {
-  // ai_usecase items live in the Kanban board, not the Architecture view
-  if (type === 'ai_usecase') return `openUseCaseModal(${id})`;
-  const archTypes = ['role','process','system','asset','facility','ai_model','ai_dataset'];
-  if (archTypes.includes(type)) {
-    return `currentArchTab='${type}';switchView('architecture')`;
-  }
-  const viewMap = {
-    risk: 'risk-identification', task: 'tasks', audit: 'audit-plan',
-    requirement: 'audit-requirements', document: 'document-control', ncr: 'audit-ncrs',
-    action: 'actions', usecase: 'use-cases',
-  };
-  const view = viewMap[type];
-  return view ? `switchView('${view}')` : null;
+  return Object.hasOwn(linkableTypes,type) && Number.isSafeInteger(Number(id)) && Number(id)>0
+    ? `openRelatedRecord('${type}',${Number(id)})` : null;
 }
 
 async function openCrossLinkPicker(entityType, entityId, containerId, preselectedType) {
@@ -1435,6 +1424,8 @@ async function openCompleteModal(taskId) {
   // Clear any instance targeting left over from a cancelled Task Log completion,
   // otherwise this series-level completion would complete that old instance.
   delete form.dataset.instanceId;
+  const currentTask = await api(`/api/tasks/${taskId}`);
+  form.dataset.expectedDue = currentTask.next_due;
   document.getElementById('complete-task-id').value = taskId;
   activeInstanceId = null;
   document.getElementById('complete-evidence-list').innerHTML = '';
@@ -1454,6 +1445,10 @@ function closeCompleteModal() {
 async function submitComplete(e) {
   e.preventDefault();
   const form = document.getElementById('complete-form');
+  if (form.dataset.submitting === 'true') return;
+  form.dataset.submitting = 'true';
+  const submitButton = form.querySelector('[type=submit]');
+  if (submitButton) submitButton.disabled = true;
   const instanceId = form.dataset.instanceId;
   const taskId = document.getElementById('complete-task-id').value;
   const completedBy = document.getElementById('complete-by').value;
@@ -1465,7 +1460,7 @@ async function submitComplete(e) {
     if (instanceId) {
       result = await api(`/api/task-instances/${instanceId}/complete`, {
         method: 'POST',
-        body: { completed_by: completedBy, notes },
+        body: { completed_by: completedBy, notes, expected_due: form.dataset.expectedDue },
       });
       activeInstanceId = parseInt(instanceId);
       scheduled = result.scheduled_date || null;
@@ -1473,13 +1468,16 @@ async function submitComplete(e) {
     } else {
       result = await api(`/api/tasks/${taskId}/complete`, {
         method: 'POST',
-        body: { completed_by: completedBy, notes },
+        body: { completed_by: completedBy, notes, expected_due: form.dataset.expectedDue },
       });
       activeInstanceId = result.instance_id;
     }
   } catch (err) {
     showToast('Could not complete task: ' + err.message, 'error');
     return;
+  } finally {
+    delete form.dataset.submitting;
+    if (submitButton) submitButton.disabled = false;
   }
 
   document.getElementById('complete-evidence-upload').style.display = 'block';
@@ -5072,7 +5070,7 @@ function buildInlineLinksDetail(links, entityType, entityId, containerId) {
   for (const l of links) { if (!grouped[l.type]) grouped[l.type] = []; grouped[l.type].push(l); }
   let html = '';
   for (const [type, items] of Object.entries(grouped)) {
-    html += `<div class="cross-link-group"><span class="cross-link-group-label">${typeIcons[type] || ''} ${typeLabels[type] || type}s</span>`;
+    html += `<div class="cross-link-group"><span class="cross-link-group-label">${typeIcons[type] || ''} ${typeLabels[type] || type}</span>`;
     for (const item of items) {
       const viewTarget = getViewForType(item.type, item.id);
       html += `<div class="cross-link-item">
@@ -6419,6 +6417,7 @@ async function ucRecordApproval(useCaseId) {
 
 // --- Organizational Planning: Mission Control ---
 async function loadMissionControl() {
+  await renderAttentionOverview();
   const mission = await api('/api/mission');
   const missionSection = document.getElementById('mission-section');
 
@@ -6663,7 +6662,7 @@ async function openKpiModal(id) {
       document.getElementById('kpi-id').value = k.id;
       document.getElementById('kpi-name').value = k.name;
       document.getElementById('kpi-description').value = k.description;
-      document.getElementById('kpi-target').value = k.target_value || '';
+      document.getElementById('kpi-target').value = k.target_value ?? '';
       document.getElementById('kpi-unit').value = k.unit;
       document.getElementById('kpi-frequency').value = k.frequency;
     }
@@ -8614,7 +8613,7 @@ function buildDocLinksDetail(links, docId) {
   }
   let html = '';
   for (const [type, items] of Object.entries(grouped)) {
-    html += `<div class="cross-link-group"><span class="cross-link-group-label">${typeIcons[type] || ''} ${typeLabels[type] || type}s</span>`;
+    html += `<div class="cross-link-group"><span class="cross-link-group-label">${typeIcons[type] || ''} ${typeLabels[type] || type}</span>`;
     for (const item of items) {
       const viewTarget = getViewForType(item.type, item.id);
       html += `<div class="cross-link-item">
@@ -11430,7 +11429,10 @@ async function downloadMgmtReport(reviewId) {
 // Wait for auth check before loading the default view. Superadmins without an
 // active org context see the MSP portal instead. Non-superadmin users land on
 // the first view they have permission for (mission-control if 'org' is allowed).
-userReady.then(showingMSP => {
+const uiReady = document.readyState === 'loading'
+  ? new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once:true}))
+  : Promise.resolve();
+Promise.all([userReady,uiReady]).then(([showingMSP]) => {
   if (showingMSP) return;
   if (hasPermissionForView('mission-control')) {
     loadMissionControl();

@@ -14,6 +14,9 @@
  */
 
 const { Pool } = require('pg');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const transactionContext = new AsyncLocalStorage();
+const queryConnection = () => transactionContext.getStore()?.client || pool;
 const { POSTGRES_SCHEMA_SQL, DEFAULT_THREAT_FEEDS } = require('./schema');
 
 let pool;
@@ -308,14 +311,14 @@ function convertSQL(sql) {
 async function all(sql, ...params) {
   const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
   const pgSql = convertSQL(sql);
-  const result = await pool.query(pgSql, flatParams);
+  const result = await queryConnection().query(pgSql, flatParams);
   return result.rows;
 }
 
 async function get(sql, ...params) {
   const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
   const pgSql = convertSQL(sql);
-  const result = await pool.query(pgSql, flatParams);
+  const result = await queryConnection().query(pgSql, flatParams);
   return result.rows[0];
 }
 
@@ -326,7 +329,7 @@ async function run(sql, ...params) {
   if (isInsert && !pgSql.toUpperCase().includes('RETURNING')) {
     pgSql = pgSql.replace(/;?\s*$/, ' RETURNING id;');
   }
-  const result = await pool.query(pgSql, flatParams);
+  const result = await queryConnection().query(pgSql, flatParams);
   return {
     lastInsertRowid: result.rows[0]?.id || 0,
     changes: result.rowCount,
@@ -335,7 +338,7 @@ async function run(sql, ...params) {
 
 async function exec(sql) {
   const pgSql = convertSQL(sql);
-  await pool.query(pgSql);
+  await queryConnection().query(pgSql);
 }
 
 // Build a client-bound query set that routes queries through a single connection
@@ -374,19 +377,33 @@ function makeClientDB(client) {
 }
 
 async function transaction(fn) {
+  const parent = transactionContext.getStore();
+  if (parent) return fn(makeClientDB(parent.client));
   const client = await pool.connect();
+  const context = { client, afterCommit: [] };
+  let result;
   try {
     await client.query('BEGIN');
-    const clientDB = makeClientDB(client);
-    const result = await fn(clientDB);
+    result = await transactionContext.run(context, () => fn(makeClientDB(client)));
     await client.query('COMMIT');
-    return result;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
   } finally {
     client.release();
   }
+  // External effects start only after a successful commit, outside its context.
+  for (const effect of context.afterCommit) {
+    Promise.resolve().then(effect).catch(err => console.error('Post-commit event failed:', err.message));
+  }
+  return result;
+}
+
+function deferUntilCommit(effect) {
+  const context = transactionContext.getStore();
+  if (!context) return false;
+  context.afterCommit.push(effect);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +445,7 @@ module.exports = {
   run,
   exec,
   transaction,
+  deferUntilCommit,
   prepare,
   isPostgreSQL,
   getConnection,

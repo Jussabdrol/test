@@ -18,6 +18,8 @@ const rateLimit = require('express-rate-limit');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
+require('./lib/route-handling').installRouteHandling(app, db);
+const { HttpError } = require('./lib/errors');
 const PORT = process.env.PORT || 3000;
 
 // Supabase client – used for Storage AND Auth
@@ -459,41 +461,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Uses Supabase PostgreSQL – no local file system dependencies
 
 // --- Helper: compute next due date ---
-function computeNextDue(fromDate, recurrence, customDays, dayOfWeek, dayOfMonth) {
-  const d = new Date(fromDate);
-  switch (recurrence) {
-    case 'daily':
-      d.setDate(d.getDate() + 1);
-      break;
-    case 'weekly':
-      d.setDate(d.getDate() + 7);
-      // Snap to target day of week if specified (0=Sun, 1=Mon, ..., 6=Sat)
-      if (dayOfWeek != null && dayOfWeek !== '' && !isNaN(dayOfWeek)) {
-        const target = parseInt(dayOfWeek);
-        const current = d.getDay();
-        const diff = (target - current + 7) % 7;
-        if (diff !== 0) d.setDate(d.getDate() + diff);
-      }
-      break;
-    case 'biweekly':
-      d.setDate(d.getDate() + 14);
-      break;
-    case 'monthly':
-      d.setMonth(d.getMonth() + 1);
-      if (dayOfMonth) d.setDate(Math.min(dayOfMonth, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
-      break;
-    case 'quarterly':
-      d.setMonth(d.getMonth() + 3);
-      break;
-    case 'yearly':
-      d.setFullYear(d.getFullYear() + 1);
-      break;
-    case 'custom':
-      d.setDate(d.getDate() + (customDays || 1));
-      break;
-  }
-  return d.toISOString().split('T')[0];
-}
+const { computeNextDue } = require('./lib/recurrence');
 
 // Generate missing task_instances rows for all active task series in an org,
 // from the latest scheduled_date (or the series' start_date) up to a target horizon.
@@ -517,12 +485,12 @@ async function ensureTaskInstances(orgId, horizonDays = 14) {
   for (const task of tasks) {
     const last = lastByTask.get(task.id);
     let cursor = last
-      ? computeNextDue(last, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month)
+      ? computeNextDue(last, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)))
       : task.start_date;
     let safety = 0;
     while (cursor <= horizonStr && safety < 400) {
       rows.push([task.id, cursor]);
-      const next = computeNextDue(cursor, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
+      const next = computeNextDue(cursor, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)));
       if (next <= cursor) break; // schedule not advancing — misconfigured series
       cursor = next;
       safety++;
@@ -582,16 +550,9 @@ function validateRecurrenceFields(body) {
   return null;
 }
 
-// Improvement 13: allowed entity types for cross-link operations
-const ALLOWED_ENTITY_TYPES = new Set([
-  'risk', 'task', 'action', 'requirement', 'audit', 'ncr',
-  'role', 'process', 'system', 'asset', 'facility',
-  'document', 'treatment', 'usecase',
-  'ai_model', 'ai_dataset', 'ai_usecase',
-]);
-
 // Improvement 7: fire-and-forget process event emitter (never throws into caller)
 async function emitEvent(orgId, caseId, caseType, activity, actor = '', attrs = {}, processId = null) {
+  if (db.deferUntilCommit(() => emitEvent(orgId, caseId, caseType, activity, actor, attrs, processId))) return;
   try {
     await db.prepare(
       `INSERT INTO process_events
@@ -705,6 +666,7 @@ function sendValidatedWebhook({ url, addrs }, payloadStr, headers, timeoutMs = 1
 
 // Webhook delivery – fire-and-forget, never throws into caller
 function fireWebhooks(orgId, event, data) {
+  if (db.deferUntilCommit(() => fireWebhooks(orgId, event, data))) return;
   (async () => {
     try {
       const webhooks = await db.prepare(
@@ -1136,7 +1098,7 @@ app.post('/api/tasks', requireOrgContext, requireOpsAccess, async (req, res) => 
     priority || 'Medium',
     recurrence || 'daily',
     custom_days || null,
-    day_of_week || null,
+    day_of_week ?? null,
     day_of_month || null,
     startDt,
     nextDue
@@ -1181,10 +1143,16 @@ app.put('/api/tasks/:id', requireOrgContext, requireOpsAccess, async (req, res) 
 });
 
 // Complete a task series (upsert the instance for next_due, mark completed, advance next_due)
-app.post('/api/tasks/:id/complete', requireOrgContext, requireOpsAccess, async (req, res) => {
+async function completeTaskSeries(orgId,id,body) {
+  const req={orgId,params:{id},body,method:'POST',path:'/api/tasks/:id/complete'.replace(':id',id)};
+  return db.transaction(async()=>{
+    await db.get('SELECT pg_advisory_xact_lock(?)',orgId);
+    await require('./lib/route-handling').validateRequest(req,db);
   const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!task) throw new HttpError(404, 'Task not found');
 
+  if (!task.is_active) throw new HttpError(409, 'This task is inactive');
+  if (req.body.expected_due && req.body.expected_due !== task.next_due) throw new HttpError(409, 'This task has already advanced. Refresh before completing another occurrence.');
   const scheduled = task.next_due;
   await db.prepare(
     `INSERT INTO task_instances (organization_id, task_id, scheduled_date, status, completed_by, completed_at, notes)
@@ -1201,7 +1169,7 @@ app.post('/api/tasks/:id/complete', requireOrgContext, requireOpsAccess, async (
     'SELECT * FROM task_instances WHERE task_id = ? AND scheduled_date = ? AND organization_id = ?'
   ).get(task.id, scheduled, req.orgId);
 
-  const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
+  const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)));
   await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
 
   // Improvement 7: fire-and-forget process event
@@ -1216,7 +1184,12 @@ app.post('/api/tasks/:id/complete', requireOrgContext, requireOpsAccess, async (
   });
 
   const updated = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(task.id, req.orgId);
-  res.json({ ...updated, instance_id: instance.id });
+  return ({ ...updated, instance_id: instance.id });
+  });
+}
+
+app.post('/api/tasks/:id/complete', requireOrgContext, requireOpsAccess, async (req, res) => {
+  res.json(await completeTaskSeries(req.orgId,req.params.id,req.body));
 });
 
 // Delete task
@@ -1291,6 +1264,7 @@ app.post('/api/task-instances/:id/complete', requireOrgContext, requireOpsAccess
   if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
+  if (item.status !== 'pending') throw new HttpError(409, 'This execution is already completed or skipped. Reopen it before changing its outcome.');
 
   await db.prepare(
     `UPDATE task_instances
@@ -1301,7 +1275,7 @@ app.post('/api/task-instances/:id/complete', requireOrgContext, requireOpsAccess
   // If the completed instance matches the task's current next_due, advance next_due
   const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(item.task_id, req.orgId);
   if (task && task.next_due === item.scheduled_date) {
-    const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
+    const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)));
     await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
   }
 
@@ -1324,6 +1298,7 @@ app.post('/api/task-instances/:id/skip', requireOrgContext, requireOpsAccess, as
   if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
   const item = await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
   if (!item) return res.status(404).json({ error: 'Instance not found' });
+  if (item.status !== 'pending') throw new HttpError(409, 'This execution is already completed or skipped. Reopen it before changing its outcome.');
   await db.prepare(
     `UPDATE task_instances SET status = 'skipped', notes = ?, updated_at = NOW()
      WHERE id = ? AND organization_id = ?`
@@ -1331,7 +1306,7 @@ app.post('/api/task-instances/:id/skip', requireOrgContext, requireOpsAccess, as
 
   const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(item.task_id, req.orgId);
   if (task && task.next_due === item.scheduled_date) {
-    const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month);
+    const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)));
     await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
   }
 
@@ -1456,7 +1431,7 @@ app.get('/api/yearly', requireOrgContext, requireOpsAccess, async (req, res) => 
     const yearStart = new Date(startDate);
     let advanceSafety = 0;
     while (d < yearStart && advanceSafety < 20000) {
-      const next = new Date(computeNextDue(d.toISOString().split('T')[0], task.recurrence, task.custom_days, task.day_of_week, task.day_of_month));
+      const next = new Date(computeNextDue(d.toISOString().split('T')[0], task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10))));
       if (next <= d) break; // schedule not advancing — bail out
       d = next;
       advanceSafety++;
@@ -1477,7 +1452,7 @@ app.get('/api/yearly', requireOrgContext, requireOpsAccess, async (req, res) => 
         recurrence: task.recurrence,
         type: 'due',
       });
-      d = new Date(computeNextDue(ds, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month));
+      d = new Date(computeNextDue(ds, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10))));
       safety++;
     }
   }
@@ -1571,9 +1546,13 @@ app.post('/api/actions', requireOrgContext, requireOpsAccess, async (req, res) =
 });
 
 // Update action
-app.put('/api/actions/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
+async function updateFollowup(orgId,id,body) {
+  const req={orgId,params:{id},body,method:'PUT',path:'/api/actions/:id'.replace(':id',id)};
+  return db.transaction(async()=>{
+    await db.get('SELECT pg_advisory_xact_lock(?)',orgId);
+    await require('./lib/route-handling').validateRequest(req,db);
   const existing = await db.prepare('SELECT * FROM actions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  if (!existing) return res.status(404).json({ error: 'Action not found' });
+  if (!existing) throw new HttpError(404, 'Action not found');
 
   const fields = ['title', 'description', 'assignee', 'priority', 'status', 'due_date', 'resolved_by', 'process_id'];
   const updates = [];
@@ -1586,18 +1565,27 @@ app.put('/api/actions/:id', requireOrgContext, requireOpsAccess, async (req, res
   }
   // Auto-set resolved_at when status changes to resolved/closed
   if (req.body.status === 'resolved' || req.body.status === 'closed') {
-    updates.push("resolved_at = datetime('now')");
+    updates.push("resolved_at = COALESCE(resolved_at, NOW())");
+  } else if (req.body.status !== undefined) {
+    updates.push("resolved_at = NULL", "resolved_by = ''");
   }
-  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  if (updates.length === 0) throw new HttpError(400, 'No fields to update');
   params.push(req.params.id);
 
   await db.prepare(`UPDATE actions SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`).run(...params, req.orgId);
   const action = await db.prepare('SELECT * FROM actions WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  res.json(action);
+  await db.run("UPDATE management_review_outputs SET status = CASE WHEN ? IN ('resolved','closed') THEN 'completed' WHEN ? = 'in_progress' THEN 'in_progress' ELSE 'open' END, updated_at=NOW() WHERE linked_action_id=? AND organization_id=?",action.status,action.status,action.id,req.orgId);
+  return (action);
+  });
+}
+
+app.put('/api/actions/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
+  res.json(await updateFollowup(req.orgId,req.params.id,req.body));
 });
 
 // Delete action
 app.delete('/api/actions/:id', requireOrgContext, requireOpsAccess, async (req, res) => {
+  await db.run("UPDATE management_review_outputs SET status='open', linked_action_id=NULL, updated_at=NOW() WHERE linked_action_id=? AND organization_id=?",req.params.id,req.orgId);
   const result = await db.prepare('DELETE FROM actions WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
   if (result.changes === 0) return res.status(404).json({ error: 'Action not found' });
   res.json({ success: true });
@@ -1950,16 +1938,20 @@ app.post('/api/audits/:id/checklist', requireOrgContext, async (req, res) => {
 });
 
 // Update checklist item (during execution)
-app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
+async function updateChecklistItem(orgId,id,body) {
+  const req={orgId,params:{id},body,method:'PUT',path:'/api/checklist/:id'.replace(':id',id)};
+  return db.transaction(async()=>{
+    await db.get('SELECT pg_advisory_xact_lock(?)',orgId);
+    await require('./lib/route-handling').validateRequest(req,db);
   const existing = await getChecklistItemWithOrgCheck(req.params.id, req.orgId);
-  if (!existing) return res.status(404).json({ error: 'Checklist item not found' });
+  if (!existing) throw new HttpError(404, 'Checklist item not found');
   const fields = ['clause', 'requirement', 'evidence', 'finding', 'rating', 'notes', 'sort_order', 'evidence_files'];
   const updates = [];
   const params = [];
   for (const f of fields) {
     if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
   }
-  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  if (updates.length === 0) throw new HttpError(400, 'No fields to update');
   params.push(req.params.id);
   await db.prepare(`UPDATE audit_checklist SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
@@ -1982,9 +1974,6 @@ app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
       if (existingNcr.severity !== severity) {
         await db.prepare("UPDATE non_conformities SET severity = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(severity, existingNcr.id, req.orgId);
       }
-    } else if (!isNc && existingNcr && existingNcr.status === 'open') {
-      // Remove auto-created NCR if rating changed away from NC and NCR is still open
-      await db.prepare('DELETE FROM non_conformities WHERE id = ? AND organization_id = ?').run(existingNcr.id, req.orgId);
     }
   }
 
@@ -2009,7 +1998,12 @@ app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
   }
 
   const updatedItem = await db.prepare('SELECT * FROM audit_checklist WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
-  res.json({ ...updatedItem, _auditStatus: auditStatusChanged });
+  return ({ ...updatedItem, _auditStatus: auditStatusChanged });
+  });
+}
+
+app.put('/api/checklist/:id', requireOrgContext, async (req, res) => {
+  res.json(await updateChecklistItem(req.orgId,req.params.id,req.body));
 });
 
 // Delete checklist item
@@ -2174,7 +2168,7 @@ app.get('/api/ncrs', requireOrgContext, async (req, res) => {
   if (audit_id) { sql += ' AND n.audit_id = ?'; params.push(audit_id); }
   if (status) { sql += ' AND n.status = ?'; params.push(status); }
   if (req.query.overdue === 'true') {
-    sql += " AND n.due_date IS NOT NULL AND n.due_date < CURRENT_DATE AND n.status IN ('open','in_progress')";
+    sql += " AND n.due_date IS NOT NULL AND n.due_date < CURRENT_DATE::text AND n.status IN ('open','in_progress')";
   }
   sql += ' ORDER BY n.created_at DESC';
   res.json(await db.prepare(sql).all(...params));
@@ -2211,7 +2205,9 @@ app.put('/api/ncrs/:id', requireOrgContext, async (req, res) => {
     if (req.body[f] !== undefined) { updates.push(`${f} = ?`); params.push(req.body[f]); }
   }
   if (req.body.status === 'closed' || req.body.status === 'verified') {
-    updates.push("closed_date = date('now')");
+    updates.push("closed_date = COALESCE(closed_date, CURRENT_DATE::text)");
+  } else if (req.body.status !== undefined) {
+    updates.push("closed_date = NULL");
   }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
   updates.push("updated_at = datetime('now')");
@@ -3014,7 +3010,7 @@ app.post('/api/kpis', requireOrgContext, async (req, res) => {
   if (!name) return res.status(400).json({ error: 'Name is required' });
   const result = await db.prepare(
     'INSERT INTO org_kpis (organization_id, name, description, module, process_id, target_value, unit, frequency) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(req.orgId, name, description || '', module || 'custom', process_id || null, target_value || null, unit || '', frequency || 'monthly');
+  ).run(req.orgId, name, description || '', module || 'custom', process_id || null, target_value ?? null, unit || '', frequency || 'monthly');
   res.status(201).json(await db.prepare('SELECT * FROM org_kpis WHERE id = ?').get(result.lastInsertRowid));
 });
 
@@ -3653,175 +3649,9 @@ app.put('/api/documents/:id/save-content', requireOrgContext, async (req, res) =
 
 // --- Universal Cross-Linking API ---
 
-// Entity type resolution helpers
-const entityResolvers = {
-  risk: async (id) => await db.get('SELECT id, title as name FROM risks WHERE id = ?', id),
-  task: async (id) => await db.get('SELECT id, title as name FROM tasks WHERE id = ?', id),
-  action: async (id) => await db.get('SELECT id, title as name FROM actions WHERE id = ?', id),
-  requirement: async (id) => { const r = await db.get('SELECT id, clause, title, standard FROM standard_requirements WHERE id = ?', id); return r ? { id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` } : null; },
-  audit: async (id) => await db.get('SELECT id, title as name FROM audits WHERE id = ?', id),
-  ncr: async (id) => { const n = await db.get('SELECT id, clause, description FROM non_conformities WHERE id = ?', id); return n ? { id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` } : null; },
-  role: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'role'", id),
-  process: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'process'", id),
-  system: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'system'", id),
-  asset: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'asset'", id),
-  facility: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'facility'", id),
-  document: async (id) => await db.get('SELECT id, title as name FROM documents WHERE id = ?', id),
-  treatment: async (id) => { const t = await db.get('SELECT id, description FROM risk_treatments WHERE id = ?', id); return t ? { id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` } : null; },
-  usecase: async (id) => await db.get('SELECT id, title as name FROM use_cases WHERE id = ?', id),
-  ai_model:   async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_model'", id),
-  ai_dataset: async (id) => await db.get("SELECT id, name FROM org_architecture WHERE id = ? AND arch_type = 'ai_dataset'", id),
-  ai_usecase: async (id) => await db.get('SELECT id, title as name FROM use_cases WHERE id = ?', id),
-};
-
-// Bulk cross-links: fetch all cross-links for multiple items of the same type in one shot.
-// Reduces N+1 requests to 2 (one for all links, one per distinct linked entity type).
-// Usage: GET /api/cross-links/batch/:type?ids=1,2,3
-app.get('/api/cross-links/batch/:type', requireOrgContext, async (req, res) => {
-  const { type } = req.params;
-  // Improvement 13: reject unknown entity types before they reach any query
-  if (!ALLOWED_ENTITY_TYPES.has(type)) return res.status(400).json({ error: 'Invalid entity type' });
-  const ids = (req.query.ids || '').split(',').map(Number).filter(Boolean);
-  if (!ids.length) return res.json({});
-
-  const ph = ids.map(() => '?').join(',');
-  const rawLinks = await db.prepare(`
-    SELECT * FROM cross_links
-    WHERE organization_id = ?
-    AND ((source_type = ? AND source_id IN (${ph})) OR (target_type = ? AND target_id IN (${ph})))
-  `).all(req.orgId, type, ...ids, type, ...ids);
-
-  // Map raw links -> { itemId -> [{link_id, otherType, otherId}] }
-  const linksByItem = {};
-  const needed = {}; // otherType -> Set<id>
-  for (const l of rawLinks) {
-    const isSource = l.source_type === type && ids.includes(l.source_id);
-    const isTarget = l.target_type === type && ids.includes(l.target_id);
-    const itemId = isSource ? l.source_id : isTarget ? l.target_id : null;
-    if (!itemId) continue;
-    const otherType = isSource ? l.target_type : l.source_type;
-    const otherId   = isSource ? l.target_id   : l.source_id;
-    if (!linksByItem[itemId]) linksByItem[itemId] = [];
-    linksByItem[itemId].push({ link_id: l.id, otherType, otherId, relationship_type: l.relationship_type || 'association' });
-    if (!needed[otherType]) needed[otherType] = new Set();
-    needed[otherType].add(otherId);
-  }
-
-  // Resolve names in bulk — one query per distinct linked entity type
-  const nameCache = {}; // `${type}:${id}` -> name
-  for (const [eType, eIds] of Object.entries(needed)) {
-    if (!ALLOWED_ENTITY_TYPES.has(eType)) continue; // Improvement 13: skip unknown types
-    const idArr = [...eIds];
-    const eph = idArr.map(() => '?').join(',');
-    let rows = [];
-    if (eType === 'risk') rows = await db.prepare(`SELECT id, title as name FROM risks WHERE id IN (${eph})`).all(...idArr);
-    else if (eType === 'task') rows = await db.prepare(`SELECT id, title as name FROM tasks WHERE id IN (${eph})`).all(...idArr);
-    else if (eType === 'action') rows = await db.prepare(`SELECT id, title as name FROM actions WHERE id IN (${eph})`).all(...idArr);
-    else if (eType === 'audit') rows = await db.prepare(`SELECT id, title as name FROM audits WHERE id IN (${eph})`).all(...idArr);
-    else if (eType === 'document') rows = await db.prepare(`SELECT id, title as name FROM documents WHERE id IN (${eph})`).all(...idArr);
-    else if (eType === 'requirement') rows = (await db.prepare(`SELECT id, clause, title, standard FROM standard_requirements WHERE id IN (${eph})`).all(...idArr))
-      .map(r => ({ id: r.id, name: `${r.clause} - ${r.title} (${r.standard})` }));
-    else if (eType === 'ncr') rows = (await db.prepare(`SELECT id, clause, description FROM non_conformities WHERE id IN (${eph})`).all(...idArr))
-      .map(n => ({ id: n.id, name: `NCR: ${n.clause} - ${n.description.substring(0, 60)}` }));
-    else if (eType === 'treatment') rows = (await db.prepare(`SELECT id, description FROM risk_treatments WHERE id IN (${eph})`).all(...idArr))
-      .map(t => ({ id: t.id, name: `Treatment: ${t.description.substring(0, 60)}` }));
-    else if (['role','process','system','asset','facility','ai_model','ai_dataset'].includes(eType))
-      rows = await db.prepare(`SELECT id, name FROM org_architecture WHERE arch_type = ? AND id IN (${eph})`).all(eType, ...idArr);
-    else if (eType === 'ai_usecase') rows = await db.prepare(`SELECT id, title as name FROM use_cases WHERE id IN (${eph})`).all(...idArr);
-    else if (eType === 'usecase') rows = await db.prepare(`SELECT id, title as name FROM use_cases WHERE id IN (${eph})`).all(...idArr);
-    for (const r of rows) nameCache[`${eType}:${r.id}`] = r.name;
-  }
-
-  // Build final result keyed by item id
-  const result = {};
-  for (const [itemId, entries] of Object.entries(linksByItem)) {
-    result[itemId] = entries.map(({ link_id, otherType, otherId, relationship_type }) => ({
-      link_id,
-      type: otherType,
-      id: otherId,
-      name: nameCache[`${otherType}:${otherId}`] || `${otherType} #${otherId}`,
-      relationship_type,
-    }));
-  }
-  res.json(result);
-});
-
-// Get all cross-links for an entity
-app.get('/api/cross-links/:type/:id', requireOrgContext, async (req, res) => {
-  const { type, id } = req.params;
-  const links = await db.prepare(`
-    SELECT * FROM cross_links WHERE organization_id = ? AND ((source_type = ? AND source_id = ?) OR (target_type = ? AND target_id = ?))
-  `).all(req.orgId, type, id, type, id);
-
-  const resolved = [];
-  for (const l of links) {
-    const isSource = l.source_type === type && l.source_id === parseInt(id);
-    const otherType = isSource ? l.target_type : l.source_type;
-    const otherId = isSource ? l.target_id : l.source_id;
-    const resolver = entityResolvers[otherType];
-    const entity = resolver ? await resolver(otherId) : null;
-    const name = entity ? entity.name : `${otherType} #${otherId}`;
-    if (name) resolved.push({ link_id: l.id, type: otherType, id: otherId, name });
-  }
-
-  res.json(resolved);
-});
-
-// Add a cross-link
-app.post('/api/cross-links', requireOrgContext, async (req, res) => {
-  const { source_type, source_id, target_type, target_id, relationship_type = 'association', notes = '' } = req.body;
-  if (!source_type || !source_id || !target_type || !target_id) return res.status(400).json({ error: 'All fields required' });
-  // Improvement 1: validate relationship_type against ArchiMate allow-list
-  if (!ALLOWED_ENTITY_TYPES.has(source_type) || !ALLOWED_ENTITY_TYPES.has(target_type)) {
-    return res.status(400).json({ error: 'Invalid entity type' });
-  }
-  const VALID_REL_TYPES = ['association','composition','aggregation','assignment','realization','serving','triggering','flow','influence','access'];
-  if (!VALID_REL_TYPES.includes(relationship_type)) {
-    return res.status(400).json({ error: `Invalid relationship_type. Must be one of: ${VALID_REL_TYPES.join(', ')}` });
-  }
-  // Normalize order to avoid duplicates (alphabetical source_type)
-  const [s_type, s_id, t_type, t_id] = source_type < target_type
-    ? [source_type, source_id, target_type, target_id]
-    : [target_type, target_id, source_type, source_id];
-  try {
-    const result = await db.prepare('INSERT INTO cross_links (organization_id, source_type, source_id, target_type, target_id, relationship_type, notes) VALUES (?, ?, ?, ?, ?, ?, ?)').run(req.orgId, s_type, s_id, t_type, t_id, relationship_type, notes);
-    res.status(201).json({ success: true, id: result.lastInsertRowid, relationship_type });
-  } catch (e) {
-    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Link with this relationship type already exists' });
-    throw e;
-  }
-});
-
-// Delete a cross-link
-app.delete('/api/cross-links/:id', requireOrgContext, async (req, res) => {
-  await db.prepare('DELETE FROM cross_links WHERE id = ? AND organization_id = ?').run(req.params.id, req.orgId);
-  res.json({ success: true });
-});
-
-// List linkable entities by type
-app.get('/api/linkable/:type', requireOrgContext, async (req, res) => {
-  const { type } = req.params;
-  const oid = req.orgId;
-  let items = [];
-  if (type === 'risk') items = await db.prepare('SELECT id, title as name FROM risks WHERE organization_id = ? ORDER BY title').all(oid);
-  else if (type === 'task') items = await db.prepare('SELECT id, title as name FROM tasks WHERE organization_id = ? ORDER BY title').all(oid);
-  else if (type === 'requirement') items = await db.prepare("SELECT id, clause || ' - ' || title || ' (' || standard || ')' as name FROM standard_requirements WHERE organization_id = ? ORDER BY standard, sort_order").all(oid);
-  else if (type === 'audit') items = await db.prepare('SELECT id, title as name FROM audits WHERE organization_id = ? ORDER BY title').all(oid);
-  else if (type === 'role') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'role' ORDER BY name").all(oid);
-  else if (type === 'process') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'process' ORDER BY name").all(oid);
-  else if (type === 'system') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'system' ORDER BY name").all(oid);
-  else if (type === 'asset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'asset' ORDER BY name").all(oid);
-  else if (type === 'facility') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'facility' ORDER BY name").all(oid);
-  else if (type === 'document') items = await db.prepare('SELECT id, title as name FROM documents WHERE organization_id = ? ORDER BY title').all(oid);
-  else if (type === 'ncr') items = await db.prepare("SELECT id, clause || ' - ' || substr(description, 1, 60) as name FROM non_conformities WHERE organization_id = ? ORDER BY id DESC").all(oid);
-  else if (type === 'treatment') items = await db.prepare("SELECT id, substr(description, 1, 80) as name FROM risk_treatments WHERE organization_id = ? ORDER BY id DESC").all(oid);
-  else if (type === 'action') items = await db.prepare('SELECT id, title as name FROM actions WHERE organization_id = ? ORDER BY id DESC').all(oid);
-  else if (type === 'usecase') items = await db.prepare('SELECT id, title as name FROM use_cases WHERE organization_id = ? ORDER BY title').all(oid);
-  else if (type === 'ai_model')   items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_model' ORDER BY name").all(oid);
-  else if (type === 'ai_dataset') items = await db.prepare("SELECT id, name FROM org_architecture WHERE organization_id = ? AND arch_type = 'ai_dataset' ORDER BY name").all(oid);
-  else if (type === 'ai_usecase') items = await db.prepare('SELECT id, title as name FROM use_cases WHERE organization_id = ? ORDER BY title').all(oid);
-  res.json(items);
-});
+require('./lib/entities').registerLinkRoutes(app, db, requireOrgContext);
+require('./lib/relationships').registerRelationships(app, db, requireOrgContext);
+require('./lib/overview').registerOverview(app, db, requireOrgContext);
 
 // Cross-linking references endpoint (legacy for document control)
 app.get('/api/link-references', requireOrgContext, async (req, res) => {
@@ -5143,6 +4973,10 @@ app.post('/api/management-reviews/:id/outputs/:outputId/push-to-actions', requir
     'SELECT * FROM management_review_outputs WHERE id = ? AND review_id = ? AND organization_id = ?'
   ).get(req.params.outputId, req.params.id, req.orgId);
   if (!output) return res.status(404).json({ error: 'Output not found' });
+  if (output.linked_action_id) {
+    const existingAction = await db.get('SELECT id FROM actions WHERE id=? AND organization_id=?', output.linked_action_id, req.orgId);
+    if (existingAction) return res.json({ success:true, action_id:existingAction.id, output });
+  }
 
   const review = await db.prepare('SELECT title FROM management_reviews WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
 
@@ -5644,11 +5478,12 @@ const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
+          expected_due: {type:'string',description:'The next_due date from get_tasks. Required to prevent completing the wrong occurrence.'},
           task_id:      { type: 'number', description: 'ID of the task to complete' },
           completed_by: { type: 'string', description: 'Name of person completing the task' },
           notes:        { type: 'string', description: 'Completion notes' },
         },
-        required: ['task_id'],
+        required: ['task_id','expected_due'],
       },
     },
   },
@@ -6007,8 +5842,8 @@ async function executeAgentTool(toolName, args, orgId, meta = {}) {
     case 'get_dashboard_summary': {
       const openRisks      = (await db.prepare("SELECT COUNT(*) as c FROM risks WHERE organization_id = $1 AND status NOT IN ('accepted','closed')").get(orgId))?.c ?? 0;
       const openNCs        = (await db.prepare("SELECT COUNT(*) as c FROM non_conformities n JOIN audits a ON n.audit_id = a.id WHERE a.organization_id = $1 AND n.status IN ('open','in_progress')").get(orgId))?.c ?? 0;
-      const overdueTasks   = (await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE organization_id = $1 AND status = 'active' AND next_due < CURRENT_DATE").get(orgId))?.c ?? 0;
-      const upcomingAudits = (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE organization_id = $1 AND status = 'planned' AND planned_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '30 days')").get(orgId))?.c ?? 0;
+      const overdueTasks   = (await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE organization_id = $1 AND is_active = 1 AND next_due < CURRENT_DATE::text").get(orgId))?.c ?? 0;
+      const upcomingAudits = (await db.prepare("SELECT COUNT(*) as c FROM audits WHERE organization_id = $1 AND status = 'planned' AND planned_date BETWEEN CURRENT_DATE::text AND (CURRENT_DATE + 30)::text").get(orgId))?.c ?? 0;
       const docCount       = (await db.prepare("SELECT COUNT(*) as c FROM documents WHERE organization_id = $1").get(orgId))?.c ?? 0;
       return { open_risks: openRisks, open_nonconformities: openNCs, overdue_tasks: overdueTasks, upcoming_audits_30d: upcomingAudits, total_documents: docCount };
     }
@@ -6100,27 +5935,9 @@ async function executeAgentTool(toolName, args, orgId, meta = {}) {
       return { actions, count: actions.length };
     }
     case 'complete_task': {
-      const { task_id, completed_by = '', notes = '' } = args;
-      // Verify task belongs to org
-      const task = await db.prepare('SELECT * FROM tasks WHERE id = $1 AND organization_id = $2').get(task_id, orgId);
-      if (!task) return { error: `Task ${task_id} not found.` };
-      // Upsert the next_due instance as completed
-      await db.prepare(
-        `INSERT INTO task_instances (organization_id, task_id, scheduled_date, status, completed_by, completed_at, notes)
-         VALUES ($1, $2, $3, 'completed', $4, NOW(), $5)
-         ON CONFLICT (task_id, scheduled_date) DO UPDATE
-           SET status = 'completed', completed_by = EXCLUDED.completed_by,
-               completed_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`
-      ).run(orgId, task_id, task.next_due, completed_by, notes);
-      // Advance next_due based on recurrence
-      const recurrenceMap = { daily: '1 day', weekly: '1 week', biweekly: '2 weeks', monthly: '1 month', quarterly: '3 months', yearly: '1 year' };
-      const interval = recurrenceMap[task.recurrence];
-      if (interval) {
-        await db.prepare(
-          `UPDATE tasks SET next_due = COALESCE(next_due, CURRENT_DATE) + INTERVAL '${interval}' WHERE id = $1`
-        ).run(task_id);
-      }
-      return { success: true, task_id, task_title: task.title, message: 'Task marked as completed.' };
+      if(!args.expected_due) throw new HttpError(400,'Read the task first and provide its next_due as expected_due.');
+      const task=await completeTaskSeries(orgId,args.task_id,args);
+      return {success:true,task_id:task.id,instance_id:task.instance_id,next_due:task.next_due};
     }
     case 'update_task': {
       const { task_id, ...fields } = args;
@@ -6196,24 +6013,11 @@ async function executeAgentTool(toolName, args, orgId, meta = {}) {
       return { success: true, id: result.lastInsertRowid, title, priority };
     }
     case 'update_action': {
-      const { action_id, ...fields } = args;
-      const allowed = ['title', 'description', 'assignee', 'priority', 'status', 'due_date', 'resolved_by'];
-      let updates = Object.entries(fields).filter(([k]) => allowed.includes(k));
-      // Normalize priority and validate option-constrained fields
-      updates = updates.map(([k, v]) => {
-        if (k === 'priority') return [k, v.charAt(0).toUpperCase() + v.slice(1).toLowerCase()];
-        if (k === 'assignee') { const r = resolveFieldOption(v, meta.userNames); return r !== null ? [k, r] : null; }
-        if (k === 'resolved_by') { const r = resolveFieldOption(v, meta.userNames); return r !== null ? [k, r] : null; }
-        return [k, v];
-      }).filter(Boolean);
-      if (!updates.length) return { error: 'No valid fields to update.' };
-      const verify = await db.prepare('SELECT id FROM actions WHERE id = $1 AND organization_id = $2').get(action_id, orgId);
-      if (!verify) return { error: `Action ${action_id} not found.` };
-      const resolvedClause = (fields.status === 'resolved' || fields.status === 'closed') ? ', resolved_at = NOW()' : '';
-      const setClauses = updates.map(([k], i) => `${k} = $${i + 2}`).join(', ');
-      await db.prepare(`UPDATE actions SET ${setClauses}${resolvedClause} WHERE id = $1`)
-        .run(action_id, ...updates.map(([, v]) => v));
-      return { success: true, action_id, updated_fields: updates.map(([k]) => k) };
+      const {action_id,...fields}=args;
+      if(fields.priority)fields.priority=fields.priority.charAt(0).toUpperCase()+fields.priority.slice(1).toLowerCase();
+      for(const key of ['assignee','resolved_by'])if(fields[key]!==undefined)fields[key]=resolveFieldOption(fields[key],meta.userNames)??'';
+      await updateFollowup(orgId,action_id,fields);
+      return {success:true,action_id};
     }
     case 'create_audit': {
       const { title, standard = '', planned_date, scope = '' } = args;
@@ -6271,7 +6075,7 @@ async function executeAgentTool(toolName, args, orgId, meta = {}) {
       return { success: true, treatment_id, updated_fields: updates.map(([k]) => k) };
     }
     case 'create_document': {
-      const { title, doc_type = 'Policy', version = '1.0', status = 'draft', review_date = null } = args;
+      const { title, doc_type = 'policy', version = '1.0', status = 'draft', review_date = null } = args;
       const owner = resolveFieldOption(args.owner, meta.userNames) ?? '';
       const result = await db.prepare(
         `INSERT INTO documents (organization_id, title, doc_type, version, owner, status, review_date)
@@ -6280,16 +6084,8 @@ async function executeAgentTool(toolName, args, orgId, meta = {}) {
       return { success: true, id: result.lastInsertRowid, title, doc_type, status };
     }
     case 'rate_checklist_item': {
-      const { checklist_id, rating, notes = '' } = args;
-      // Verify item belongs to org via audit join
-      const item = await db.prepare(
-        `SELECT cl.id, cl.audit_id FROM audit_checklist cl JOIN audits a ON cl.audit_id = a.id WHERE cl.id = $1 AND a.organization_id = $2`
-      ).get(checklist_id, orgId);
-      if (!item) return { error: `Checklist item ${checklist_id} not found.` };
-      await db.prepare(
-        `UPDATE audit_checklist SET rating = $1, notes = $2, updated_at = NOW() WHERE id = $3`
-      ).run(rating, notes, checklist_id);
-      return { success: true, checklist_id, rating, message: `Item rated as ${rating}.` };
+      const item=await updateChecklistItem(orgId,args.checklist_id,{rating:args.rating,notes:args.notes||''});
+      return {success:true,checklist_id:item.id,rating:item.rating,audit_status:item._auditStatus};
     }
     case 'get_mission': {
       const mission = await db.prepare('SELECT content, vision, values_text FROM org_mission WHERE organization_id = $1').get(orgId);
@@ -7179,6 +6975,8 @@ app.post('/api/agent/import', requireOrgContext, upload.single('file'), async (r
   res.json({ sheets: sheetResults, imported: totalImported, skipped: totalSkipped, summary: summaryLines.join('\n') });
 });
 
+app.use('/api', (req,res) => res.status(404).json({error:'API endpoint not found'}));
+
 // SPA fallback
 app.get('*', async (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -7186,6 +6984,8 @@ app.get('*', async (req, res) => {
 
 // Global error handler - must be last middleware
 app.use((err, req, res, next) => {
+  if (err instanceof HttpError) return res.status(err.status).json({error:err.message});
+  if (['23503','23505','23514','22P02','22007','22008'].includes(err.code)) return res.status(err.code === '23505' ? 409 : 400).json({error:'Invalid value or conflicting reference. Check the linked records and fields.'});
   // Surface upload validation failures as 400 so the UI can show a helpful message
   if (err && (err instanceof multer.MulterError ||
       (typeof err.message === 'string' &&
@@ -7246,4 +7046,5 @@ function gracefulShutdown(signal) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-startServer();
+if (require.main === module) startServer();
+module.exports = { app, executeAgentTool };
