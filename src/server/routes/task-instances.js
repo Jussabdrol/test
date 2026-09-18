@@ -18,7 +18,7 @@ function registerTaskInstancesRoutes(app, { HttpError, db, deleteFromSupabase, e
     if (status && !['pending','completed','skipped'].includes(status)) throw new HttpError(400, 'Invalid execution status.');
     const defaultHorizon = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
     const through = to || (from && from > defaultHorizon ? from : undefined);
-    if (through && Number(through.slice(0, 4)) > new Date().getUTCFullYear() + 10) throw new HttpError(400, 'Choose a date within the next ten years.');
+    if (typeof through === 'string' && Number(through.slice(0, 4)) > new Date().getUTCFullYear() + 10) throw new HttpError(400, 'Choose a date within the next ten years.');
     await ensureTaskInstances(req.orgId, 14, { through, taskId: task_id });
 
     let sql = `SELECT ti.*, t.title AS task_title, t.category AS task_category,
