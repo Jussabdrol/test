@@ -180,7 +180,7 @@ test('Excel and Word document conversion still produce usable files after depend
   const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,sheet,'Controls');
   const result=XLSX.read(XLSX.write(book,{type:'buffer',bookType:'xlsx'}),{type:'buffer'});
   assert.equal(XLSX.utils.sheet_to_json(result.Sheets.Controls)[0].Score,0);
-  const bytes=await require('html-to-docx')('<h1>Control report</h1><p>Evidence retained.</p>');
+  const bytes=await require('../../src/server/services/document-conversion').convertToDocx('<h1>Control report</h1><p>Evidence retained.</p>');
   const parsed=await require('mammoth').extractRawText({buffer:Buffer.from(bytes)});
   assert.match(parsed.value,/Control report/);assert.match(parsed.value,/Evidence retained/);
 });
@@ -241,4 +241,58 @@ test('deployment health checks the database and fails closed without error detai
     assert.equal(failed.status,503);
     assert.deepEqual(failed.body,{status:'unavailable',database:'unavailable'});
   } finally {db.get=original;}
+});
+
+test('security: tenant admins cannot promote users to platform roles', async () => {
+  const member=(await db.run("INSERT INTO users(organization_id,name,email,role,status) VALUES (?,'Member','restricted@example.invalid','org_user','active')",org)).lastInsertRowid;
+  const result=await api(`/api/admin/users/${member}`,'PUT',{role:'superadmin'});
+  assert.equal(result.status,400);
+  assert.equal((await db.get('SELECT role FROM users WHERE id=?',member)).role,'org_user');
+  assert.equal((await api(`/api/admin/users/${member}`,'PUT',{role:'org_admin'})).status,200);
+  await db.run('DELETE FROM users WHERE id=?',member);
+});
+
+async function restrictedClient(role='org_user',perms=[]) {
+  const email=crypto.randomUUID()+'@example.invalid';
+  const id=(await db.run('INSERT INTO users(organization_id,name,email,role,status,permissions) VALUES (?, ?, ?, ?, ?, ?)',org,'Restricted',email,role,'active',JSON.stringify(perms))).lastInsertRowid;
+  let jar='session_token='+token({userId:id,userRole:role,organizationId:org,activeOrgId:org,sv:0});
+  const initial=await fetch(base+'/health',{headers:{cookie:jar}});
+  const csrf=initial.headers.getSetCookie().find(v=>v.startsWith('csrf_token=')).split(';')[0];
+  jar+='; '+csrf;
+  return {id,request:async(path,method='GET',body)=>{
+    const r=await fetch(base+path,{method,headers:{cookie:jar,'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(csrf.slice(11))},body:body===undefined?undefined:JSON.stringify(body)});
+    return {status:r.status,body:await r.json()};
+  }};
+}
+test('security: permissions cover direct APIs and cross-module references',async()=>{
+  const member=await restrictedClient();
+  for(const route of ['/api/risks','/api/audits','/api/mission','/api/tasks','/api/linkable/risk']) assert.equal((await member.request(route)).status,403,route);
+  assert.equal((await member.request('/api/risks','POST',{title:'Forbidden'})).status,403);
+  const riskUser=await restrictedClient('org_user',['risk']);
+  assert.equal((await riskUser.request('/api/risks')).status,200);
+  assert.equal((await riskUser.request('/api/mission')).status,403);
+  const types=await riskUser.request('/api/entity-types');
+  assert.ok(types.body.some(t=>t.type==='risk'));assert.ok(!types.body.some(t=>t.type==='process'));
+  const overview=await riskUser.request('/api/compliance-overview');
+  assert.ok(overview.body.modules.every(m=>['risk','treatment','threat','requirement','soa','document'].includes(m.type)));
+  const viewer=await restrictedClient('viewer',['risk']);
+  assert.equal((await viewer.request('/api/risks')).status,200);
+  assert.equal((await viewer.request('/api/risks','POST',{title:'Forbidden'})).status,403);
+});
+test('security: deactivation, expiry, role changes and revocation invalidate existing sessions',async()=>{
+  for(const [field,value] of [['status','suspended'],['role','org_admin'],['expiry_date','2020-01-01'],['session_version',1]]){
+    const member=await restrictedClient('org_user',['risk']);
+    await db.run(`UPDATE users SET ${field}=? WHERE id=?`,value,member.id);
+    assert.equal((await member.request('/api/risks')).status,401,field);
+    assert.equal((await member.request('/api/auth/check')).body.authenticated,false,field);
+  }
+  const member=await restrictedClient('org_user',['risk']);
+  await db.run('UPDATE organizations SET is_active=0 WHERE id=?',org);
+  try{assert.equal((await member.request('/api/risks')).status,401);}
+  finally{await db.run('UPDATE organizations SET is_active=1 WHERE id=?',org);}
+});
+test('security: legacy SAML cannot be enabled and seeded passwords do not exist',async()=>{
+  assert.equal((await api('/api/admin/saml/config','PUT',{enabled:1})).status,503);
+  assert.equal((await api('/api/admin/saml/config')).body.enabled,0);
+  assert.equal((await db.get("SELECT count(*)::int AS n FROM users WHERE email IN ('superadmin@lettheframework.local','admin@lettheframework.local')")).n,0);
 });

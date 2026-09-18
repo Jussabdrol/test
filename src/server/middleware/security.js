@@ -92,9 +92,9 @@ function configureSecurity(app, { crypto, db, express, helmet, rateLimit }) {
     try {
       const [header, body, signature] = token.split('.');
       const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(`${header}.${body}`).digest('base64url');
-      if (signature !== expected) return null;
+      if (typeof signature !== 'string' || signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
       const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
-      if (payload.exp < Date.now()) return null;
+      if (!Number.isFinite(payload.exp) || payload.exp < Date.now()) return null;
       return payload;
     } catch { return null; }
   }
@@ -120,7 +120,7 @@ function configureSecurity(app, { crypto, db, express, helmet, rateLimit }) {
     cookieOptions: csrfCookieOptions,
     getCsrfTokenFromRequest: req => req.headers['x-csrf-token'],
     // The external IdP posts the SAML response; the SAML handler verifies it.
-    skipCsrfProtection: req => req.path.startsWith('/saml/'),
+    skipCsrfProtection: () => false,
   });
   app.use((req, res, next) => {
     if (SAFE_METHODS.has(req.method)) {
@@ -179,23 +179,7 @@ function configureSecurity(app, { crypto, db, express, helmet, rateLimit }) {
 
   // Session revocation: each user has a session_version; bumping it invalidates
   // all outstanding tokens for that user (logout-all, password reset, suspend).
-  // Cached briefly so we don't hit the DB on every request during bursty traffic.
-  const SV_CACHE_TTL_MS = 30 * 1000;
-  const sessionVersionCache = new Map(); // userId -> { sv, expires }
-
-  async function getUserSessionVersion(userId) {
-    const now = Date.now();
-    const cached = sessionVersionCache.get(userId);
-    if (cached && cached.expires > now) return cached.sv;
-    const row = await db.prepare('SELECT session_version FROM users WHERE id = ?').get(userId);
-    const sv = row ? (row.session_version ?? 0) : null; // null => user no longer exists
-    sessionVersionCache.set(userId, { sv, expires: now + SV_CACHE_TTL_MS });
-    return sv;
-  }
-
-  function invalidateSessionVersionCache(userId) {
-    sessionVersionCache.delete(userId);
-  }
+  function invalidateSessionVersionCache() {} // Sessions are checked against the database on every request.
 
   async function bumpUserSessionVersion(userId) {
     await db.prepare(
@@ -231,8 +215,7 @@ function configureSecurity(app, { crypto, db, express, helmet, rateLimit }) {
 
   // Middleware factory: require one of the given module permissions ('org',
   // 'risk', 'ops', 'audit'). Mirrors the rules already used by the AI agent and
-  // import endpoints: superadmins, org admins and users holding the 'admin'
-  // permission always pass; everyone else needs at least one of the listed
+  // import endpoints: administrator roles pass; everyone else needs one listed
   // module permissions in users.permissions (JSON array).
   function requireModulePermission(...allowed) {
     return async (req, res, next) => {
@@ -242,7 +225,7 @@ function configureSecurity(app, { crypto, db, express, helmet, rateLimit }) {
         if (!user) return res.status(401).json({ error: 'Authentication required' });
         let perms = [];
         try { perms = JSON.parse(user.permissions || '[]'); } catch (_) { perms = []; }
-        if (user.role === 'org_admin' || user.role === 'admin' || perms.includes('admin')) return next();
+        if (user.role === 'org_admin' || user.role === 'admin') return next();
         if (allowed.some(p => perms.includes(p))) return next();
         return res.status(403).json({ error: `Access denied: requires the ${allowed.join(' or ')} module permission` });
       } catch (err) {
@@ -277,34 +260,21 @@ function configureSecurity(app, { crypto, db, express, helmet, rateLimit }) {
 
   // Auth middleware for static files - protect everything except login page
   app.use(async (req, res, next) => {
-    // Allow login page, health check, auth endpoints, and SAML SSO flow
-    // (/saml/callback is called directly by the IdP with no session cookie)
-    if (req.path === '/login' || req.path === '/login.html' || req.path === '/health' ||
-        req.path.startsWith('/api/auth/') || req.path.startsWith('/saml/')) {
-      return next();
+    const publicPath = ['/login', '/login.html', '/health', '/api/auth/login', '/api/auth/check'].includes(req.path);
+    if (req.session.userId) {
+      const user = await db.get('SELECT id, role, status, organization_id, permissions, session_version, expiry_date FROM users WHERE id=?', req.session.userId);
+      const expired = user?.expiry_date && String(user.expiry_date).slice(0,10) < new Date().toISOString().slice(0,10);
+      const valid = user && user.status === 'active' && !expired &&
+        (user.session_version ?? 0) === req.session.sv && user.role === req.session.userRole &&
+        (user.organization_id || null) === req.session.organizationId;
+      const org = valid && user.role !== 'superadmin' && user.organization_id
+        ? await db.get('SELECT is_active FROM organizations WHERE id=?', user.organization_id) : null;
+      if (!valid || (user.role !== 'superadmin' && (!org || !org.is_active))) req.session.destroy();
+      else req.authUser = user;
     }
-    // Check authentication for all other routes
-    if (!req.session.userId) {
-      if (req.path.startsWith('/api/')) {
-        return res.status(401).json({ error: 'Authentication required' });
-      }
+    if (!publicPath && !req.authUser) {
+      if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Authentication required or session revoked' });
       return res.redirect('/login');
-    }
-    // Revocation check: token must carry the current session_version for the user.
-    // This lets admins force-logout a user (password reset, suspend, logout-all)
-    // by bumping users.session_version.
-    try {
-      const currentSv = await getUserSessionVersion(req.session.userId);
-      if (currentSv === null || (req.session.sv ?? 0) !== currentSv) {
-        req.session.destroy();
-        if (req.path.startsWith('/api/')) {
-          return res.status(401).json({ error: 'Session has been revoked. Please sign in again.' });
-        }
-        return res.redirect('/login');
-      }
-    } catch (err) {
-      console.error('[auth] session_version lookup failed:', err.message);
-      return res.status(500).json({ error: 'Authentication check failed' });
     }
     next();
   });

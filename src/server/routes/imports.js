@@ -519,12 +519,11 @@ function registerImportsRoutes(app, { XLSX, db, getOpenAI, requireOrgContext, up
     const userRecord = await db.prepare('SELECT permissions FROM users WHERE id = $1').get(req.session.userId);
     let userPerms = [];
     try { userPerms = JSON.parse(userRecord?.permissions || '[]'); } catch (_) {}
-    if (req.session.userRole === 'superadmin' || userPerms.includes('admin')) {
+    if (['superadmin','org_admin','admin'].includes(req.session.userRole)) {
       userPerms = ['org', 'risk', 'ops', 'audit'];
     }
 
     const { data_type: hintedType, message } = req.body;
-    console.log('[Import] file:', req.file.originalname, 'size:', req.file.size);
 
     // 1. Parse all sheets from the file
     let sheets;
@@ -534,6 +533,7 @@ function registerImportsRoutes(app, { XLSX, db, getOpenAI, requireOrgContext, up
       console.error('[Import] parse error:', err.message);
       return res.status(400).json({ error: `Could not parse file: ${err.message}` });
     }
+    if (sheets.length > 10) return res.status(400).json({ error: 'Import at most 10 sheets at a time' });
     if (sheets.length === 0) return res.status(400).json({ error: 'File is empty or contains no importable data.' });
 
     const MAX_ROWS = 500;
@@ -556,7 +556,6 @@ function registerImportsRoutes(app, { XLSX, db, getOpenAI, requireOrgContext, up
       });
 
       if (dataRows.length === 0) {
-        console.log(`[Import] sheet "${sheetName}" skipped — no data rows after filtering notes`);
         continue;
       }
 
@@ -564,7 +563,6 @@ function registerImportsRoutes(app, { XLSX, db, getOpenAI, requireOrgContext, up
       if (!dataType || !IMPORT_SCHEMAS[dataType]) {
         try {
           ({ data_type: dataType } = await detectAndMap(openai, headers, dataRows, hintedType, message));
-          console.log(`[Import] sheet "${sheetName}" — OpenAI detected type: ${dataType}`);
         } catch (err) {
           sheetResults.push({ sheet: sheetName, error: `Type detection failed: ${err.message}` });
           continue;
@@ -592,7 +590,6 @@ function registerImportsRoutes(app, { XLSX, db, getOpenAI, requireOrgContext, up
         continue;
       }
 
-      console.log(`[Import] sheet "${sheetName}" type=${dataType} rows=${dataRows.length} mapping=`, mapping);
 
       const mappedRows = applyMapping(dataRows, mapping);
       const results = await bulkInsert(dataType, mappedRows, req.orgId);
@@ -627,7 +624,6 @@ function registerImportsRoutes(app, { XLSX, db, getOpenAI, requireOrgContext, up
       }
     }
 
-    console.log('[Import] done — total imported:', totalImported, 'skipped:', totalSkipped);
     res.json({ sheets: sheetResults, imported: totalImported, skipped: totalSkipped, summary: summaryLines.join('\n') });
   });
 }

@@ -25,13 +25,14 @@ function registerAdminRoutes(app, { UPLOADS_BUCKET, bcrypt, bumpUserSessionVersi
   app.get('/api/admin/users/:id', requireAdmin, async (req, res) => {
     const user = await db.prepare('SELECT id, name, email, role, department, permissions, status, last_active, expiry_date, notes, created_at, updated_at FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
     if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'superadmin') return res.status(403).json({ error: 'Platform accounts cannot be modified here' });
     res.json(user);
   });
 
   app.post('/api/admin/users', requireAdmin, async (req, res) => {
     const { name, email, password, role, department, permissions, status, expiry_date, notes } = req.body;
     if (!name || !email) return res.status(400).json({ error: 'Name and email are required' });
-    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password) > 72) return res.status(400).json({ error: 'Password must be 12–72 bytes long' });
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) return res.status(400).json({ error: 'Invalid email format' });
@@ -39,7 +40,7 @@ function registerAdminRoutes(app, { UPLOADS_BUCKET, bcrypt, bumpUserSessionVersi
     try {
       const hashedPassword = await bcrypt.hash(password, 10);
       const userRole = role || 'org_user';
-      if (userRole === 'superadmin') return res.status(400).json({ error: 'Cannot create superadmin users from org admin' });
+      if (!['viewer','user','manager','admin','org_admin','org_user'].includes(userRole)) return res.status(400).json({ error: 'Invalid organization role' });
       const normalizedEmail = email.toLowerCase().trim();
 
       // Create user in Supabase Auth if admin client is available
@@ -81,12 +82,14 @@ function registerAdminRoutes(app, { UPLOADS_BUCKET, bcrypt, bumpUserSessionVersi
   });
 
   app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
+    if (req.body.role !== undefined && !['viewer','user','manager','admin','org_admin','org_user'].includes(req.body.role)) return res.status(400).json({ error: 'Invalid organization role' });
     const user = await db.prepare('SELECT * FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
     if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'superadmin') return res.status(403).json({ error: 'Platform accounts cannot be modified here' });
 
     // Prevent self-demotion from admin
     if (parseInt(req.params.id) === req.session.userId) {
-      if (req.body.role && req.body.role !== 'admin') {
+      if (req.body.role && req.body.role !== user.role) {
         return res.status(400).json({ error: 'You cannot change your own admin role. Ask another admin.' });
       }
       if (req.body.status && req.body.status !== 'active') {
@@ -99,6 +102,8 @@ function registerAdminRoutes(app, { UPLOADS_BUCKET, bcrypt, bumpUserSessionVersi
       if (!emailRegex.test(req.body.email)) return res.status(400).json({ error: 'Invalid email format' });
       req.body.email = req.body.email.toLowerCase().trim();
     }
+
+    if (user.role === 'superadmin') return res.status(403).json({ error: 'Platform accounts cannot be modified here' });
 
     const fields = ['name', 'email', 'role', 'department', 'permissions', 'status', 'expiry_date', 'notes'];
     const updates = [];
@@ -123,7 +128,7 @@ function registerAdminRoutes(app, { UPLOADS_BUCKET, bcrypt, bumpUserSessionVersi
       const statusNowRestricted = req.body.status && req.body.status !== 'active';
       const roleDowngraded = req.body.role && req.body.role !== user.role &&
         (user.role === 'superadmin' || user.role === 'org_admin') && req.body.role === 'org_user';
-      if (statusNowRestricted || roleDowngraded) {
+      if (statusNowRestricted || roleDowngraded || ['role','permissions','email','expiry_date'].some(key => req.body[key] !== undefined)) {
         await bumpUserSessionVersion(user.id);
       }
 
@@ -144,10 +149,11 @@ function registerAdminRoutes(app, { UPLOADS_BUCKET, bcrypt, bumpUserSessionVersi
   // Admin: Reset user password
   app.put('/api/admin/users/:id/password', requireAdmin, async (req, res) => {
     const { password } = req.body;
-    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password) > 72) return res.status(400).json({ error: 'Password must be 12–72 bytes long' });
 
     const user = await db.prepare('SELECT * FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
     if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'superadmin') return res.status(403).json({ error: 'Platform accounts cannot be modified here' });
 
     const hashedPassword = await bcrypt.hash(password, 10);
     await db.prepare("UPDATE users SET password = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(hashedPassword, req.params.id, req.orgId);
@@ -174,6 +180,7 @@ function registerAdminRoutes(app, { UPLOADS_BUCKET, bcrypt, bumpUserSessionVersi
 
     const user = await db.prepare('SELECT * FROM users WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId);
     if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'superadmin') return res.status(403).json({ error: 'Platform accounts cannot be modified here' });
 
     // Remove from Supabase Auth if available
     if (supabaseAdmin && user.supabase_uid) {

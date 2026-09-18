@@ -1,7 +1,7 @@
 // Patch Express to forward async errors to the error handler automatically (must be first)
 require('express-async-errors');
 const mammoth = require('mammoth');
-const HTMLtoDOCX = require('html-to-docx');
+const HTMLtoDOCX = require('./services/document-conversion').convertToDocx;
 
 const express = require('express');
 const path = require('path');
@@ -28,6 +28,9 @@ const { validateWebhookUrl, sendValidatedWebhook, fireWebhooks } = require('./se
 const app = express();
 require('./middleware/route-handling').installRouteHandling(app, db);
 const { getOrgId, requireOrgContext, requireOpsAccess, requireSuperadmin, requireAdmin, bumpUserSessionVersion, authRateLimiter } = require('./middleware/security').configureSecurity(app, { crypto, db, express, helmet, rateLimit });
+
+app.use('/api', require('./middleware/authorization').authorizeApi(db));
+require('./middleware/resource-limits').installResourceLimits(app);
 
 // Serve login page without auth
 app.get('/login', async (req, res) => {

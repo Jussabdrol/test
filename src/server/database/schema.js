@@ -296,7 +296,7 @@ const POSTGRES_SCHEMA_SQL = `
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password TEXT DEFAULT NULL,
-    role TEXT DEFAULT 'org_user' CHECK(role IN ('superadmin','org_admin','org_user')),
+    role TEXT DEFAULT 'org_user' CHECK(role IN ('viewer','user','manager','admin','superadmin','org_admin','org_user')),
     department TEXT DEFAULT '',
     permissions TEXT DEFAULT '["org","risk","ops","audit"]',
     status TEXT DEFAULT 'active' CHECK(status IN ('active','pending','suspended','inactive')),

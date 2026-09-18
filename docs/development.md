@@ -32,7 +32,7 @@ Auth, Storage, SAML or external AI behavior.
 ## Development server
 
 1. Provision a dedicated development database/project.
-2. Read [database lifecycle](../database/README.md), including startup DDL/seeding.
+2. Read [database lifecycle](../database/README.md), and provision the development schema explicitly.
 3. Copy `.env.example` to `.env` and fill in development credentials.
 4. Run `npm run dev` and open `http://localhost:3000` (or the configured port).
 5. Rebuild/restart after changes. There is no automatic watcher.
@@ -64,8 +64,8 @@ After an authorized deployment, verify `/health`, real login, tenant switching,
 task completion, review-to-action promotion, document upload/download and the
 affected screens. Use a test tenant and approved credentials.
 
-For a source regression, deploy the preceding known-good commit or revert the
-restructuring commit with a normal Git revert. Avoid force-pushing shared history.
-The restructuring changes no SQL statements; any database changes made by
-ordinary startup still follow the pre-existing lifecycle and need a separate
-database recovery plan.
+For a source regression, revert the affected change with a normal Git revert and
+run the regression checks again. Do not redeploy pre-security code casually: it
+re-enables legacy startup writes, SAML and authorization weaknesses. Keep the Data
+API migration and credential rotation in place. Follow the metadata recovery plan
+in [the database runbook](security/database-rollout.md).

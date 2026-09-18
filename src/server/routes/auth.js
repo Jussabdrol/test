@@ -23,41 +23,34 @@ function registerAuthRoutes(app, { authRateLimiter, bcrypt, bumpUserSessionVersi
     res.json({ authenticated: false });
   });
 
-  // Login – authenticates via Supabase Auth first (if available), falls back to local bcrypt
+  // Local hashes are authoritative; provider-only accounts require the stored UID.
   app.post('/api/auth/login', authRateLimiter, async (req, res) => {
     try {
       const { email, password } = req.body;
-      if (!email || !password) {
+      if (typeof email !== 'string' || typeof password !== 'string' || !email || !password || email.length > 254 || password.length > 1024) {
         return res.status(400).json({ error: 'Email and password are required' });
       }
 
-      // --- Try Supabase Auth first ---
-      let supabaseUser = null;
-      if (supabase) {
-        try {
-          const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-          if (!error && data?.user) {
-            supabaseUser = data.user;
-          }
-        } catch (_) { /* Supabase Auth unavailable – fall through to local auth */ }
-      }
-
-      // --- Look up the user in our database ---
       const user = await db.prepare('SELECT * FROM users WHERE email = ? AND status = ?').get(email.toLowerCase().trim(), 'active');
-      if (!user) {
+      if (!user || (user.expiry_date && String(user.expiry_date).slice(0,10) < new Date().toISOString().slice(0,10))) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
-      // --- If Supabase Auth didn't authenticate, try local bcrypt ---
-      if (!supabaseUser) {
-        if (!user.password) {
-          return res.status(401).json({ error: 'Account not set up. Please contact administrator.' });
-        }
-        const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) {
-          return res.status(401).json({ error: 'Invalid email or password' });
-        }
+      // An old provider password must never bypass a local password reset.
+      let supabaseUser = null;
+      let authenticated = false;
+      if (user.password) {
+        authenticated = await bcrypt.compare(password, user.password);
+      } else if (supabase && user.supabase_uid) {
+        try {
+          const { data, error } = await supabase.auth.signInWithPassword({ email: user.email, password });
+          if (!error && data?.user?.id === user.supabase_uid) {
+            supabaseUser = data.user;
+            authenticated = true;
+          }
+        } catch (_) { /* Fail closed if the provider is unavailable. */ }
       }
+      if (!authenticated) return res.status(401).json({ error: 'Invalid email or password' });
 
       // --- Check org is active (for non-superadmins) ---
       if (user.role !== 'superadmin' && user.organization_id) {

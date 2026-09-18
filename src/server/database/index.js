@@ -31,15 +31,25 @@ async function initDatabase() {
 
   // Build connection config from env vars
   const connectionConfig = process.env.SUPABASE_DB_URL
-    ? { connectionString: process.env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false } }
+    ? { connectionString: process.env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: true, ...(process.env.SUPABASE_DB_CA ? { ca: process.env.SUPABASE_DB_CA.replace(/\\n/g, '\n') } : {}) } }
     : {
         host: process.env.SUPABASE_DB_HOST || 'localhost',
         port: parseInt(process.env.SUPABASE_DB_PORT || '6543'),
         user: process.env.SUPABASE_DB_USER || 'postgres',
         password: process.env.SUPABASE_DB_PASSWORD || '',
         database: process.env.SUPABASE_DB_NAME || 'postgres',
-        ssl: { rejectUnauthorized: false },
+        ssl: { rejectUnauthorized: true, ...(process.env.SUPABASE_DB_CA ? { ca: process.env.SUPABASE_DB_CA.replace(/\\n/g, '\n') } : {}) },
       };
+
+  // Connection-string SSL flags must not override verified TLS.
+  if (connectionConfig.connectionString) {
+    const url = new URL(connectionConfig.connectionString);
+    for (const key of ['sslmode','sslcert','sslkey','sslrootcert','uselibpqcompat']) url.searchParams.delete(key);
+    connectionConfig.connectionString = url.toString();
+  }
+  connectionConfig.application_name = 'bop';
+  connectionConfig.statement_timeout = 30000;
+  connectionConfig.query_timeout = 35000;
 
   // Connection pool settings – tuned for Railway persistent server
   connectionConfig.max = parseInt(process.env.DB_POOL_MAX || '20');   // max concurrent connections
@@ -65,111 +75,17 @@ async function initDatabase() {
     throw err;
   }
 
-  // Initialise schema & seed data
-  await initSchema();
+  // Production startup only verifies the separately migrated schema.
+  if (process.env.NODE_ENV === 'test') await initSchema();
+  else {
+    await pool.query('SELECT session_version, permissions, expiry_date FROM public.users LIMIT 0');
+    await pool.query('SELECT approved_by_id, go_live_date FROM public.use_cases LIMIT 0');
+    const ready = await pool.query("SELECT version FROM public.bop_schema_versions WHERE version = '2026-09-security-v1'");
+    if (!ready.rows.length) throw new Error('Required database migration has not been applied');
+  }
 
   initialized = true;
   return pool;
-}
-
-// ---------------------------------------------------------------------------
-// Incremental migrations – safe to re-run on every startup (all idempotent)
-// ---------------------------------------------------------------------------
-async function runMigrations() {
-  // Migration: allow one saml_config row per organisation instead of the global singleton.
-  //
-  // The original table was created with `id INTEGER PRIMARY KEY CHECK (id = 1)` which
-  // prevents inserting more than one row. We drop that check constraint so each org can
-  // have its own config row, looked up via `organization_id`. The existing singleton row
-  // (id = 1) is kept intact; its organization_id is already set by seedData().
-  try {
-    // PostgreSQL auto-names inline CHECK constraints as <table>_<column>_check
-    await pool.query(`
-      ALTER TABLE saml_config DROP CONSTRAINT IF EXISTS saml_config_id_check
-    `);
-    // Ensure a unique index on organization_id so each org can only have one config
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS saml_config_org_unique
-        ON saml_config (organization_id)
-        WHERE organization_id IS NOT NULL
-    `);
-  } catch (err) {
-    // Non-fatal: constraint may already be gone or have a different name
-    if (!err.message.includes('already exists') && !err.message.includes('does not exist')) {
-      console.warn('[migration] saml_config constraint tweak failed (non-fatal):', err.message);
-    }
-  }
-
-  // Migration: redesign use_cases to Kanban-based AI use case management schema.
-  // If the old table has the 'actor' column it's the pre-redesign schema — drop and recreate.
-  try {
-    const oldCol = await pool.query(`
-      SELECT column_name FROM information_schema.columns
-      WHERE table_name = 'use_cases' AND column_name = 'actor'
-    `);
-    if (oldCol.rows.length > 0) {
-      console.log('[migration] Rebuilding use_cases table to new AI Use Cases schema...');
-      await pool.query('DROP TABLE IF EXISTS use_case_members CASCADE');
-      await pool.query('DROP TABLE IF EXISTS use_case_approvals CASCADE');
-      await pool.query('DROP TABLE IF EXISTS use_cases CASCADE');
-      // Tables will be recreated by initSchema on the next startup cycle, but since
-      // initSchema already ran, we create them explicitly here.
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS use_cases (
-          id SERIAL PRIMARY KEY,
-          organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-          title TEXT NOT NULL,
-          description TEXT DEFAULT '',
-          category TEXT DEFAULT 'AI' CHECK(category IN ('AI','Process Automation','Analytics','Integration','Other')),
-          business_domain TEXT DEFAULT '',
-          ai_approach TEXT DEFAULT '',
-          risk_tier TEXT DEFAULT '' CHECK(risk_tier IN ('','Minimal','Limited','High','Unacceptable')),
-          human_oversight TEXT DEFAULT '' CHECK(human_oversight IN ('','Required','Optional','None')),
-          priority TEXT DEFAULT 'medium' CHECK(priority IN ('low','medium','high','critical')),
-          status TEXT DEFAULT 'new' CHECK(status IN ('new','assessment','approved','development','production','retired')),
-          business_value TEXT DEFAULT '',
-          success_kpis TEXT DEFAULT '',
-          fallback_process TEXT DEFAULT '',
-          retirement_reason TEXT DEFAULT '',
-          target_go_live DATE,
-          go_live_date DATE,
-          next_review_date DATE,
-          performance_notes TEXT DEFAULT '',
-          incident_reporting INTEGER DEFAULT 0,
-          owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-          implementation_owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-          approved_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-          approval_date DATE,
-          sort_order INTEGER DEFAULT 0,
-          created_at TIMESTAMP DEFAULT NOW(),
-          updated_at TIMESTAMP DEFAULT NOW()
-        )
-      `);
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS use_case_approvals (
-          id SERIAL PRIMARY KEY,
-          use_case_id INTEGER NOT NULL REFERENCES use_cases(id) ON DELETE CASCADE,
-          organization_id INTEGER NOT NULL,
-          approved_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-          decision TEXT NOT NULL CHECK(decision IN ('approved','rejected','pending')),
-          notes TEXT DEFAULT '',
-          created_at TIMESTAMP DEFAULT NOW()
-        )
-      `);
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS use_case_members (
-          id SERIAL PRIMARY KEY,
-          use_case_id INTEGER NOT NULL REFERENCES use_cases(id) ON DELETE CASCADE,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          created_at TIMESTAMP DEFAULT NOW(),
-          UNIQUE(use_case_id, user_id)
-        )
-      `);
-      console.log('[migration] use_cases rebuild complete.');
-    }
-  } catch (err) {
-    console.warn('[migration] use_cases rebuild failed (non-fatal):', err.message);
-  }
 }
 
 async function initSchema() {
@@ -181,12 +97,11 @@ async function initSchema() {
           await pool.query(stmt);
         } catch (err) {
           if (!err.message.includes('already exists')) {
-            console.error('Schema statement error:', err.message);
+            throw err;
           }
         }
       }
     }
-    await runMigrations();
     await seedData();
     console.log('PostgreSQL schema initialized');
   } catch (err) {
@@ -196,8 +111,6 @@ async function initSchema() {
 }
 
 async function seedData() {
-  const bcrypt = require('bcryptjs');
-
   // --- 1. Ensure a default organization exists ---
   const orgResult = await pool.query('SELECT COUNT(*) as c FROM organizations');
   let defaultOrgId;
@@ -211,32 +124,6 @@ async function seedData() {
   } else {
     const orgRow = await pool.query('SELECT id FROM organizations ORDER BY id LIMIT 1');
     defaultOrgId = orgRow.rows[0].id;
-  }
-
-  // --- 2. Superadmin user (no organization – platform-level) ---
-  const superadminResult = await pool.query("SELECT COUNT(*) as c FROM users WHERE role = 'superadmin'");
-  if (parseInt(superadminResult.rows[0].c) === 0) {
-    const hashedPassword = bcrypt.hashSync('SuperAdmin123!', 10);
-    try {
-      await pool.query(
-        "INSERT INTO users (name, email, password, role, status, organization_id) VALUES ($1, $2, $3, 'superadmin', 'active', NULL)",
-        ['MSP Administrator', 'superadmin@lettheframework.local', hashedPassword]
-      );
-      console.log('Superadmin user created: superadmin@lettheframework.local / SuperAdmin123!');
-    } catch (e) { /* already exists */ }
-  }
-
-  // --- 3. Default org admin user ---
-  const userResult = await pool.query("SELECT COUNT(*) as c FROM users WHERE role != 'superadmin' AND password IS NOT NULL");
-  if (parseInt(userResult.rows[0].c) === 0) {
-    const hashedPassword = bcrypt.hashSync('Hey!', 10);
-    try {
-      await pool.query(
-        "INSERT INTO users (name, email, password, role, status, organization_id) VALUES ($1, $2, $3, 'org_admin', 'active', $4)",
-        ['Henk', 'admin@lettheframework.local', hashedPassword, defaultOrgId]
-      );
-      console.log('Default org admin user created: admin@lettheframework.local');
-    } catch (e) { /* already exists */ }
   }
 
   // --- 4. Default threat feeds for the default org ---
