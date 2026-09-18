@@ -1,51 +1,36 @@
 const db = require('../database');
-const { computeNextDue } = require('./recurrence');
+const { occurrenceDates } = require('./task-schedule');
 
 // Generate missing task_instances rows for all active task series in an org,
-// from the latest scheduled_date (or the series' start_date) up to a target horizon.
+// from the series start up to a target horizon, filling gaps in existing schedules.
 // Idempotent thanks to UNIQUE(task_id, scheduled_date); safe to call on every Task Log load.
-async function ensureTaskInstances(orgId, horizonDays = 14) {
-  const today = new Date();
-  const horizon = new Date(today);
-  horizon.setDate(horizon.getDate() + horizonDays);
-  const horizonStr = horizon.toISOString().split('T')[0];
-
-  const tasks = await db.prepare('SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1').all(orgId);
-  if (tasks.length === 0) return;
-
-  // One grouped query for the latest scheduled date of every series in the org
-  const lastRows = await db.prepare(
-    'SELECT task_id, MAX(scheduled_date) AS d FROM task_instances WHERE organization_id = ? GROUP BY task_id'
-  ).all(orgId);
-  const lastByTask = new Map(lastRows.map(r => [r.task_id, r.d]));
-
-  const rows = []; // [task_id, scheduled_date] pairs to insert
-  for (const task of tasks) {
-    const last = lastByTask.get(task.id);
-    let cursor = last
-      ? computeNextDue(last, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)))
-      : task.start_date;
-    let safety = 0;
-    while (cursor <= horizonStr && safety < 400) {
-      rows.push([task.id, cursor]);
-      const next = computeNextDue(cursor, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)));
-      if (next <= cursor) break; // schedule not advancing — misconfigured series
-      cursor = next;
-      safety++;
+async function ensureTaskInstances(orgId, horizonDays = 14, { through, taskId } = {}) {
+  const horizon = new Date();
+  horizon.setUTCDate(horizon.getUTCDate() + horizonDays);
+  const horizonStr = through || horizon.toISOString().slice(0, 10);
+  await db.transaction(async () => {
+    await db.get('SELECT pg_advisory_xact_lock(?)', orgId);
+    const tasks = await db.all('SELECT * FROM tasks WHERE organization_id=? AND is_active=1' + (taskId ? ' AND id=?' : ''),
+      ...[orgId, ...(taskId ? [taskId] : [])]);
+    const saved = await db.all('SELECT task_id,scheduled_date FROM task_instances WHERE organization_id=? AND scheduled_date<=?' + (taskId ? ' AND task_id=?' : ''),
+      orgId, horizonStr, ...(taskId ? [taskId] : []));
+    const byTask = new Map();
+    for (const row of saved) {
+      if (!byTask.has(row.task_id)) byTask.set(row.task_id, new Set());
+      byTask.get(row.task_id).add(row.scheduled_date);
     }
-  }
-
-  // Batched insert; UNIQUE(task_id, scheduled_date) keeps this idempotent
-  const CHUNK = 500;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const chunk = rows.slice(i, i + CHUNK);
-    const values = chunk.map(() => '(?, ?, ?)').join(', ');
-    const params = chunk.flatMap(([taskId, date]) => [orgId, taskId, date]);
-    await db.prepare(
-      `INSERT INTO task_instances (organization_id, task_id, scheduled_date)
-       VALUES ${values} ON CONFLICT (task_id, scheduled_date) DO NOTHING`
-    ).run(...params);
-  }
+    for (const task of tasks) {
+      const existing = byTask.get(task.id) || new Set();
+      const dates = occurrenceDates(task, horizonStr).filter(date => !existing.has(date));
+      for (let i = 0; i < dates.length; i += 500) {
+        const chunk = dates.slice(i, i + 500);
+        await db.run(`INSERT INTO task_instances (organization_id,task_id,scheduled_date)
+          VALUES ${chunk.map(() => '(?,?,?)').join(',')}
+          ON CONFLICT (task_id,scheduled_date) DO NOTHING`,
+        ...chunk.flatMap(date => [orgId, task.id, date]));
+      }
+    }
+  });
 }
 
 // --- Utility helpers ---

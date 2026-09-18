@@ -152,6 +152,7 @@ let taskLogFilters = { task_id: '', completed_by: '' };
 
 function switchTaskLogTab(tab) {
   taskLogTab = tab;
+  if (tab !== 'completed') taskLogFilters.completed_by = '';
   document.querySelectorAll('#task-log-tabs .tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
@@ -161,7 +162,7 @@ function switchTaskLogTab(tab) {
 async function loadTaskLog() {
   const params = new URLSearchParams({ status: taskLogTab, limit: '500' });
   if (taskLogFilters.task_id) params.set('task_id', taskLogFilters.task_id);
-  if (taskLogFilters.completed_by) params.set('completed_by', taskLogFilters.completed_by);
+  if (taskLogTab === 'completed' && taskLogFilters.completed_by) params.set('completed_by', taskLogFilters.completed_by);
   // Process context filter (matches on task_category like the rest of Operational
   // Planning). Applied server-side so the row limit can't truncate context rows;
   // names containing commas fall back to the client-side filter below.
@@ -296,14 +297,13 @@ function renderTaskLogTable(instances) {
 async function openInstanceCompleteModal(instanceId) {
   const inst = await api(`/api/task-instances/${instanceId}`);
   document.getElementById('complete-task-id').value = inst.task_id;
-  document.getElementById('complete-title').textContent = inst.task_title;
   // Populate the dropdown here too — without this the "Completed By" select is
   // empty when the modal is opened from the Task Log before any series modal.
   await populateCompletedByOptions(document.getElementById('complete-by'));
-  document.getElementById('complete-notes').value = '';
+  document.getElementById('complete-notes').value = inst.notes || '';
   document.getElementById('complete-evidence-upload').style.display = 'none';
   document.getElementById('complete-evidence-list').innerHTML = '';
-  document.getElementById('complete-modal-title').textContent = `Complete — scheduled ${inst.scheduled_date}`;
+  document.getElementById('complete-modal-title').textContent = `${inst.task_title} — scheduled ${inst.scheduled_date}`;
   // Override submit behaviour for instance-direct completion
   lastInstanceContext = { instance_id: instanceId, task_id: inst.task_id, scheduled_date: inst.scheduled_date };
   document.getElementById('complete-form').dataset.instanceId = instanceId;
@@ -341,6 +341,10 @@ async function createFollowUpForInstance(instanceId, taskId) {
   // openActionModal clears the instance/task id; restore them after the modal is set up.
   document.getElementById('action-instance-id').value = instanceId;
   document.getElementById('action-task-id').value = taskId;
+  const task = await api(`/api/tasks/${taskId}`);
+  const process = opPlanProcesses.find(p => p.name === task.category);
+  if (process) document.getElementById('action-process-id').value = process.id;
+  document.getElementById('action-assignee').value = task.assignee || '';
 }
 
 // --- Task Detail Modal (read-only timeline view) ---

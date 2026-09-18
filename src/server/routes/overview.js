@@ -4,7 +4,7 @@ function registerOverview(app, db, requireOrgContext) {
     // These are operational attention signals, not a compliance certification score.
     const definitions = [
       ['task', 'Tasks', 'tasks', "is_active = 1 AND NOT EXISTS (SELECT 1 FROM task_instances ti WHERE ti.task_id=tasks.id AND ti.scheduled_date=tasks.next_due AND ti.organization_id=tasks.organization_id)", "next_due < CURRENT_DATE::text", 'title', 'assignee', 'next_due'],
-      ['instance', 'Task executions', 'task_instances', "status = 'pending'", "scheduled_date < CURRENT_DATE::text", "'Task execution #' || id", "''", 'scheduled_date'],
+      ['instance', 'Task executions', 'task_instances', "status = 'pending' AND EXISTS (SELECT 1 FROM tasks t WHERE t.id=task_instances.task_id AND t.organization_id=task_instances.organization_id AND t.is_active=1)", "scheduled_date < CURRENT_DATE::text", "(SELECT t.title FROM tasks t WHERE t.id=task_instances.task_id AND t.organization_id=task_instances.organization_id)", "(SELECT t.assignee FROM tasks t WHERE t.id=task_instances.task_id AND t.organization_id=task_instances.organization_id)", 'scheduled_date'],
       ['usecase', 'AI use cases', 'use_cases', "status = 'production'", "next_review_date < CURRENT_DATE", 'title', "''", 'next_review_date::text'],
       ['action', 'Actions', 'actions', "status IN ('open','in_progress')", "due_date < CURRENT_DATE::text", 'title', 'assignee', 'due_date'],
       ['audit', 'Audits', 'audits', "status IN ('planned','in_progress')", "planned_date < CURRENT_DATE::text", 'title', 'lead_auditor', 'planned_date'],

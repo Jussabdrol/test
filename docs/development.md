@@ -69,3 +69,11 @@ run the regression checks again. Do not redeploy pre-security code casually: it
 re-enables legacy startup writes, SAML and authorization weaknesses. Keep the Data
 API migration and credential rotation in place. Follow the metadata recovery plan
 in [the database runbook](security/database-rollout.md).
+
+## Operational planning regression checks
+
+See [the operational planning review](operational-planning-review.md) for the
+verified workflows, changed yearly-response semantics and remaining scheduling
+limitations. Run `npm run verify` after combining planning and security changes.
+Browser verification must use a disposable database with synthetic fixtures;
+never start the normal application against a production database for this purpose.
