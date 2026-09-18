@@ -65,7 +65,23 @@ per Task Log-aanvraag blijft gelden.
 - Historische vervolgacties zonder procesverwijzing worden niet met terugwerkende kracht gewijzigd.
 - Geen echte PostgreSQL-concurrentie-/belastingtest, cloudopslagtest of productiecontrole uitgevoerd.
 
-De wijzigingen staan in een afzonderlijke lokale worktree en zijn niet uitgerold.
-De parallel aanwezige beveiligingswijzigingen in `audit-source` zijn niet gewijzigd
-of in deze branch opgenomen. Bij samenvoeging moeten de gecombineerde wijzigingen
-opnieuw worden geverifieerd, met aandacht voor `routes/overview.js`.
+## Gecombineerde beveiligingsrelease
+
+De planningswijzigingen zijn voor productie gecombineerd met beveiligingsrelease
+`58a83a6` (PR #102) in `codex/combined-production-release`. De centrale
+moduleautorisatie, alleen-lezenrechten, sessiecontrole, TLS-verificatie en
+productiemigratiemarker blijven behouden. Het tekstconflict in de herstelhandleiding
+is opgelost met behoud van het beveiligde herstelpad.
+
+- `npm run verify`: build, syntax, ESLint en **44 tests geslaagd**.
+- Aanvullende combinatietest: een ops-gebruiker kan een uitvoering afronden en ziet
+  de juiste taaknaam/verantwoordelijke in Mission Control; verborgen modules blijven
+  afgeschermd en een viewer kan geen uitvoering afronden, overslaan of heropenen.
+- Browsercontrole op de gecombineerde versie met synthetische PGlite-data: login,
+  jaarplanning, afronden van 30 april met notities en correct bijgewerkte tellers
+  (2 afgerond / 5 achterstallig / 1 overgeslagen); 31 maart blijft open.
+
+Deze aanvullende release wijzigt geen databaseschema, inloggegevens of
+hostingvariabelen. Gebruik bij een planningsregressie een normale Git-revert van
+alleen de planningsrelease, zodat de beveiligingsrelease behouden blijft.
+De live uitrol en controle worden afzonderlijk vastgelegd in het releaseverslag.
