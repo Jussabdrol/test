@@ -9,9 +9,10 @@ function registerTaskInstancesRoutes(app, { HttpError, db, deleteFromSupabase, e
   app.get('/api/task-instances', requireOrgContext, requireOpsAccess, async (req, res) => {
     const { status, task_id, from, to, completed_by, categories, limit } = req.query;
 
-    for (const value of [from, to]) {
-      if (value !== undefined && !isValidDateStr(value)) throw new HttpError(400, 'Dates must use YYYY-MM-DD.');
-    }
+    // Express query parameters can also be arrays or objects. Narrow each date
+    // directly before comparisons, slicing or passing the generation horizon.
+    if (from !== undefined && (typeof from !== 'string' || !isValidDateStr(from))) throw new HttpError(400, 'Dates must use YYYY-MM-DD.');
+    if (to !== undefined && (typeof to !== 'string' || !isValidDateStr(to))) throw new HttpError(400, 'Dates must use YYYY-MM-DD.');
     if (from && to && from > to) throw new HttpError(400, 'Start date must not be after end date.');
     if (task_id) positiveId(task_id);
     if (status && !['pending','completed','skipped'].includes(status)) throw new HttpError(400, 'Invalid execution status.');

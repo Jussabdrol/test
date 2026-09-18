@@ -99,6 +99,16 @@ test('task log rejects malformed ranges and protects foreign executions', async 
   assert.deepEqual((await api(`/api/task-instances?task_id=${t}&from=2026-01-01&to=2026-01-01`)).body,[]);
 });
 
+test('date parameter tampering is rejected before any execution is generated', async () => {
+  const task=await create('/api/tasks',{title:'Unmaterialized control',start_date:'2026-01-01',recurrence:'monthly'});
+  for (const key of ['from','to']) {
+    for (const query of [`${key}=2026-01-01&${key}=2026-02-01`,`${key}[]=2026-01-01`,`${key}[date]=2026-01-01`]) {
+      assert.equal((await api(`/api/task-instances?task_id=${task.id}&${query}`)).status,400,query);
+    }
+  }
+  assert.equal((await db.get('SELECT COUNT(*)::int AS count FROM task_instances WHERE task_id=?',task.id)).count,0);
+});
+
 test('process renaming preserves task execution filters, bundle membership and action linkage', async () => {
   const process=await create('/api/architecture',{arch_type:'process',name:'Original process'});
   const bundle=await create('/api/plan-bundles',{name:'Operations',process_ids:[process.id]});

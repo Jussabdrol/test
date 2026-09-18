@@ -73,7 +73,9 @@ moduleautorisatie, alleen-lezenrechten, sessiecontrole, TLS-verificatie en
 productiemigratiemarker blijven behouden. Het tekstconflict in de herstelhandleiding
 is opgelost met behoud van het beveiligde herstelpad.
 
-- `npm run verify`: build, syntax, ESLint en **44 tests geslaagd**.
+- `npm run verify`: build, syntax, ESLint en **45 tests geslaagd**.
+- Queryparameters voor datums worden expliciet als strings gevalideerd; herhaalde,
+  array- en objectparameters geven HTTP 400 voordat uitvoeringen worden aangemaakt.
 - Aanvullende combinatietest: een ops-gebruiker kan een uitvoering afronden en ziet
   de juiste taaknaam/verantwoordelijke in Mission Control; verborgen modules blijven
   afgeschermd en een viewer kan geen uitvoering afronden, overslaan of heropenen.
