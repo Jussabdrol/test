@@ -491,6 +491,12 @@ function registerOrganizationRoutes(app, { db, fireWebhooks, requireOrgContext }
     updates.push("updated_at = datetime('now')");
     params.push(req.params.id);
 
+    if (current.arch_type === 'process' && req.body.name && req.body.name !== current.name) {
+      const ambiguous = await db.get("SELECT id FROM org_architecture WHERE organization_id=? AND arch_type='process' AND id<>? AND name IN (?,?)", req.orgId, current.id, current.name, req.body.name);
+      if (ambiguous) return res.status(409).json({ error: 'Process names must be unique before renaming linked planning work.' });
+      await db.run('UPDATE tasks SET category=?, updated_at=NOW() WHERE organization_id=? AND category=?', req.body.name, req.orgId, current.name);
+    }
+
     // Determine next version number and save snapshot
     const lastVer = await db.prepare('SELECT MAX(version_number) as v FROM org_architecture_versions WHERE arch_id = ?').get(req.params.id);
     const nextVersion = (lastVer?.v || 0) + 1;

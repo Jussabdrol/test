@@ -1,5 +1,6 @@
+const { syncNextDue } = require('../services/task-schedule');
 // Register on the shared app to retain middleware and transaction boundaries.
-function registerTasksRoutes(app, { HttpError, computeNextDue, db, emitEvent, fireWebhooks, isValidDateStr, requireOpsAccess, requireOrgContext, validateRecurrenceFields }) {
+function registerTasksRoutes(app, { HttpError, db, emitEvent, fireWebhooks, isValidDateStr, requireOpsAccess, requireOrgContext, validateRecurrenceFields }) {
   // --- API Routes ---
 
   // Get all tasks with optional filters
@@ -75,47 +76,19 @@ function registerTasksRoutes(app, { HttpError, computeNextDue, db, emitEvent, fi
     stats.actionsPerCheckThisMonth = completionsThisMonth > 0 ? +(actionsThisMonth / completionsThisMonth).toFixed(2) : 0;
     stats.actionsPerCheckLastMonth = completionsLastMonth > 0 ? +(actionsLastMonth / completionsLastMonth).toFixed(2) : 0;
 
-    // KPI: On-time completion trend (last 30 days vs previous 30 days)
-    const allTasks = await db.prepare('SELECT id, recurrence, custom_days FROM tasks WHERE organization_id = ?').all(oid);
-    const taskRecMap = {};
-    for (const t of allTasks) taskRecMap[t.id] = t;
-
-    function getIntervalDays(rec, customDays) {
-      switch(rec) {
-        case 'daily': return 1; case 'weekly': return 7; case 'biweekly': return 14;
-        case 'monthly': return 30; case 'quarterly': return 91; case 'yearly': return 365;
-        case 'custom': return customDays || 1; default: return 30;
-      }
-    }
-
-    const recent30 = await db.prepare("SELECT task_id, completed_at FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now','-30 days') ORDER BY completed_at ASC").all(oid);
-    const prev30 = await db.prepare("SELECT task_id, completed_at FROM task_instances WHERE organization_id = ? AND status = 'completed' AND completed_at >= date('now','-60 days') AND completed_at < date('now','-30 days') ORDER BY completed_at ASC").all(oid);
-
-    function calcOnTimeRate(completions) {
-      if (completions.length === 0) return null;
-      let onTime = 0, total = 0;
-      const byTask = {};
-      for (const c of completions) {
-        if (!byTask[c.task_id]) byTask[c.task_id] = [];
-        byTask[c.task_id].push((c.completed_at instanceof Date ? c.completed_at.toISOString() : String(c.completed_at)).split('T')[0]);
-      }
-      for (const [taskId, dates] of Object.entries(byTask)) {
-        const rec = taskRecMap[taskId];
-        if (!rec) continue;
-        const interval = getIntervalDays(rec.recurrence, rec.custom_days);
-        dates.sort();
-        for (let i = 0; i < dates.length; i++) {
-          total++;
-          if (i === 0) { onTime++; continue; }
-          const gap = (new Date(dates[i]) - new Date(dates[i-1])) / (86400000);
-          if (gap <= interval * 1.5) onTime++;
-        }
-      }
-      return total > 0 ? Math.round((onTime / total) * 100) : null;
-    }
-
-    stats.onTimeRateCurrent = calcOnTimeRate(recent30);
-    stats.onTimeRatePrevious = calcOnTimeRate(prev30);
+    // Compare the actual completion date with the occurrence's due date.
+    // Recurrence gaps are not evidence that an individual control was on time.
+    const rates = await db.get(`SELECT
+      ROUND(100.0 * COUNT(*) FILTER (WHERE completed_at >= CURRENT_DATE - INTERVAL '30 days'
+        AND completed_at::date <= scheduled_date::date)
+        / NULLIF(COUNT(*) FILTER (WHERE completed_at >= CURRENT_DATE - INTERVAL '30 days'), 0)) AS current_rate,
+      ROUND(100.0 * COUNT(*) FILTER (WHERE completed_at < CURRENT_DATE - INTERVAL '30 days'
+        AND completed_at::date <= scheduled_date::date)
+        / NULLIF(COUNT(*) FILTER (WHERE completed_at < CURRENT_DATE - INTERVAL '30 days'), 0)) AS previous_rate
+      FROM task_instances WHERE organization_id=? AND status='completed'
+        AND completed_at >= CURRENT_DATE - INTERVAL '60 days'`, oid);
+    stats.onTimeRateCurrent = rates.current_rate == null ? null : Number(rates.current_rate);
+    stats.onTimeRatePrevious = rates.previous_rate == null ? null : Number(rates.previous_rate);
 
     res.json(stats);
   });
@@ -214,6 +187,8 @@ function registerTasksRoutes(app, { HttpError, computeNextDue, db, emitEvent, fi
 
     if (!task.is_active) throw new HttpError(409, 'This task is inactive');
     if (req.body.expected_due && req.body.expected_due !== task.next_due) throw new HttpError(409, 'This task has already advanced. Refresh before completing another occurrence.');
+    const existingOutcome = await db.get('SELECT status FROM task_instances WHERE organization_id=? AND task_id=? AND scheduled_date=?', req.orgId, task.id, task.next_due);
+    if (existingOutcome && existingOutcome.status !== 'pending') throw new HttpError(409, 'This occurrence is already completed or skipped. Refresh or reopen it first.');
     const scheduled = task.next_due;
     await db.prepare(
       `INSERT INTO task_instances (organization_id, task_id, scheduled_date, status, completed_by, completed_at, notes)
@@ -230,8 +205,7 @@ function registerTasksRoutes(app, { HttpError, computeNextDue, db, emitEvent, fi
       'SELECT * FROM task_instances WHERE task_id = ? AND scheduled_date = ? AND organization_id = ?'
     ).get(task.id, scheduled, req.orgId);
 
-    const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)));
-    await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
+    const nextDue = await syncNextDue(db, req.orgId, task.id);
 
     // Improvement 7: fire-and-forget process event
     emitEvent(req.orgId, `task-${task.id}-${task.next_due}`, 'task_cycle', 'task_completed',

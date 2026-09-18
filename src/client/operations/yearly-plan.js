@@ -136,7 +136,7 @@ async function loadYearlyPlan() {
 
   // Compute per-month stats
   const monthStats = [];
-  let totalDue = 0, totalCompleted = 0, totalOverdue = 0;
+  let totalDue = 0, totalCompleted = 0, totalOverdue = 0, totalSkipped = 0;
   for (let m = 0; m < 12; m++) {
     const daysInMonth = new Date(yearlyYear, m + 1, 0).getDate();
     let due = 0, completed = 0, overdue = 0;
@@ -147,11 +147,11 @@ async function loadYearlyPlan() {
       if (data.dueDates[ds]) {
         due += data.dueDates[ds].length;
         for (const t of data.dueDates[ds]) {
-          const wasCompleted = data.completedDates[ds] && data.completedDates[ds].some(c => c.task_id === t.task_id);
-          const isOverdue = ds < today && !wasCompleted;
+          const isOverdue = ds < today && t.status === 'pending';
+          if (t.status === 'skipped') totalSkipped++;
           if (isOverdue) overdue++;
           if (!taskDates[t.task_id]) taskDates[t.task_id] = { ...t, dates: [] };
-          taskDates[t.task_id].dates.push({ date: ds, type: isOverdue ? 'overdue' : 'due' });
+          if (t.status !== 'completed') taskDates[t.task_id].dates.push({ date: ds, type: t.status === 'skipped' ? 'skipped' : isOverdue ? 'overdue' : 'due' });
         }
       }
       if (data.completedDates[ds]) {
@@ -173,8 +173,9 @@ async function loadYearlyPlan() {
   const pct = totalDue > 0 ? Math.round((totalCompleted / totalDue) * 100) : 0;
   summaryEl.innerHTML = `
     <div class="stat-card"><div class="stat-value">${totalDue}</div><div class="stat-label">Total Scheduled (${yearlyYear})</div></div>
-    <div class="stat-card done"><div class="stat-value">${totalCompleted}</div><div class="stat-label">Completed</div></div>
+    <div class="stat-card done"><div class="stat-value">${totalCompleted}</div><div class="stat-label">Completed occurrences</div></div>
     <div class="stat-card${totalOverdue > 0 ? ' overdue' : ''}"><div class="stat-value">${totalOverdue}</div><div class="stat-label">Overdue</div></div>
+    <div class="stat-card"><div class="stat-value">${totalSkipped}</div><div class="stat-label">Skipped</div></div>
     <div class="stat-card"><div class="stat-value">${pct}%</div><div class="stat-label">Completion Rate</div></div>
   `;
 
@@ -191,9 +192,9 @@ async function loadYearlyPlan() {
   const upcomingItems = [];
   for (const [dateStr, tasks] of Object.entries(data.dueDates)) {
     for (const t of tasks) {
+      if (t.status !== 'pending') continue;
       if (dateStr < today) {
-        const completedOnDate = data.completedDates[dateStr] && data.completedDates[dateStr].some(c => c.task_id === t.task_id);
-        if (!completedOnDate) overdueItems.push({ ...t, date: dateStr, _status: 'overdue' });
+        overdueItems.push({ ...t, date: dateStr, _status: 'overdue' });
       } else if (dateStr >= today && dateStr <= fourWeeksStr) {
         upcomingItems.push({ ...t, date: dateStr, _status: 'upcoming' });
       }
@@ -213,17 +214,18 @@ async function loadYearlyPlan() {
 }
 
 async function quickComplete(taskId, dateStr) {
-  // Complete the specific occurrence that was clicked when its instance exists
-  // (otherwise an overdue series with several pending occurrences would always
-  // complete the next-due one). Falls back to the series-level modal.
-  if (dateStr) {
-    try {
-      const instances = await api(`/api/task-instances?task_id=${taskId}&from=${dateStr}&to=${dateStr}`);
-      const inst = instances.find(i => i.status === 'pending');
-      if (inst) return openInstanceCompleteModal(inst.id);
-    } catch (e) { /* fall through to series-level completion */ }
+  if (!dateStr) return openCompleteModal(taskId);
+  try {
+    const instances = await api(`/api/task-instances?task_id=${taskId}&from=${dateStr}&to=${dateStr}`);
+    const inst = instances.find(i => i.task_id === taskId && i.scheduled_date === dateStr && i.status === 'pending');
+    if (!inst) {
+      showToast('This occurrence is no longer pending. The plan has been refreshed.', 'error');
+      return loadYearlyPlan();
+    }
+    return await openInstanceCompleteModal(inst.id);
+  } catch (err) {
+    showToast('Could not open this occurrence: ' + err.message, 'error');
   }
-  openCompleteModal(taskId);
 }
 
 let activePopover = null;
@@ -236,7 +238,7 @@ function showDayDetail(event, dateStr) {
 }
 
 function renderDayPopover(event, dateStr, data) {
-  const due = data.dueDates[dateStr] || [];
+  const due = (data.dueDates[dateStr] || []).filter(t => t.status !== 'completed');
   const completed = data.completedDates[dateStr] || [];
   const today = new Date().toISOString().split('T')[0];
 
@@ -247,13 +249,13 @@ function renderDayPopover(event, dateStr, data) {
   for (const t of completed) {
     items += `<div class="day-popover-item" style="border-left:3px solid var(--success)">
       <strong>${esc(t.title)}</strong>
-      <div class="dpi-meta">Completed${t.completed_by ? ' by ' + esc(t.completed_by) : ''} &middot; ${esc(t.recurrence)} &middot; ${esc(t.assignee || 'Unassigned')}</div>
+      <div class="dpi-meta">Completed${t.completed_by ? ' by ' + esc(t.completed_by) : ''}${t.completed_at ? ' on ' + esc(String(t.completed_at).slice(0,10)) : ''} &middot; ${esc(t.recurrence)} &middot; ${esc(t.assignee || 'Unassigned')}</div>
     </div>`;
   }
   for (const t of due) {
-    const isOverdue = dateStr < today;
+    const isOverdue = t.status === 'pending' && dateStr < today;
     const color = isOverdue ? 'var(--danger)' : 'var(--primary)';
-    const label = isOverdue ? 'Overdue' : 'Scheduled';
+    const label = t.status === 'skipped' ? 'Skipped' : isOverdue ? 'Overdue' : 'Scheduled';
     items += `<div class="day-popover-item" style="border-left:3px solid ${color}">
       <div style="display:flex;justify-content:space-between;align-items:start">
         <div>
@@ -262,7 +264,7 @@ function renderDayPopover(event, dateStr, data) {
         </div>
         <div style="margin-left:8px;flex-shrink:0">
           ${actionMenu([
-            { label: '&#10003; Mark Done', onclick: `closeDayDetail();openCompleteModal(${t.task_id})`, cls: 'success' },
+            ...(t.status === 'pending' ? [{ label: '&#10003; Mark Done', onclick: `closeDayDetail();quickComplete(${t.task_id},'${dateStr}')`, cls: 'success' }] : []),
             { label: '&#9998; Edit', onclick: `closeDayDetail();openTaskModal(${t.task_id})` },
           ])}
         </div>

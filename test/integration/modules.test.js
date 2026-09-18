@@ -279,6 +279,28 @@ test('security: permissions cover direct APIs and cross-module references',async
   assert.equal((await viewer.request('/api/risks')).status,200);
   assert.equal((await viewer.request('/api/risks','POST',{title:'Forbidden'})).status,403);
 });
+test('combined release: planning outcomes remain writable only by authorized operators and overview respects module permissions',async()=>{
+  const task=await create('/api/tasks',{title:'Authorized planning control',assignee:'Control owner',start_date:'2026-01-01',recurrence:'monthly'});
+  const operator=await restrictedClient('org_user',['ops']);
+  const executions=await operator.request(`/api/task-instances?task_id=${task.id}&from=2026-01-01&to=2026-01-01`);
+  assert.equal(executions.status,200);
+  assert.equal(executions.body.length,1);
+  const execution=executions.body[0];
+  const overview=await operator.request('/api/compliance-overview');
+  assert.equal(overview.status,200);
+  assert.ok(overview.body.modules.every(m=>['task','instance','action','document'].includes(m.type)));
+  assert.ok(overview.body.attention.some(row=>row.type==='instance' && row.id===execution.id && row.title===task.title && row.owner==='Control owner'));
+  const viewer=await restrictedClient('viewer',['ops']);
+  assert.equal((await viewer.request('/api/yearly?year=2026')).status,200);
+  for(const action of ['complete','skip','reopen']) {
+    assert.equal((await viewer.request(`/api/task-instances/${execution.id}/${action}`,'POST',{})).status,403);
+  }
+  assert.equal((await db.get('SELECT status FROM task_instances WHERE id=?',execution.id)).status,'pending');
+  assert.equal((await operator.request(`/api/task-instances/${execution.id}/complete`,'POST',{notes:'Reviewed'})).status,200);
+  const plan=await operator.request('/api/yearly?year=2026');
+  assert.equal(plan.body.completedDates['2026-01-01'].find(row=>row.task_id===task.id).instance_id,execution.id);
+  assert.equal((await operator.request('/api/risks')).status,403);
+});
 test('security: deactivation, expiry, role changes and revocation invalidate existing sessions',async()=>{
   for(const [field,value] of [['status','suspended'],['role','org_admin'],['expiry_date','2020-01-01'],['session_version',1]]){
     const member=await restrictedClient('org_user',['risk']);

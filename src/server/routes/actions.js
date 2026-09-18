@@ -52,10 +52,16 @@ function registerActionsRoutes(app, { HttpError, db, requireOpsAccess, requireOr
       if (inst) resolvedTaskId = inst.task_id;
     }
 
+    const sourceTask = resolvedTaskId
+      ? await db.get('SELECT category, assignee FROM tasks WHERE id=? AND organization_id=?', resolvedTaskId, req.orgId) : null;
+    const processes = sourceTask ? await db.all("SELECT id FROM org_architecture WHERE organization_id=? AND arch_type='process' AND name=?", req.orgId, sourceTask.category) : [];
+    const resolvedProcessId = process_id || (processes.length === 1 ? processes[0].id : null);
+    const resolvedAssignee = assignee || sourceTask?.assignee || '';
+
     const result = await db.prepare(`
       INSERT INTO actions (organization_id, instance_id, task_id, process_id, title, description, assignee, priority, due_date)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(req.orgId, instance_id || null, resolvedTaskId, process_id || null, title, description || '', assignee || '', priority || 'Medium', due_date || null);
+    `).run(req.orgId, instance_id || null, resolvedTaskId, resolvedProcessId, title, description || '', resolvedAssignee, priority || 'Medium', due_date || null);
 
     const action = await db.prepare('SELECT * FROM actions WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(action);

@@ -4560,3 +4560,6 @@ body.has-org-banner .user-widget {
   cursor: pointer;
 }
 .ti-indicator-open:hover { background: #fde68a; }
+
+/* Skipped occurrences remain visible without being counted as overdue. */
+.gantt-dot.skipped, .legend-skipped { background: #94a3b8; opacity: .75; }

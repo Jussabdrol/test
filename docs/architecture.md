@@ -56,7 +56,8 @@ Paths below are relative to `src/server/routes/` and `src/client/` respectively.
 
 - `entities.js`: fixed entity registry, tenant-aware lookup and link helpers.
 - `recurrence.js`: calendar recurrence and date validation.
-- `planning.js`: task instance generation, input helpers and process events.
+- `planning.js`: transactional, gap-filling task instance generation, input helpers and process events.
+- `task-schedule.js`: shared occurrence projection and next-due synchronization after completion, skipping or reopening.
 - `storage.js`: upload filtering, private storage operations and download URLs.
 - `webhooks.js`: address validation and post-commit delivery.
 - `audit-log.js`: shared audit record writes.

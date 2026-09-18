@@ -1,16 +1,25 @@
+const { occurrenceDates, syncNextDue } = require('../services/task-schedule');
+const { isValidDateStr } = require('../services/planning');
+const { positiveId } = require('../services/entities');
 // Register on the shared app to retain middleware and transaction boundaries.
-function registerTaskInstancesRoutes(app, { HttpError, computeNextDue, db, deleteFromSupabase, emitEvent, ensureTaskInstances, fireWebhooks, getSignedUrl, parseIntParam, requireOpsAccess, requireOrgContext, upload, uploadToSupabase }) {
+function registerTaskInstancesRoutes(app, { HttpError, db, deleteFromSupabase, emitEvent, ensureTaskInstances, fireWebhooks, getSignedUrl, parseIntParam, requireOpsAccess, requireOrgContext, upload, uploadToSupabase }) {
   // --- Task Log (task_instances) API ---
 
   // List task instances (auto-generates missing pending rows for active series up to today+14d)
   app.get('/api/task-instances', requireOrgContext, requireOpsAccess, async (req, res) => {
     const { status, task_id, from, to, completed_by, categories, limit } = req.query;
 
-    // Ensure pending instances exist up to the horizon before querying (idempotent)
-    if (!from && !to) {
-      try { await ensureTaskInstances(req.orgId, 14); }
-      catch (err) { console.error('[task-instances] ensure failed:', err.message); }
-    }
+    // Express query parameters can also be arrays or objects. Narrow each date
+    // directly before comparisons, slicing or passing the generation horizon.
+    if (from !== undefined && (typeof from !== 'string' || !isValidDateStr(from))) throw new HttpError(400, 'Dates must use YYYY-MM-DD.');
+    if (to !== undefined && (typeof to !== 'string' || !isValidDateStr(to))) throw new HttpError(400, 'Dates must use YYYY-MM-DD.');
+    if (from && to && from > to) throw new HttpError(400, 'Start date must not be after end date.');
+    if (task_id) positiveId(task_id);
+    if (status && !['pending','completed','skipped'].includes(status)) throw new HttpError(400, 'Invalid execution status.');
+    const defaultHorizon = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+    const through = to || (from && from > defaultHorizon ? from : undefined);
+    if (typeof through === 'string' && Number(through.slice(0, 4)) > new Date().getUTCFullYear() + 10) throw new HttpError(400, 'Choose a date within the next ten years.');
+    await ensureTaskInstances(req.orgId, 14, { through, taskId: task_id });
 
     let sql = `SELECT ti.*, t.title AS task_title, t.category AS task_category,
       t.assignee AS task_assignee, t.priority AS task_priority, t.recurrence AS task_recurrence,
@@ -28,6 +37,7 @@ function registerTaskInstancesRoutes(app, { HttpError, computeNextDue, db, delet
       WHERE ti.organization_id = ?`;
     const params = [req.orgId, req.orgId];
     if (status) { sql += ' AND ti.status = ?'; params.push(status); }
+    sql += " AND (ti.status <> 'pending' OR t.is_active = 1)";
     if (task_id) { sql += ' AND ti.task_id = ?'; params.push(task_id); }
     if (completed_by) { sql += ' AND ti.completed_by = ?'; params.push(completed_by); }
     // Process-context filter: comma-separated list of task categories (process names)
@@ -73,12 +83,9 @@ function registerTaskInstancesRoutes(app, { HttpError, computeNextDue, db, delet
        WHERE id = ? AND organization_id = ?`
     ).run(req.body.completed_by || '', req.body.notes || item.notes || '', req.params.id, req.orgId);
 
-    // If the completed instance matches the task's current next_due, advance next_due
+    // Keep next_due on outstanding work, skipping any already resolved later dates.
     const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(item.task_id, req.orgId);
-    if (task && task.next_due === item.scheduled_date) {
-      const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)));
-      await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
-    }
+    await syncNextDue(db, req.orgId, item.task_id);
 
     emitEvent(req.orgId, `task-${item.task_id}-${item.scheduled_date}`, 'task_cycle', 'task_completed',
       req.body.completed_by || '',
@@ -105,11 +112,7 @@ function registerTaskInstancesRoutes(app, { HttpError, computeNextDue, db, delet
        WHERE id = ? AND organization_id = ?`
     ).run(req.body.notes || item.notes || '', req.params.id, req.orgId);
 
-    const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND organization_id = ?').get(item.task_id, req.orgId);
-    if (task && task.next_due === item.scheduled_date) {
-      const nextDue = computeNextDue(task.next_due, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10)));
-      await db.prepare("UPDATE tasks SET next_due = ?, updated_at = datetime('now') WHERE id = ? AND organization_id = ?").run(nextDue, task.id, req.orgId);
-    }
+    await syncNextDue(db, req.orgId, item.task_id);
 
     res.json(await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
   });
@@ -124,6 +127,7 @@ function registerTaskInstancesRoutes(app, { HttpError, computeNextDue, db, delet
        SET status = 'pending', completed_by = '', completed_at = NULL, updated_at = NOW()
        WHERE id = ? AND organization_id = ?`
     ).run(req.params.id, req.orgId);
+    await syncNextDue(db, req.orgId, item.task_id);
     res.json(await db.prepare('SELECT * FROM task_instances WHERE id = ? AND organization_id = ?').get(req.params.id, req.orgId));
   });
 
@@ -221,65 +225,34 @@ function registerTaskInstancesRoutes(app, { HttpError, computeNextDue, db, delet
     const startDate = `${year}-01-01`;
     const endDate = `${year}-12-31`;
 
-    // Get all active tasks and project their due dates across the year
-    const tasks = await db.prepare('SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1').all(req.orgId);
-    const dueDates = {}; // { "2026-03-15": [{ task_id, title, ... }] }
-
-    for (const task of tasks) {
-      let d = new Date(task.start_date);
-      // If task started before this year, advance to first occurrence in this year.
-      // Bounded so a stuck/backwards recurrence config can never hang the request.
-      const yearStart = new Date(startDate);
-      let advanceSafety = 0;
-      while (d < yearStart && advanceSafety < 20000) {
-        const next = new Date(computeNextDue(d.toISOString().split('T')[0], task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10))));
-        if (next <= d) break; // schedule not advancing — bail out
-        d = next;
-        advanceSafety++;
-      }
-      if (d < yearStart) continue; // could not reach this year (misconfigured series)
-      // Generate all occurrences within the year
-      const yearEnd = new Date(endDate);
-      let safety = 0;
-      while (d <= yearEnd && safety < 400) {
-        const ds = d.toISOString().split('T')[0];
-        if (!dueDates[ds]) dueDates[ds] = [];
-        dueDates[ds].push({
-          task_id: task.id,
-          title: task.title,
-          assignee: task.assignee,
-          category: task.category,
-          priority: task.priority,
-          recurrence: task.recurrence,
-          type: 'due',
-        });
-        d = new Date(computeNextDue(ds, task.recurrence, task.custom_days, task.day_of_week, task.day_of_month ?? Number(task.start_date.slice(8,10))));
-        safety++;
-      }
+    const tasks = await db.all('SELECT * FROM tasks WHERE organization_id=?', req.orgId);
+    const instances = await db.all(`SELECT * FROM task_instances WHERE organization_id=?
+      AND scheduled_date >= ? AND scheduled_date <= ?`, req.orgId, startDate, endDate);
+    const byTask = new Map();
+    for (const instance of instances) {
+      if (!byTask.has(instance.task_id)) byTask.set(instance.task_id, new Map());
+      byTask.get(instance.task_id).set(instance.scheduled_date, instance);
     }
-
-    // Get completed task instances for this year
-    const completions = await db.prepare(
-      `SELECT ti.*, t.title, t.assignee, t.category, t.priority, t.recurrence
-       FROM task_instances ti JOIN tasks t ON ti.task_id = t.id
-       WHERE ti.organization_id = ? AND ti.status = 'completed'
-         AND ti.completed_at >= ? AND ti.completed_at <= ?`
-    ).all(req.orgId, startDate, endDate + ' 23:59:59');
-
-    const completedDates = {};
-    for (const c of completions) {
-      const ds = (c.completed_at instanceof Date ? c.completed_at.toISOString() : String(c.completed_at)).split('T')[0];
-      if (!completedDates[ds]) completedDates[ds] = [];
-      completedDates[ds].push({
-        task_id: c.task_id,
-        title: c.title,
-        assignee: c.assignee,
-        category: c.category,
-        priority: c.priority,
-        recurrence: c.recurrence,
-        completed_by: c.completed_by,
-        type: 'completed',
-      });
+    const dueDates = {}, completedDates = {};
+    for (const task of tasks) {
+      const saved = byTask.get(task.id) || new Map();
+      const dates = new Set(task.is_active ? occurrenceDates(task, endDate, startDate) : []);
+      // Preserve actual history even when a series is deactivated or edited.
+      for (const [date, instance] of saved) {
+        if (task.is_active || instance.status !== 'pending') dates.add(date);
+      }
+      for (const date of [...dates].sort()) {
+        const instance = saved.get(date);
+        const entry = {
+          task_id: task.id, title: task.title, assignee: task.assignee,
+          category: task.category, priority: task.priority, recurrence: task.recurrence,
+          scheduled_date: date, instance_id: instance?.id || null,
+          status: instance?.status || 'pending', completed_at: instance?.completed_at || null,
+          completed_by: instance?.completed_by || '', notes: instance?.notes || '', type: 'due',
+        };
+        (dueDates[date] ||= []).push(entry);
+        if (entry.status === 'completed') (completedDates[date] ||= []).push({ ...entry, type: 'completed' });
+      }
     }
 
     res.json({ year, dueDates, completedDates });
