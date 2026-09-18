@@ -2,27 +2,25 @@
 
 ## Runtime source of truth
 
-- [`src/server/database/schema.js`](../src/server/database/schema.js) exports
-  the current schema SQL and default threat feed definitions.
-- [`src/server/database/index.js`](../src/server/database/index.js) owns the
-  PostgreSQL adapter, connection pool, startup schema initialization, incremental
-  migrations and seed behavior.
-- Test databases are PGlite instances created under `test/support/`.
+Production `initDatabase()` verifies connectivity, required columns and the
+`2026-09-security-v1` marker. It performs no DDL or account seeding. TLS certificate
+verification is required; supply `SUPABASE_DB_CA` only if the target uses a private
+CA. Connection-string SSL flags cannot disable verification.
 
-These runtime files were moved without changing SQL, schema order or seed data.
-The server's startup calls `initDatabase()` which probes the database, runs
-`initSchema()`, `runMigrations()` and `seedData()`.
+`src/server/database/schema.js` is the synthetic test schema; only `NODE_ENV=test`
+initializes it. Do not set that environment in a deployed service. Fresh production
+installation requires a separately reviewed schema baseline and deliberate admin
+provisioning; starting the server is not a provisioning mechanism.
 
-**Startup is a write operation.** Existing migration code can drop/recreate old
-AI use-case tables when it detects an `actor` column. Seed code can create
-accounts with fixed historical passwords. Do not start an unfamiliar checkout
-against a valuable database just to inspect the app.
+Reviewed changes live in `supabase/migrations/`. The first security migration
+preserves business rows, closes browser Data API privileges and records a schema
+marker. See [rollout and recovery](../docs/security/database-rollout.md).
 
 ## Historical SQL in `legacy/`
 
 These nine files were preserved byte-for-byte and relocated from the root.
 They overlap the runtime schema and represent different historical states.
-There is no migration ledger or verified universal execution order.
+These historical files have no verified universal execution order.
 
 | File | Original purpose |
 | --- | --- |
@@ -46,7 +44,7 @@ reconciles actual deployed schema and migration history.
 
 1. Inspect the target schema and the current application expectations.
 2. Separate the change from folder cleanup; define data preservation and rollback.
-3. Establish a migration baseline/ledger before adopting an automatic runner.
+3. Record reviewed upgrades in the migration ledger; never auto-run historical SQL.
 4. Test on an isolated database with representative synthetic data.
 5. Review tenant constraints, grants, RLS and privileged access paths.
 6. Apply only the reviewed migration to an authorized target with a restore plan.

@@ -6,3 +6,5 @@ public/app.js
 coverage/
 *.log
 .DS_Store
+
+supabase/.temp/

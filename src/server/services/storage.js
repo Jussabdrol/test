@@ -1,5 +1,6 @@
 const path = require('node:path');
 const multer = require('multer');
+const { validateFileContent } = require('./file-validation');
 const { supabase, supabaseAdmin } = require('../config/supabase');
 
 const UPLOADS_BUCKET = 'uploads';
@@ -44,13 +45,13 @@ function uploadFileFilter(allowed) {
 // File upload setup - use memory storage; files are sent to Supabase Storage
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 20 * 1024 * 1024, files: 1, fields: 40, parts: 41 },
   fileFilter: uploadFileFilter(ALLOWED_UPLOAD_MIMES),
 });
 // PDF-only uploads for report endpoints
 const uploadPdf = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 20 * 1024 * 1024, files: 1, fields: 40, parts: 41 },
   fileFilter: uploadFileFilter(new Set(['application/pdf'])),
 });
 
@@ -58,7 +59,7 @@ const uploadPdf = multer({
 function storageKey(folder, originalname) {
   const ext = path.extname(originalname);
   const base = path.basename(originalname, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
-  return `${folder}/${Date.now()}_${base}${ext}`;
+  return `${folder}/${require('node:crypto').randomUUID()}_${base}${ext}`;
 }
 
 // Helper: upload a buffer to Supabase Storage; returns the storage path
@@ -66,6 +67,7 @@ function storageKey(folder, originalname) {
 const storageClient = supabaseAdmin || supabase;
 
 async function uploadToSupabase(folder, file) {
+  validateFileContent(file);
   if (!storageClient) throw new Error('Supabase is not configured (missing SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY)');
   const key = storageKey(folder, file.originalname);
   const { error } = await storageClient.storage

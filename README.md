@@ -35,9 +35,10 @@ npm run dev
 ```
 
 `npm run dev` builds the browser script, loads `.env`, and starts the server.
-**Startup initializes and updates the configured database and seeds accounts.**
-Review [database/README.md](database/README.md) before starting it against any
-existing database. Use the test suite first if you only need to verify code.
+**Production startup verifies the database without changing schema or creating accounts.**
+Apply reviewed migrations separately, starting with the security baseline documented
+in [the database runbook](docs/security/database-rollout.md). Historical SQL files
+are not an automatic installation sequence.
 
 `npm start` builds the browser script and uses environment variables supplied by
 the host; it does not load `.env`. `node server.js` remains the deployment entry
@@ -54,7 +55,7 @@ src/
     middleware/        Authentication, authorization and request transactions
     routes/            HTTP endpoints grouped by business domain
     services/          Shared domain logic and external integrations
-    database/          PostgreSQL adapter, runtime schema and startup migrations
+    database/          PostgreSQL adapter, schema fixture and startup verification
     shared/            Shared error types
   client/              Browser source fragments and their ordered manifest
 public/                HTML, CSS, flowchart module and generated app.js

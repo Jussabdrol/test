@@ -19,6 +19,7 @@ function registerOverview(app, db, requireOrgContext) {
     ];
     const modules = []; const attention = [];
     for (const [type,label,table,active,needsAttention,title,owner,date] of definitions) {
+      if (req.canAccessEntity && !req.canAccessEntity(type)) continue;
       const counts = await db.get(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${active})::int AS active,
         COUNT(*) FILTER (WHERE (${active}) AND (${needsAttention}))::int AS attention FROM ${table} WHERE organization_id = ?`, oid);
       modules.push({ type, label, ...counts });
@@ -27,6 +28,7 @@ function registerOverview(app, db, requireOrgContext) {
       attention.push(...rows.map(row => ({ ...row, type, label, reason: type === 'risk' ? 'High risk' : type === 'threat' ? 'Needs triage' : 'Overdue', priority: type === 'risk' ? 1 : 2 })));
     }
     for (const [type,label,table] of [['requirement','Requirements','standard_requirements'],['kpi','KPIs','org_kpis'],['process','Processes','org_architecture'],['soa','Statement of applicability','soa_entries']]) {
+      if (req.canAccessEntity && !req.canAccessEntity(type)) continue;
       const filter = type === 'process' ? " AND arch_type = 'process'" : '';
       const counts = await db.get(`SELECT COUNT(*)::int AS total FROM ${table} WHERE organization_id = ?${filter}`, oid);
       modules.push({ type,label,...counts,active: counts.total,attention: 0 });
