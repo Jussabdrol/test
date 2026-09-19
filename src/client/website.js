@@ -77,7 +77,7 @@ if (document.body.dataset.website) {
     }
     retry.addEventListener('click',()=>{attempts=0;checkOrder();});checkOrder();
   }
-  if(document.body.dataset.website==='billing')document.getElementById('billing-portal').addEventListener('click',async event=>{
+  if(document.body.dataset.website==='billing')document.getElementById('billing-portal')?.addEventListener('click',async event=>{
     const button=event.currentTarget,message=document.getElementById('billing-message');button.disabled=true;message.hidden=true;
     try{const result=await websiteApi('/api/commerce/portal',{});const url=new URL(result.url);if(url.protocol!=='https:'||url.hostname!=='billing.stripe.com')throw Error('Unable to open the billing portal safely.');location.assign(url.href);}
     catch(err){message.textContent=err.message;message.hidden=false;button.disabled=false;}

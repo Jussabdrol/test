@@ -321,3 +321,15 @@ test('security: legacy SAML cannot be enabled and seeded passwords do not exist'
   assert.equal((await api('/api/admin/saml/config')).body.enabled,0);
   assert.equal((await db.get("SELECT count(*)::int AS n FROM users WHERE email IN ('superadmin@lettheframework.local','admin@lettheframework.local')")).n,0);
 });
+
+test('website exposes only public product content and keeps checkout unavailable', async () => {
+  for (const path of ['/start','/welcome','/brand.css','/website/style.css','/website.js']) {
+    assert.equal((await fetch(base+path)).status,200,path);
+  }
+  const catalog=await (await fetch(base+'/api/commerce/catalog')).json();
+  assert.equal(catalog.enabled,false);assert.equal(catalog.monthly,14900);assert.equal(catalog.yearly,149000);
+  assert.deepEqual(await (await fetch(base+'/api/commerce/status')).json(),{status:'unavailable'});
+  assert.equal((await fetch(base+'/billing',{redirect:'manual'})).headers.get('location'),'/login');
+  assert.equal((await fetch(base+'/api/tasks')).status,401);
+  assert.equal((await fetch(base+'/api/commerce/checkout',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,403);
+});

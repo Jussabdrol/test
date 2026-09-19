@@ -95,3 +95,6 @@ all other commerce routes retain normal CSRF and session validation. Protected
 organization requests check the additive `bop_licenses` ledger regardless of the
 new-checkout flag. See [website and billing](website-and-billing.md) for release,
 merchant onboarding, verification, boundaries and rollback.
+
+Public HTML pages are registered by `routes/website.js`; `routes/commerce.js` supplies
+the real catalog/status endpoints when this billing activation branch is deployed.
