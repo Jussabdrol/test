@@ -8,6 +8,7 @@ const uiReady = document.readyState === 'loading'
   : Promise.resolve();
 Promise.all([userReady,uiReady]).then(([showingMSP]) => {
   if (showingMSP) return;
+  initializeExperience();
   if (hasPermissionForView('mission-control')) {
     loadMissionControl();
   }

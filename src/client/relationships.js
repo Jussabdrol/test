@@ -30,9 +30,9 @@ async function openRelatedRecord(type, id) {
     if (['role','process','system','asset','facility','ai_model','ai_dataset'].includes(type)) currentArchTab=type;
     await switchView(view);
     const opener = {
-      risk:openRiskModal, task:openTaskDetailModal, action:openActionModal, audit:openAuditModal,
+      risk:openRiskDossier, task:openTaskDetailModal, action:openActionModal, audit:openAuditModal,
       ncr:openNcrModal, treatment:openTreatmentModal, requirement:openRequirementModal,
-      document:openDocModal, supplier:openSupplierModal, kpi:openKpiModal,
+      document:openDocumentDossier, supplier:openSupplierModal, kpi:openKpiModal,
       management_review:openMgmtReviewModal, usecase:openUseCaseModal, ai_usecase:openUseCaseModal,
       role:openArchModal, process:openArchModal, system:openArchModal, asset:openArchModal,
       facility:openArchModal, ai_model:openArchModal, ai_dataset:openArchModal, plan_bundle:openBundleModal,
@@ -95,7 +95,7 @@ openBundleModal=addRelationshipPanel(openBundleModal,'plan_bundle','bundle-modal
 let attentionData=null;
 async function renderAttentionOverview() {
   let section=document.getElementById('attention-overview');
-  if(!section){section=document.createElement('section');section.id='attention-overview';document.getElementById('mission-section').before(section);}
+  if(!section){section=document.createElement('section');section.id='attention-overview';document.getElementById('mission-panel-overview').appendChild(section);}
   section.innerHTML='<p role="status">Loading work that needs attention…</p>';
   try {
     attentionData=await api('/api/compliance-overview');
@@ -107,6 +107,8 @@ function filterAttention(){
   const search=document.getElementById('attention-search').value.trim().toLowerCase();
   const type=document.getElementById('attention-module').value;
   const rows=attentionData.attention.filter(r=>(!type||r.type===type)&&(!search||`${r.title} ${r.owner}`.toLowerCase().includes(search)));
+  const count=document.querySelector('.attention-count');
+  if(count) { count.textContent=rows.length+' shown'; count.title=attentionData.attention_total+' total items need attention'; }
   document.getElementById('attention-results').innerHTML=rows.length
     ? `<ul class="attention-list">${rows.map(r=>`<li><button type="button" onclick="openRelatedRecord('${r.type}',${r.id})"><span><strong>${esc(r.title)}</strong><small>${esc(r.label)}${r.owner?' · '+esc(r.owner):''}</small></span><span class="attention-reason">${esc(r.reason)}${r.due_date?'<small>'+esc(String(r.due_date).slice(0,10))+'</small>':''}</span><span aria-hidden="true">→</span></button></li>`).join('')}</ul><p class="attention-note">Showing ${rows.length} items. Up to ${attentionData.per_module_limit} per module.</p>`
     : '<p class="attention-empty">'+(search||type?'No items match these filters.':'No items currently need attention.')+'</p>';

@@ -80,64 +80,11 @@ async function loadMissionControl() {
   // Auto KPIs
   const d = await api('/api/kpis/auto');
   if (d.error) { console.warn('KPI auto load failed:', d.error); return; }
-  const soaPct = d.soa_applicable > 0 ? Math.round((d.soa_implemented / d.soa_applicable) * 100) : 0;
-  const kpiStat = (val, label, cls) => `<div class="kpi-tile-stat${cls ? ' ' + cls : ''}"><span class="kpi-tile-val">${val}</span><span class="kpi-tile-lbl">${label}</span></div>`;
-
-  document.getElementById('auto-kpi-grid').innerHTML = `
-    <div class="kpi-tile" onclick="switchView('tasks')">
-      <h4 class="kpi-tile-title">&#9881; Task Management</h4>
-      <div class="kpi-tile-stats">
-        ${kpiStat(d.tasks_active, 'Active', '')}
-        ${kpiStat(d.tasks_overdue, 'Overdue', d.tasks_overdue > 0 ? 'kpi-danger' : 'kpi-ok')}
-        ${kpiStat(d.completions_this_month, 'Done (mo)', 'kpi-ok')}
-      </div>
-    </div>
-    <div class="kpi-tile" onclick="switchView('audit-plan')">
-      <h4 class="kpi-tile-title">&#9998; Audits &amp; Compliance</h4>
-      <div class="kpi-tile-stats">
-        ${kpiStat(d.audits_planned, 'Planned', '')}
-        ${kpiStat(d.audits_completed, 'Completed', 'kpi-ok')}
-        ${kpiStat(d.open_ncrs, 'Open NCRs', d.open_ncrs > 0 ? 'kpi-danger' : 'kpi-ok')}
-        ${kpiStat(d.open_actions, 'Open Actions', d.open_actions > 0 ? 'kpi-danger' : 'kpi-ok')}
-        ${kpiStat(d.standards_count, 'Standards', '')}
-      </div>
-    </div>
-    <div class="kpi-tile" onclick="switchView('risk-identification')">
-      <h4 class="kpi-tile-title">&#9888; Risk Management</h4>
-      <div class="kpi-tile-stats">
-        ${kpiStat(d.total_risks, 'Total', '')}
-        ${kpiStat(d.high_risks, 'High/Crit', d.high_risks > 0 ? 'kpi-danger' : 'kpi-ok')}
-        ${kpiStat(d.open_treatments, 'Open Treat.', '')}
-        ${kpiStat(soaPct + '%', 'SoA Impl.', soaPct >= 80 ? 'kpi-ok' : '')}
-        ${kpiStat(d.threat_items_new, 'New Threats', d.threat_items_new > 0 ? 'kpi-danger' : '')}
-      </div>
-    </div>
-    <div class="kpi-tile" onclick="switchView('document-control')">
-      <h4 class="kpi-tile-title">&#128196; Document Control</h4>
-      <div class="kpi-tile-stats">
-        ${kpiStat(d.total_documents, 'Documents', '')}
-        ${kpiStat(d.docs_due_review, 'Due Review', d.docs_due_review > 0 ? 'kpi-danger' : 'kpi-ok')}
-      </div>
-    </div>
-    <div class="kpi-tile" onclick="switchView('architecture')">
-      <h4 class="kpi-tile-title">&#127970; Architecture</h4>
-      <div class="kpi-tile-stats">
-        ${kpiStat(d.arch_processes, 'Processes', '')}
-        ${kpiStat(d.arch_roles, 'Roles', '')}
-        ${kpiStat(d.arch_systems, 'Systems', '')}
-        ${kpiStat(d.arch_facilities, 'Facilities', '')}
-      </div>
-    </div>
-    <div class="kpi-tile" onclick="switchView('use-cases')">
-      <h4 class="kpi-tile-title">&#128221; Use Cases</h4>
-      <div class="kpi-tile-stats">
-        ${kpiStat(d.usecases_total, 'Total', '')}
-        ${kpiStat(d.usecases_active, 'Active', d.usecases_active > 0 ? 'kpi-ok' : '')}
-        ${kpiStat(d.usecases_proposed, 'Proposed', '')}
-        ${kpiStat(d.usecases_draft, 'Draft', '')}
-        ${kpiStat(d.usecases_deprecated, 'Deprecated', d.usecases_deprecated > 0 ? 'kpi-danger' : '')}
-      </div>
-    </div>`;
+  renderMissionExperience(d);
+  const orgLabel = document.getElementById('experience-org');
+  if (orgLabel && mission.org_name) orgLabel.textContent = mission.org_name;
+  const contextLabel = document.getElementById('experience-context');
+  if (contextLabel && mission.org_name) contextLabel.textContent = mission.org_name;
 
   // Process KPIs (grouped by process)
   const kpis = await api('/api/kpis');

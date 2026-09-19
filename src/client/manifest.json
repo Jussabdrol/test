@@ -20,6 +20,7 @@
   "helpers.js",
   "admin.js",
   "management-reviews.js",
+  "experience.js",
   "init.js",
   "ai/agent.js",
   "relationships.js",

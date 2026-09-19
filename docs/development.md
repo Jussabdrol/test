@@ -84,3 +84,22 @@ The sales website lives at `/`; the protected application lives at `/console`.
 This website-only release requires no database migration. Online checkout stays
 disabled pending merchant setup and approval of the separately prepared license
 migration. See [website release](website.md).
+
+## Console experience release
+
+The console presentation is isolated in `public/experience.css` and
+`src/client/experience.js`. Shared website branding is unchanged. Mission Control
+uses the existing attention and KPI APIs; risk/document dossiers are read-only
+views that open existing edit, download, treatment and relationship actions.
+There is no schema, server, permission or workflow migration.
+
+Run `npm run verify`, then exercise the console with the isolated PGlite fixture:
+Mission Control tabs; attention → risk → document; edit/save through existing
+forms; risk filters and heat map; document search and column visibility; mobile
+navigation and keyboard focus. Test rapid searches and navigating away while a
+dossier request is pending. After rollout verify authenticated `/console`,
+`/experience.css` and `/app.js` against the tested files, health and affected API
+reads. Do not create or edit customer records for a smoke test.
+
+Rollback: revert the experience release with a normal Git revert. Keep the website
+release and all security/planning fixes. No data rollback is needed.

@@ -1,6 +1,14 @@
 
 // --- Document Control ---
 let docFilters = { doc_type: '', status: '', classification: '', process: '', owner: '', search: '' };
+let docListRequest = 0;
+let docSearchTimer;
+function scheduleDocumentSearch() {
+  clearTimeout(docSearchTimer);
+  // Keep the input node stable during a typing burst; discard older list responses.
+  docListRequest++;
+  docSearchTimer = setTimeout(() => loadDocumentControl(), 250);
+}
 
 // Column visibility — persisted in localStorage
 const DOC_COL_STORAGE_KEY = 'docColumnVisibility';
@@ -37,19 +45,22 @@ function toggleDocColumn(key) {
 
 function buildDocGridCols(vis) {
   // Title column (always visible) + dynamic columns + actions (always visible)
-  let cols = '1fr';
-  if (vis.type) cols += ' 110px';
-  if (vis.classification) cols += ' 100px';
-  if (vis.status) cols += ' 80px';
-  if (vis.version) cols += ' 60px';
-  if (vis.owner) cols += ' 90px';
-  if (vis.review) cols += ' 90px';
-  if (vis.links) cols += ' 120px';
-  cols += ' 44px';
+  let cols = 'minmax(160px, 2fr)';
+  if (vis.type) cols += ' minmax(65px, .8fr)';
+  if (vis.classification) cols += ' minmax(85px, 1fr)';
+  if (vis.status) cols += ' minmax(90px, 1fr)';
+  if (vis.version) cols += ' 40px';
+  if (vis.owner) cols += ' minmax(75px, 1fr)';
+  if (vis.review) cols += ' minmax(110px, 1fr)';
+  if (vis.links) cols += ' minmax(65px, .8fr)';
+  cols += ' 36px';
   return cols;
 }
 
 async function loadDocumentControl() {
+  clearTimeout(docSearchTimer);
+  const request = ++docListRequest;
+  closeExperienceDossier('document', false);
   const params = new URLSearchParams();
   if (docFilters.doc_type) params.set('doc_type', docFilters.doc_type);
   if (docFilters.status) params.set('status', docFilters.status);
@@ -64,6 +75,8 @@ async function loadDocumentControl() {
 
   // Fetch processes for filter dropdown
   const processes = await api('/api/architecture?arch_type=process');
+
+  if (request !== docListRequest) return;
 
   // Collect unique owners for filter dropdown
   const uniqueOwners = [...new Set(docs.filter(d => d.owner).map(d => d.owner))].sort();
@@ -89,12 +102,15 @@ async function loadDocumentControl() {
 
   const vis = getDocColumnVisibility();
 
+  const searchInput = document.getElementById('doc-search');
+  const restoreSearch = searchInput && document.activeElement === searchInput;
+  const selection = restoreSearch ? searchInput.selectionStart : null;
   document.getElementById('doc-filters-bar').innerHTML = `
     <div class="filter-row" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px">
-      <input type="text" placeholder="&#128269; Search documents..." value="${esc(docFilters.search || '')}"
+      <label class="experience-filter">Search<input id="doc-search" type="search" placeholder="Search documents…" value="${esc(docFilters.search || '')}"
         style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;min-width:200px"
-        oninput="docFilters.search=this.value;loadDocumentControl()">
-      <select onchange="docFilters.doc_type=this.value;loadDocumentControl()">
+        oninput="docFilters.search=this.value;scheduleDocumentSearch()"></label>
+      <label class="experience-filter">Type<select onchange="docFilters.doc_type=this.value;loadDocumentControl()">
         <option value="">All Types</option>
         <option value="policy" ${docFilters.doc_type==='policy'?'selected':''}>Policy</option>
         <option value="procedure" ${docFilters.doc_type==='procedure'?'selected':''}>Procedure</option>
@@ -104,29 +120,29 @@ async function loadDocumentControl() {
         <option value="report" ${docFilters.doc_type==='report'?'selected':''}>Report</option>
         <option value="evidence" ${docFilters.doc_type==='evidence'?'selected':''}>Evidence</option>
         <option value="other" ${docFilters.doc_type==='other'?'selected':''}>Other</option>
-      </select>
-      <select onchange="docFilters.status=this.value;loadDocumentControl()">
+      </select></label>
+      <label class="experience-filter">Status<select onchange="docFilters.status=this.value;loadDocumentControl()">
         <option value="">All Status</option>
         <option value="draft" ${docFilters.status==='draft'?'selected':''}>Draft</option>
         <option value="review" ${docFilters.status==='review'?'selected':''}>Under Review</option>
         <option value="approved" ${docFilters.status==='approved'?'selected':''}>Approved</option>
         <option value="obsolete" ${docFilters.status==='obsolete'?'selected':''}>Obsolete</option>
-      </select>
-      <select onchange="docFilters.classification=this.value;loadDocumentControl()">
+      </select></label>
+      <label class="experience-filter">Classification<select onchange="docFilters.classification=this.value;loadDocumentControl()">
         <option value="">All Classifications</option>
         <option value="public" ${docFilters.classification==='public'?'selected':''}>Public</option>
         <option value="internal" ${docFilters.classification==='internal'?'selected':''}>Internal</option>
         <option value="confidential" ${docFilters.classification==='confidential'?'selected':''}>Confidential</option>
         <option value="restricted" ${docFilters.classification==='restricted'?'selected':''}>Restricted</option>
-      </select>
-      <select onchange="docFilters.process=this.value;loadDocumentControl()">
+      </select></label>
+      <label class="experience-filter">Process<select onchange="docFilters.process=this.value;loadDocumentControl()">
         <option value="">All Processes</option>
         ${processes.map(p => `<option value="${esc(p.name)}" ${docFilters.process===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}
-      </select>
-      <select onchange="docFilters.owner=this.value;loadDocumentControl()">
+      </select></label>
+      <label class="experience-filter">Owner<select onchange="docFilters.owner=this.value;loadDocumentControl()">
         <option value="">All Owners</option>
         ${uniqueOwners.map(o => `<option value="${esc(o)}" ${docFilters.owner===o?'selected':''}>${esc(o)}</option>`).join('')}
-      </select>
+      </select></label>
       ${(docFilters.doc_type || docFilters.status || docFilters.classification || docFilters.process || docFilters.owner || docFilters.search) ?
         `<button class="btn btn-secondary btn-sm" onclick="docFilters={doc_type:'',status:'',classification:'',process:'',owner:'',search:''};loadDocumentControl()">Clear Filters</button>` : ''}
       <div class="doc-col-toggle" style="margin-left:auto">
@@ -138,6 +154,10 @@ async function loadDocumentControl() {
     </div>
     <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">${docs.length} document${docs.length!==1?'s':''} found</div>`;
 
+  if (restoreSearch) {
+    const input = document.getElementById('doc-search'); input.focus({preventScroll:true}); input.setSelectionRange(selection,selection);
+  }
+
   // Close column dropdown when clicking outside
   document.addEventListener('click', function _closeDocColDrop(e) {
     if (!e.target.closest('.doc-col-toggle')) {
@@ -148,14 +168,14 @@ async function loadDocumentControl() {
 
   const list = document.getElementById('doc-list');
   if (docs.length === 0) {
-    list.innerHTML = '<div class="empty-state">No documents yet. Upload one to get started.</div>';
+    list.innerHTML = `<div class="empty-state">${Object.values(docFilters).some(Boolean) ? 'No documents match these filters.' : 'No documents yet. Upload one to get started.'}</div>`;
     return;
   }
 
   const docTypeLabels = { policy: 'Policy', procedure: 'Procedure', work_instruction: 'Work Instruction', record: 'Record', form: 'Form', report: 'Report', evidence: 'Evidence', other: 'Other' };
-  const docTypeBadge = t => t === 'policy' ? 'badge-critical' : t === 'procedure' ? 'badge-high' : t === 'work_instruction' ? 'badge-medium' : t === 'evidence' ? 'badge-inactive' : 'badge-low';
-  const statusBadge = s => s === 'approved' ? 'badge-low' : s === 'review' ? 'badge-medium' : s === 'obsolete' ? 'badge-inactive' : 'badge-high';
-  const classificationBadge = c => c === 'restricted' ? 'badge-critical' : c === 'confidential' ? 'badge-high' : c === 'internal' ? 'badge-medium' : 'badge-low';
+  const docTypeBadge = () => 'experience-neutral';
+  const statusBadge = s => s === 'approved' ? 'experience-approved' : 'experience-neutral';
+  const classificationBadge = () => 'experience-neutral';
   const today = new Date().toISOString().split('T')[0];
   const gridCols = buildDocGridCols(vis);
 
@@ -187,19 +207,19 @@ async function loadDocumentControl() {
     const typeLabel = docTypeLabels[d.doc_type] || d.doc_type || 'Other';
 
     html += `<div class="doc-table-row${d.status === 'obsolete' ? ' doc-obsolete' : ''}" style="grid-template-columns:${gridCols}">
-        <div class="doc-col-title" style="cursor:pointer" onclick="openDocModal(${d.id})">
-          <span class="doc-row-title" style="color:var(--primary)">${esc(d.title)}</span>
+        <div class="doc-col-title">
+          <button type="button" class="doc-row-title experience-text-button" onclick="openDocumentDossier(${d.id})">${esc(d.title)}</button>
           ${d.file_name ? `<span class="doc-row-file">${esc(d.file_name)}</span>` : ''}
         </div>
-        ${vis.type ? `<div class="doc-col-type"><span class="badge ${docTypeBadge(d.doc_type)}">${esc(typeLabel)}</span></div>` : ''}
-        ${vis.classification ? `<div class="doc-col-class">
+        ${vis.type ? `<div class="doc-col-type" data-label="Type"><span class="badge ${docTypeBadge(d.doc_type)}">${esc(typeLabel)}</span></div>` : ''}
+        ${vis.classification ? `<div class="doc-col-class" data-label="Classification">
           ${d.classification ? `<span class="badge ${classificationBadge(d.classification)}">${esc(d.classification)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
         </div>` : ''}
-        ${vis.status ? `<div class="doc-col-status"><span class="badge ${statusBadge(d.status)}">${esc(d.status)}</span></div>` : ''}
-        ${vis.version ? `<div class="doc-col-ver">v${esc(d.version)}</div>` : ''}
-        ${vis.owner ? `<div class="doc-col-owner">${d.owner ? `<span style="font-size:12px">${esc(d.owner)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>` : ''}
-        ${vis.review ? `<div class="doc-col-review">${d.review_date ? `<span style="font-size:12px;${reviewOverdue ? 'color:var(--danger);font-weight:600' : ''}">${d.review_date}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>` : ''}
-        ${vis.links ? `<div class="doc-col-links">
+        ${vis.status ? `<div class="doc-col-status" data-label="Status"><span class="badge ${statusBadge(d.status)}">${esc(experienceStatus(d.status))}</span></div>` : ''}
+        ${vis.version ? `<div class="doc-col-ver" data-label="Version">v${esc(d.version)}</div>` : ''}
+        ${vis.owner ? `<div class="doc-col-owner" data-label="Owner">${d.owner ? `<span style="font-size:12px">${esc(d.owner)}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>` : ''}
+        ${vis.review ? `<div class="doc-col-review" data-label="Review date">${d.review_date ? `<span style="font-size:12px;${reviewOverdue ? 'color:var(--danger);font-weight:600' : ''}">${esc(d.review_date)}${reviewOverdue ? '<span class="badge experience-overdue">Review overdue</span>' : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>` : ''}
+        ${vis.links ? `<div class="doc-col-links" data-label="Linked items">
           <span class="doc-link-summary" style="cursor:pointer;font-size:12px" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">${linkSummary} <span class="cl-toggle-icon">${links.length > 0 ? '+' : ''}</span></span>
         </div>` : ''}
         <div class="doc-col-actions">
