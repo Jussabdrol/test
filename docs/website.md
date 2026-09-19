@@ -20,7 +20,7 @@ organization, excluding VAT. All core modules and team accounts are included.
 Unlimited AI usage is not included. These are introductory pricing decisions,
 not validated willingness-to-pay research.
 
-This website-only release requires no migration, environment change or new
+The initially deployed website-only release required no migration, environment change or new
 Railway service. The existing `go-bop.com` domain remains attached to the current
 service. Rollback is a normal revert of this website release.
 
@@ -38,3 +38,7 @@ been tested against an isolated Stripe double.
 
 Validation: `npm run verify`; desktop and mobile browser checks of English copy,
 shared branding, feature tabs, yearly pricing, navigation and disabled checkout.
+
+The prepared activation branch includes the billing routes and migration described
+in [website and billing](website-and-billing.md). Do not deploy that branch before
+the separately approved migration and merchant setup.

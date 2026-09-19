@@ -26,10 +26,13 @@ const { ensureTaskInstances, parseIntParam, isValidDateStr, validateRecurrenceFi
 const { validateWebhookUrl, sendValidatedWebhook, fireWebhooks } = require('./services/webhooks');
 
 const app = express();
+app.set('trust proxy', 1);
+require('./routes/commerce').registerStripeWebhook(app, { express, db, rateLimit });
 require('./middleware/route-handling').installRouteHandling(app, db);
 const { getOrgId, requireOrgContext, requireOpsAccess, requireSuperadmin, requireAdmin, bumpUserSessionVersion, authRateLimiter } = require('./middleware/security').configureSecurity(app, { crypto, db, express, helmet, rateLimit });
 
 require('./routes/website').registerWebsiteRoutes(app);
+require('./routes/commerce').registerCommerceRoutes(app, { db, bcrypt, rateLimit });
 
 app.use('/api', require('./middleware/authorization').authorizeApi(db));
 require('./middleware/resource-limits').installResourceLimits(app);

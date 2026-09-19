@@ -80,7 +80,8 @@ never start the normal application against a production database for this purpos
 
 ## Website release
 
-The sales website lives at `/`; the protected application lives at `/console`.
-This website-only release requires no database migration. Online checkout stays
-disabled pending merchant setup and approval of the separately prepared license
-migration. See [website release](website.md).
+The public website now lives at `/`; the authenticated workspace lives at
+`/console`. Apply the additive licensing migration before releasing this version.
+Keep new checkout disabled until the merchant account, legal pages, tax settings
+and real Stripe test-mode acceptance checks are complete. See
+[website and billing](website-and-billing.md).
