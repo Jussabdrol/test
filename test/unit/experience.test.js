@@ -21,7 +21,7 @@ test('risk dossier preserves assessment fields, treatment status and escaped lin
   await vm.runInContext('openRiskDossier(1)',context);
   const html=elements.get('risk-dossier').innerHTML;
   assert.match(html,/Critical inherent risk · 20/);assert.match(html,/Treating/);assert.match(html,/Verified/);
-  assert.match(html,/Risk &lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img/);
+  assert.match(html,/Risk &lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img/i);
   assert.match(html,/openRiskModal\(1\)/);assert.match(html,/openTreatmentModal\(3\)/);assert.match(html,/openRelatedRecord\('document',2\)/);
 });
 test('document dossier uses the existing list API and keeps approval separate from overdue review',async()=>{
