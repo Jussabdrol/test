@@ -44,11 +44,12 @@ app.get('/login', async (req, res) => {
   res.sendFile(path.join(__dirname, '../../public', 'login.html'));
 });
 
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, '../../public/website/index.html')));
-app.get('/start', (req, res) => res.sendFile(path.join(__dirname, '../../public/website/start.html')));
-app.get('/welcome', (req, res) => res.sendFile(path.join(__dirname, '../../public/website/welcome.html')));
-app.get('/billing', (req, res) => res.sendFile(path.join(__dirname, '../../public/website/billing.html')));
-app.get('/console', (req, res) => res.sendFile(path.join(__dirname, '../../public/index.html')));
+const websitePageLimit = rateLimit({ windowMs: 60000, max: 120, standardHeaders: true, legacyHeaders: false });
+app.get('/', websitePageLimit, (req, res) => res.sendFile(path.join(__dirname, '../../public/website/index.html')));
+app.get('/start', websitePageLimit, (req, res) => res.sendFile(path.join(__dirname, '../../public/website/start.html')));
+app.get('/welcome', websitePageLimit, (req, res) => res.sendFile(path.join(__dirname, '../../public/website/welcome.html')));
+app.get('/billing', websitePageLimit, (req, res) => res.sendFile(path.join(__dirname, '../../public/website/billing.html')));
+app.get('/console', websitePageLimit, (req, res) => res.sendFile(path.join(__dirname, '../../public/index.html')));
 
 app.use(express.static(path.join(__dirname, '../../public')));
 
