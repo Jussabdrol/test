@@ -85,3 +85,10 @@ CSS selectors, page markup and public URLs are deliberately stable.
 Frontend fragments are not isolated ES modules yet. The manifest and complete
 bundle linting make dependencies visible while allowing one screen at a time to
 be migrated later. Changes to initialization and globals need browser validation.
+
+## Public website
+
+`routes/website.js` serves the English public site at `/`, onboarding information
+at `/start`, and the authenticated application at `/console`. Website and console
+share `public/brand.css`. The website has a separate generated browser bundle;
+its public allowlist never exposes tenant APIs. See [website release](website.md).

@@ -32,17 +32,20 @@ after(async()=>{if(server){server.closeAllConnections();await new Promise(resolv
 
 test('browser entry points and locally referenced assets survive source relocation', async () => {
   const anonymous = await fetch(base + '/', { redirect: 'manual' });
-  assert.equal(anonymous.status, 302);
-  assert.equal(anonymous.headers.get('location'), '/login');
+  assert.equal(anonymous.status, 200);
+  assert.match(await anonymous.text(), /Clarity for your organization/);
+  const consolePage = await fetch(base + '/console', { redirect: 'manual' });
+  assert.equal(consolePage.status, 302);
+  assert.equal(consolePage.headers.get('location'), '/login');
   const login = await fetch(base + '/login');
   assert.equal(login.status, 200);
   assert.match(await login.text(), /<html/);
-  const page = await fetch(base + '/', { headers: { cookie } });
+  const page = await fetch(base + '/console', { headers: { cookie } });
   assert.equal(page.status, 200);
   const html = await page.text();
   const assets = [...html.matchAll(/(?:src|href)="([^"#]+\.(?:js|mjs|css))"/g)]
     .map(match => match[1]).filter(url => !url.startsWith('http'));
-  assert.ok(assets.includes('app.js'));
+  assert.ok(assets.includes('/app.js'));
   for (const asset of assets) {
     const result = await fetch(new URL(asset, base + '/'), { headers: { cookie } });
     assert.equal(result.status, 200, asset);
@@ -317,4 +320,16 @@ test('security: legacy SAML cannot be enabled and seeded passwords do not exist'
   assert.equal((await api('/api/admin/saml/config','PUT',{enabled:1})).status,503);
   assert.equal((await api('/api/admin/saml/config')).body.enabled,0);
   assert.equal((await db.get("SELECT count(*)::int AS n FROM users WHERE email IN ('superadmin@lettheframework.local','admin@lettheframework.local')")).n,0);
+});
+
+test('website exposes only public product content and keeps checkout unavailable', async () => {
+  for (const path of ['/start','/welcome','/brand.css','/website/style.css','/website.js']) {
+    assert.equal((await fetch(base+path)).status,200,path);
+  }
+  const catalog=await (await fetch(base+'/api/commerce/catalog')).json();
+  assert.equal(catalog.enabled,false);assert.equal(catalog.monthly,14900);assert.equal(catalog.yearly,149000);
+  assert.deepEqual(await (await fetch(base+'/api/commerce/status')).json(),{status:'unavailable'});
+  assert.equal((await fetch(base+'/billing',{redirect:'manual'})).headers.get('location'),'/login');
+  assert.equal((await fetch(base+'/api/tasks')).status,401);
+  assert.equal((await fetch(base+'/api/commerce/checkout',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,403);
 });

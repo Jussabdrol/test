@@ -260,7 +260,7 @@ function configureSecurity(app, { crypto, db, express, helmet, rateLimit }) {
 
   // Auth middleware for static files - protect everything except login page
   app.use(async (req, res, next) => {
-    const publicPath = ['/login', '/login.html', '/health', '/api/auth/login', '/api/auth/check'].includes(req.path);
+    const publicPath = ['/', '/start', '/welcome', '/brand.css', '/website/index.html', '/website/start.html', '/website/welcome.html', '/website/style.css', '/website.js', '/api/commerce/catalog', '/api/commerce/status', '/login', '/login.html', '/health', '/api/auth/login', '/api/auth/check'].includes(req.path);
     if (req.session.userId) {
       const user = await db.get('SELECT id, role, status, organization_id, permissions, session_version, expiry_date FROM users WHERE id=?', req.session.userId);
       const expired = user?.expiry_date && String(user.expiry_date).slice(0,10) < new Date().toISOString().slice(0,10);
