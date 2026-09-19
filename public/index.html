@@ -18,8 +18,9 @@
   <link rel="stylesheet" href="https://unpkg.com/@xyflow/react@12/dist/style.css">
   <script type="module" src="/flowchart-editor.mjs"></script>
   <link rel="stylesheet" href="/relationships.css">
+  <link rel="stylesheet" href="/experience.css">
 </head>
-<body>
+<body class="bop-console">
   <!-- Mobile top bar (hamburger + logo) – visible only on mobile -->
   <div class="mobile-header" id="mobile-header">
     <button class="hamburger-btn" onclick="toggleMobileNav()" aria-label="Open navigation menu" aria-expanded="false" id="hamburger-btn">
@@ -37,6 +38,11 @@
     <nav class="sidebar">
       <div class="logo">
         <span class="logo-wordmark">Bop</span>
+      </div>
+      <div class="experience-workspace"><strong id="experience-org">Your workspace</strong><span>Business Orchestration Platform</span></div>
+      <div class="experience-shortcuts">
+        <button type="button" class="experience-nav" data-shortcut="mission-control" onclick="switchView('mission-control');closeMobileNav()"><span data-experience-icon="overview"></span><span class="module-text">Mission Control</span></button>
+        <button type="button" class="experience-nav" data-shortcut="my-tasks" onclick="switchView('my-tasks');closeMobileNav()"><span data-experience-icon="tasks"></span><span class="module-text">My Tasks</span></button>
       </div>
       <ul class="nav-links">
         <!-- AI Agent – direct navigation (no submenu) -->
@@ -143,6 +149,7 @@
     </div>
 
     <main class="content">
+      <header class="experience-topbar"><span><span id="experience-context">Workspace</span><span aria-hidden="true"> / </span><strong id="experience-page">Mission Control</strong></span><span class="experience-topbar-caption">Business Orchestration Platform</span></header>
       <!-- AI Agent View -->
       <section id="view-ai-agent" class="view hidden">
         <div class="view-header">
@@ -610,12 +617,13 @@
       <!-- Risk Identification View -->
       <section id="view-risk-identification" class="view hidden">
         <div class="view-header">
-          <h2>Risk Identification</h2>
+          <div><h2>Risk Identification</h2><p class="experience-subtitle">Ownership, exposure and treatment in one place.</p></div>
           <button class="btn btn-primary" onclick="openRiskModal()">+ New Risk</button>
         </div>
         <div class="filters" id="risk-filters-bar"></div>
-        <div class="risk-matrix-wrap" id="risk-matrix-wrap"></div>
+        <details class="experience-heatmap"><summary>Risk heat map <span>Inherent risk · Likelihood × impact</span></summary><div class="risk-matrix-wrap" id="risk-matrix-wrap"></div></details>
         <div class="risk-list" id="risk-list"></div>
+        <section id="risk-dossier" class="experience-dossier" aria-label="Risk dossier" hidden></section>
       </section>
 
       <!-- Risk Treatment View -->
@@ -641,13 +649,27 @@
       <!-- Mission Control View -->
       <section id="view-mission-control" class="view">
         <div class="view-header">
-          <h2>Mission Control</h2>
+          <div><h2>Mission Control</h2><p class="experience-subtitle">A clear view of what needs your attention.</p></div>
         </div>
-        <div class="mission-section" id="mission-section"></div>
-        <h3 class="section-title" style="margin-top:28px">Key Performance Indicators</h3>
-        <div class="auto-kpi-grid" id="auto-kpi-grid"></div>
-        <h3 class="section-title" style="margin-top:28px">Process KPIs</h3>
-        <div id="custom-kpi-list"></div>
+        <div class="experience-tabs" role="tablist" aria-label="Mission Control sections" data-experience-tabs="mission">
+          <button type="button" id="mission-tab-overview" role="tab" aria-selected="true" aria-controls="mission-panel-overview" onclick="selectExperienceTab('mission','overview')">Overview</button>
+          <button type="button" id="mission-tab-organization" role="tab" aria-selected="false" tabindex="-1" aria-controls="mission-panel-organization" onclick="selectExperienceTab('mission','organization')">Organization</button>
+          <button type="button" id="mission-tab-process" role="tab" aria-selected="false" tabindex="-1" aria-controls="mission-panel-process" onclick="selectExperienceTab('mission','process')">Process KPIs</button>
+        </div>
+        <div id="mission-panel-overview" role="tabpanel" aria-labelledby="mission-tab-overview">
+          <div id="experience-mission-metrics" class="experience-metrics"></div>
+          <section id="attention-overview" aria-label="Work that needs attention"></section>
+          <h3 class="section-title">Operational overview</h3>
+          <div class="auto-kpi-grid" id="auto-kpi-grid"></div>
+        </div>
+        <div id="mission-panel-organization" role="tabpanel" aria-labelledby="mission-tab-organization" hidden>
+          <div class="mission-section" id="mission-section"></div>
+          <div class="auto-kpi-grid" id="organization-kpi-grid"></div>
+        </div>
+        <div id="mission-panel-process" role="tabpanel" aria-labelledby="mission-tab-process" hidden>
+          <h3 class="section-title">Process KPIs</h3>
+          <div id="custom-kpi-list"></div>
+        </div>
       </section>
 
       <!-- Architecture View -->
@@ -720,12 +742,13 @@
       <!-- Document Control View -->
       <section id="view-document-control" class="view hidden">
         <div class="view-header">
-          <h2>Document Control</h2>
+          <div><h2>Document Control</h2><p class="experience-subtitle">The right version, with clear ownership and review dates.</p></div>
           <button class="btn btn-primary" onclick="openDocModal()">+ Upload Document</button>
         </div>
         <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">Manage policies, procedures, and documented information per ISO 7.5 requirements. Upload files and cross-link them to relevant modules.</p>
         <div class="filters" id="doc-filters-bar"></div>
         <div id="doc-list"></div>
+        <section id="document-dossier" class="experience-dossier" aria-label="Document dossier" hidden></section>
       </section>
 
       <!-- ===== ADMIN MODULE VIEWS ===== -->

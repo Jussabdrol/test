@@ -500,6 +500,9 @@ function showViewLoadingState(viewId) {
 async function switchView(view) {
   if (!hasPermissionForView(view)) return;
   currentView = view;
+  updateExperienceChrome();
+  closeExperienceDossier('risk', false);
+  closeExperienceDossier('document', false);
   closeDayDetail();
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
   document.getElementById(`view-${view}`).classList.remove('hidden');
@@ -521,6 +524,7 @@ async function switchView(view) {
     if (parentToggle) {
       parentToggle.classList.remove('collapsed');
       parentToggle.classList.add('active');
+      parentToggle.setAttribute('aria-expanded', 'true');
     }
   }
 

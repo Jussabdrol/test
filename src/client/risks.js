@@ -1,6 +1,7 @@
 
 // --- Risk Management Module ---
 let riskFilters = { status: '', category: '' };
+let riskListRequest = 0;
 
 // Standard to risk category mapping
 const standardToCategoryMap = {
@@ -44,30 +45,32 @@ function riskScoreLabel(score) {
 }
 
 async function loadRiskIdentification() {
-  const params = new URLSearchParams();
-  if (riskFilters.status) params.set('status', riskFilters.status);
-  if (riskFilters.category) params.set('category', riskFilters.category);
-  const risks = await api(`/api/risks?${params}`);
+  const request = ++riskListRequest;
+  closeExperienceDossier('risk', false);
+  const allRisks = await api('/api/risks');
+  const risks = allRisks.filter(r => (!riskFilters.status || r.status === riskFilters.status) && (!riskFilters.category || r.category === riskFilters.category));
 
   // Prefetch cross-links
   const allLinks = {};
   await batchAll(risks, async r => { allLinks[r.id] = await api(`/api/cross-links/risk/${r.id}`); });
 
+  if (request !== riskListRequest) return;
+
   // Filters
-  const categories = [...new Set(risks.map(r => r.category).filter(Boolean))];
+  const categories = [...new Set(allRisks.map(r => r.category).filter(Boolean))];
   document.getElementById('risk-filters-bar').innerHTML = `
-    <select onchange="riskFilters.status=this.value;loadRiskIdentification()">
+    <label class="experience-filter">Status<select onchange="riskFilters.status=this.value;loadRiskIdentification()">
       <option value="">All Status</option>
       <option value="identified" ${riskFilters.status==='identified'?'selected':''}>Identified</option>
       <option value="analyzing" ${riskFilters.status==='analyzing'?'selected':''}>Analyzing</option>
       <option value="treating" ${riskFilters.status==='treating'?'selected':''}>Treating</option>
       <option value="accepted" ${riskFilters.status==='accepted'?'selected':''}>Accepted</option>
       <option value="closed" ${riskFilters.status==='closed'?'selected':''}>Closed</option>
-    </select>
-    <select onchange="riskFilters.category=this.value;loadRiskIdentification()">
+    </select></label>
+    <label class="experience-filter">Category<select onchange="riskFilters.category=this.value;loadRiskIdentification()">
       <option value="">All Categories</option>
       ${categories.map(c => `<option value="${esc(c)}" ${riskFilters.category===c?'selected':''}>${esc(c)}</option>`).join('')}
-    </select>
+    </select></label>
     <span style="font-size:13px;color:var(--text-muted)">${risks.length} risk${risks.length!==1?'s':''}</span>`;
 
   // Risk matrix (5x5 heat map)
@@ -91,7 +94,7 @@ async function loadRiskIdentification() {
   // Risk Register table
   const list = document.getElementById('risk-list');
   if (risks.length === 0) {
-    list.innerHTML = '<div class="empty-state">No risks identified yet. Add one to get started.</div>';
+    list.innerHTML = `<div class="empty-state">${riskFilters.status || riskFilters.category ? 'No risks match these filters.' : 'No risks identified yet. Add one to get started.'}</div>`;
     return;
   }
 
@@ -101,7 +104,7 @@ async function loadRiskIdentification() {
       <div class="risk-col-title">Risk</div>
       <div class="risk-col-cat">Category</div>
       <div class="risk-col-owner">Owner</div>
-      <div class="risk-col-score">Score</div>
+      <div class="risk-col-score">Inherent risk</div>
       <div class="risk-col-status">Status</div>
       <div class="risk-col-treat">Treatments</div>
       <div class="risk-col-links">Links</div>
@@ -110,22 +113,22 @@ async function loadRiskIdentification() {
 
   for (const r of risks) {
     const cls = riskScoreClass(r.inherent_score);
-    const stBadge = r.status === 'closed' ? 'badge-low' : r.status === 'accepted' ? 'badge-medium' : r.status === 'treating' ? 'badge-medium' : r.status === 'analyzing' ? 'badge-medium' : 'badge-high';
+    const stBadge = 'experience-neutral';
     const links = allLinks[r.id] || [];
     const linkCount = links.length;
     const collapseId = `risk-cl-${r.id}`;
 
     html += `<div class="risk-table-row">
-        <div class="risk-col-title" style="cursor:pointer" onclick="openRiskModal(${r.id})">
-          <span class="risk-row-title" style="color:var(--primary)">${esc(r.title)}</span>
+        <div class="risk-col-title">
+          <button type="button" class="risk-row-title experience-text-button" onclick="openRiskDossier(${r.id})">${esc(r.title)}</button>
           ${r.asset ? `<span class="risk-row-sub">Asset: ${esc(r.asset)}</span>` : ''}
         </div>
-        <div class="risk-col-cat"><span style="font-size:12px">${esc(r.category || '-')}</span></div>
-        <div class="risk-col-owner"><span style="font-size:12px">${esc(r.risk_owner || '-')}</span></div>
-        <div class="risk-col-score"><span class="badge risk-score-badge ${cls}">${r.inherent_score}</span></div>
-        <div class="risk-col-status"><span class="badge ${stBadge}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span></div>
-        <div class="risk-col-treat">${r.treatment_count > 0 ? `<span style="font-size:12px">${r.treatment_count}${r.open_treatments > 0 ? ` (${r.open_treatments} open)` : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
-        <div class="risk-col-links">
+        <div class="risk-col-cat" data-label="Category"><span style="font-size:12px">${esc(r.category || '-')}</span></div>
+        <div class="risk-col-owner" data-label="Owner"><span style="font-size:12px">${esc(r.risk_owner || '-')}</span></div>
+        <div class="risk-col-score" data-label="Inherent risk"><span class="badge risk-score-badge ${cls}">${riskScoreLabel(r.inherent_score)} · ${r.inherent_score}</span></div>
+        <div class="risk-col-status" data-label="Status"><span class="badge ${stBadge}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span></div>
+        <div class="risk-col-treat" data-label="Treatments">${r.treatment_count > 0 ? `<span style="font-size:12px">${r.treatment_count}${r.open_treatments > 0 ? ` (${r.open_treatments} open)` : ''}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
+        <div class="risk-col-links" data-label="Links">
           ${linkCount > 0 ? `<span style="cursor:pointer;font-size:12px" onclick="document.getElementById('${collapseId}').classList.toggle('collapsed');this.querySelector('.cl-toggle-icon').textContent=document.getElementById('${collapseId}').classList.contains('collapsed')?'+':'−'">${linkCount} linked <span class="cl-toggle-icon">+</span></span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}
         </div>
         <div class="risk-col-actions">

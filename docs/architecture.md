@@ -39,6 +39,7 @@ Paths below are relative to `src/server/routes/` and `src/client/` respectively.
 
 | Area | Server routes | Client sources |
 | --- | --- | --- |
+| Console presentation, navigation and read-only dossiers | Existing domain APIs | `experience.js`, `public/experience.css` |
 | Login, tenants, session | `auth.js`, `../middleware/security.js` | `core.js`, `account.js` |
 | Operational planning | `tasks.js`, `task-instances.js`, `actions.js`, `plan-bundles.js` | `operations/`, `dashboard.js` |
 | Audits and findings | `audits.js`, `checklist.js`, `non-conformities.js` | `audits/` |
