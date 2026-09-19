@@ -33,7 +33,7 @@ after(async()=>{if(server){server.closeAllConnections();await new Promise(resolv
 test('browser entry points and locally referenced assets survive source relocation', async () => {
   const anonymous = await fetch(base + '/', { redirect: 'manual' });
   assert.equal(anonymous.status, 200);
-  assert.match(await anonymous.text(), /Clarity for your organization/);
+  assert.match(await anonymous.text(), /Your ISO work/);
   const consolePage = await fetch(base + '/console', { redirect: 'manual' });
   assert.equal(consolePage.status, 302);
   assert.equal(consolePage.headers.get('location'), '/login');

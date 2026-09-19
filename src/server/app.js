@@ -30,6 +30,7 @@ require('./middleware/route-handling').installRouteHandling(app, db);
 const { getOrgId, requireOrgContext, requireOpsAccess, requireSuperadmin, requireAdmin, bumpUserSessionVersion, authRateLimiter } = require('./middleware/security').configureSecurity(app, { crypto, db, express, helmet, rateLimit });
 
 require('./routes/website').registerWebsiteRoutes(app);
+require('./routes/support').registerSupportRoutes(app, { db, requireSuperadmin });
 
 app.use('/api', require('./middleware/authorization').authorizeApi(db));
 require('./middleware/resource-limits').installResourceLimits(app);

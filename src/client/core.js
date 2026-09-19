@@ -147,6 +147,7 @@ async function showMSPDashboard() {
 
   // Load organizations
   await loadMSPOrganizations();
+  await loadMSPSupportTickets();
 }
 
 function renderMSPPortalHTML() {
@@ -162,6 +163,8 @@ function renderMSPPortalHTML() {
           <button onclick="logout()" style="padding: 8px 16px; background: #dc2626; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px;">Logout</button>
         </div>
       </div>
+
+      ${renderSupportTicketsPanel()}
 
       <div id="msp-stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px;"></div>
 

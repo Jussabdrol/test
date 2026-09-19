@@ -1,86 +1,85 @@
-
-// Also emitted as a standalone bundle for the public website. No app initialization.
-if (document.body.dataset.website) {
-  const websiteFeatures = {
-    planning: { number:'01 / EXECUTION', title:'Turn a good plan into everyday progress.', description:'Turn recurring processes into clear tasks. Assign owners, track execution and keep improvement actions moving.', list:['A yearly plan with recurring tasks','Execution and evidence for each occurrence','Follow-ups with an owner and a deadline'], heading:'Operational Planning', rows:[['Review access rights','Monthly · IT','Completed','green'],['Test the continuity plan','Quarterly · Operations','In progress','lilac'],['Update policies','Annually · Quality','Planned','neutral']], footer:'Every occurrence stays connected to the plan. Even when the next period begins.' },
-    risks: { number:'02 / CONTROL', title:'Make risks visible. Make controls actionable.', description:'Identify risks, assess their impact and record what you are doing about them. Connect insight to controls and accountability.', list:['Assess risks by likelihood and impact','Connect controls to requirements','See connections to processes and systems'], heading:'Risk & control', rows:[['Unauthorized access','Access management · IT','High','lilac'],['Critical supplier failure','Continuity · Procurement','Medium','neutral'],['Outdated work instructions','Quality · Operations','Low','green']], footer:'From risk to control and owner. Keep the connections visible.' },
-    audits: { number:'03 / IMPROVEMENT', title:'An audit is not the finish line. It is your next step.', description:'Prepare audits, record findings and turn them into follow-up actions. Involve leadership and track how improvements progress.', list:['Plan audits and work through checklists','Record and follow up on non-conformities','Connect management reviews to actions'], heading:'Audit & improvement', rows:[['Internal information security audit','Audit planning · September','In progress','lilac'],['Complete supplier assessment','Improvement · Procurement','Open','neutral'],['Incident reporting procedure','Follow-up · Operations','Completed','green']], footer:'Findings, actions and evidence in one place. From assessment to better execution.' },
-  };
-  const websiteTabs = [...document.querySelectorAll('[data-feature]')];
-  function selectWebsiteFeature(button) {
-    const feature = websiteFeatures[button.dataset.feature];
-    websiteTabs.forEach(tab => {tab.setAttribute('aria-selected', String(tab === button)); tab.tabIndex = tab === button ? 0 : -1;});
-    document.querySelector('#feature-panel').setAttribute('aria-labelledby', button.id);
-    document.querySelector('.feature-number').textContent = feature.number;
-    for (const [id,value] of Object.entries({'feature-title':feature.title,'feature-description':feature.description,'board-heading':feature.heading,'board-footer':feature.footer})) document.getElementById(id).textContent=value;
-    document.getElementById('feature-list').replaceChildren(...feature.list.map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
-    document.getElementById('board-rows').replaceChildren(...feature.rows.map(([title,sub,status,color])=>{
-      const row=document.createElement('div');row.className='board-row';
-      const copy=document.createElement('span'),b=document.createElement('b'),small=document.createElement('small'),pill=document.createElement('span');
-      b.textContent=title;small.textContent=sub;copy.append(b,small);pill.className=`pill ${color}`;pill.textContent=status;row.append(copy,pill);return row;
-    }));
+// Public website only; also bundled with the console by the shared manifest.
+(() => {
+  if (!document.body.dataset.website) return;
+  const $ = id => document.getElementById(id);
+  const menu = document.querySelector('.menu-toggle');
+  menu?.addEventListener('click', () => {
+    const open = menu.getAttribute('aria-expanded') !== 'true';
+    menu.setAttribute('aria-expanded', String(open));
+    menu.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    $('site-nav').classList.toggle('open', open);
+  });
+  if ($('copyright-year')) $('copyright-year').textContent = new Date().getFullYear();
+  function billing(interval) {
+    const annual = interval === 'year';
+    document.querySelectorAll('[data-billing]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.billing === interval)));
+    if (!$('price')) return;
+    $('price').textContent = annual ? '€1,490' : '€149';
+    $('price-unit').textContent = annual ? '/ year' : '/ month';
+    $('price-fine').textContent = annual ? 'Planned annual billing. Save €298 compared with 12 monthly payments. Excluding VAT.' : 'Planned monthly billing. Excluding VAT.';
+    if ($('pricing-cta')) $('pricing-cta').href = '/start?interval=' + interval;
   }
-  websiteTabs.forEach((button,index)=>{
-    button.addEventListener('click',()=>selectWebsiteFeature(button));
-    button.addEventListener('keydown',event=>{
-      let next;
-      if(event.key==='ArrowRight')next=(index+1)%websiteTabs.length;
-      if(event.key==='ArrowLeft')next=(index+websiteTabs.length-1)%websiteTabs.length;
-      if(event.key==='Home')next=0;if(event.key==='End')next=websiteTabs.length-1;
-      if(next!==undefined){event.preventDefault();websiteTabs[next].focus();selectWebsiteFeature(websiteTabs[next]);}
+  document.querySelectorAll('[data-billing]').forEach(b => b.addEventListener('click', () => billing(b.dataset.billing)));
+  if (new URLSearchParams(location.search).get('interval') === 'year') billing('year');
+  const steps = [
+    {number:'01 / UNDERSTAND',title:'Start with the risk.',description:'An old account may still have access to a system. Record the risk and connect it to an access management process and a treatment.',items:['Record likelihood and impact','Link a treatment and requirement','Keep the process in view'],type:'RISK REGISTER',record:'Unnecessary system access',copy:'Accounts retain access after responsibilities change.',fields:[['Process','Access management'],['Risk owner','IT owner'],['Treatment','Review access regularly']],link:'Connected to → Access review',guide:'first-workspace'},
+    {number:'02 / ASSIGN',title:'Make the work repeatable.',description:'Create a recurring access review task, assign responsibility and give the next occurrence a due date. The yearly plan keeps the recurring work visible.',items:['Define the task and recurrence','Assign an owner','Work from the yearly plan or My Tasks'],type:'RECURRING TASK',record:'Review system access',copy:'Check current accounts against the people and responsibilities in your team.',fields:[['Owner','IT owner'],['Recurrence','Quarterly'],['Due','30 September · example']],link:'Connected to → Access management',guide:'recurring-work'},
+    {number:'03 / RECORD',title:'Keep evidence with the work.',description:'Complete the occurrence with a record of what was checked. Add relevant evidence to the task instance so it can be reviewed later.',items:['Record the result','Attach relevant evidence','Keep a history of completed occurrences'],type:'TASK INSTANCE',record:'Quarterly access review',copy:'Example result: two outdated accounts identified and removed.',fields:[['Status','Completed'],['Record','Accounts checked'],['Evidence','Access-review.pdf · example']],link:'Connected to → Review system access',guide:'recurring-work'},
+    {number:'04 / IMPROVE',title:'Review. Follow up. Repeat.',description:'Use audit findings, non-conformities and follow-up actions to improve your management system. Keep the evidence and the next action connected.',items:['Record findings during an audit','Create follow-up actions','Review progress with your team'],type:'AUDIT FOLLOW-UP',record:'Improve account offboarding',copy:'Example finding: account closure needs a clearer owner and completion check.',fields:[['Owner','Operations owner'],['Action','Update offboarding checklist'],['Status','In progress']],link:'Connected to → Access management',guide:'audit-preparation'}
+  ];
+  let step = 0;
+  function showStep(index, focus = false) {
+    step = index;
+    const data = steps[index];
+    document.querySelectorAll('[data-tour]').forEach(b => {
+      const selected = Number(b.dataset.tour) === index;
+      b.setAttribute('aria-selected', String(selected)); b.tabIndex = selected ? 0 : -1;
+      if (selected && focus) b.focus();
+    });
+    $('tour-panel').setAttribute('aria-labelledby', 'tour-tab-' + index);
+    for (const [id,value] of Object.entries({'tour-number':data.number,'tour-title':data.title,'tour-description':data.description,'record-type':data.type,'record-title':data.record,'record-copy':data.copy,'record-link':data.link})) $(id).textContent = value;
+    $('tour-list').replaceChildren(...data.items.map(text => {const li=document.createElement('li');li.textContent=text;return li;}));
+    $('record-fields').replaceChildren(...data.fields.map(([label,value]) => {const row=document.createElement('div');const dt=document.createElement('dt');const dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;row.append(dt,dd);return row;}));
+    $('tour-guide').href = '/guides#' + data.guide;
+    $('tour-prev').disabled = index === 0;
+    $('tour-next').textContent = ['Next: task →','Next: evidence →','Next: review →','Start again ↻'][index];
+    $('tour-progress').textContent = `Step ${index+1} of 4`;
+  }
+  document.querySelectorAll('[data-tour]').forEach(b => {
+    b.addEventListener('click', () => showStep(Number(b.dataset.tour)));
+    b.addEventListener('keydown', e => {
+      if (!['ArrowRight','ArrowLeft','Home','End'].includes(e.key)) return;
+      e.preventDefault();showStep(e.key === 'Home' ? 0 : e.key === 'End' ? 3 : (step + (e.key === 'ArrowRight' ? 1 : 3)) % 4, true);
     });
   });
-  document.querySelector('.menu-toggle')?.addEventListener('click',event=>{
-    const open=event.currentTarget.getAttribute('aria-expanded')!=='true';event.currentTarget.setAttribute('aria-expanded',String(open));event.currentTarget.setAttribute('aria-label',open?'Close menu':'Open menu');document.querySelector('.nav nav').classList.toggle('open',open);
+  $('tour-next')?.addEventListener('click', () => showStep((step+1)%4));
+  $('tour-prev')?.addEventListener('click', () => showStep(Math.max(0,step-1)));
+  const form = $('support-form');
+  if (!form) return;
+  const hints = {product:'The guides explain setup, tasks and audit workflows.',technical:'Include the page, steps to reproduce, expected result and what happened.',account:'Include your organization name. Never send passwords or payment details.',privacy:'Describe your security or privacy concern without including secrets or customer records.',feedback:'Describe the problem you want to solve and how it affects your workflow.'};
+  const topic = new URLSearchParams(location.search).get('topic');
+  if (Object.hasOwn(hints, topic)) $('support-topic').value = topic;
+  const updateHint = () => {$('topic-help').textContent=hints[$('support-topic').value];};
+  $('support-topic').addEventListener('change',updateHint);updateHint();
+  let submissionId, previousPayload;
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const body = Object.fromEntries(new FormData(form));
+    const serialized = JSON.stringify(body);
+    if (serialized !== previousPayload) {submissionId=crypto.randomUUID();previousPayload=serialized;}
+    body.submission_id=submissionId;
+    $('support-submit').disabled=true;$('support-submit').textContent='Sending…';$('support-error').hidden=true;
+    try {
+      const csrf = document.cookie.split('; ').find(c=>c.startsWith('csrf_token='));
+      const response = await fetch('/api/support/tickets',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf ? decodeURIComponent(csrf.slice(11)) : ''},body:JSON.stringify(body),signal:AbortSignal.timeout(20000)});
+      const result = await response.json().catch(()=>({}));
+      if (!response.ok) throw new Error(result.error || 'Your message could not be sent. Please try again.');
+      if (!result.reference) throw new Error('No ticket confirmation received. Please try again.');
+      $('ticket-reference').textContent=result.reference;form.hidden=true;$('support-success').hidden=false;$('support-success').focus();
+    } catch(error) {
+      $('support-error').textContent = error.name === 'TimeoutError' ? 'No confirmation received yet. Try again; the same message will not create a duplicate ticket.' : (error.message === 'Failed to fetch' ? 'Connection interrupted. Please try again.' : error.message);
+      $('support-error').hidden=false;
+    } finally {$('support-submit').disabled=false;$('support-submit').textContent='Send message ↗';}
   });
-  document.querySelectorAll('.nav nav a').forEach(link=>link.addEventListener('click',()=>{document.querySelector('.nav nav').classList.remove('open');document.querySelector('.menu-toggle')?.setAttribute('aria-expanded','false');}));
-  let websiteInterval=new URLSearchParams(location.search).get('interval')==='year'?'year':'month';
-  const websitePrices={month:14900,year:149000};
-  function renderWebsitePrice(){
-    document.querySelectorAll('[data-billing]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.billing===websiteInterval)));
-    const amount=document.getElementById('price');if(amount)amount.textContent=new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(websitePrices[websiteInterval]/100);
-    const unit=document.getElementById('price-unit');if(unit)unit.textContent=websiteInterval==='year'?' / year':' / month';
-    const note=document.getElementById('price-fine');if(note)note.textContent=websiteInterval==='year'?'Renews annually. Save €298 compared with 12 monthly payments.':'Renews monthly. Cancel before your next billing period.';
-    const link=document.getElementById('pricing-cta');if(link)link.href=`/start?interval=${websiteInterval}`;
-  }
-  document.querySelectorAll('[data-billing]').forEach(button=>button.addEventListener('click',()=>{websiteInterval=button.dataset.billing;renderWebsitePrice();}));renderWebsitePrice();
-  const year=document.getElementById('copyright-year');if(year)year.textContent=new Date().getFullYear();
-  async function websiteApi(path,body){
-    const csrf=document.cookie.split('; ').find(item=>item.startsWith('csrf_token='))?.slice(11);
-    const response=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(csrf||'')}:{},body:body?JSON.stringify(body):undefined});
-    const data=await response.json();if(!response.ok)throw new Error(data.error||'Something went wrong. Please try again later.');return data;
-  }
-  if(document.body.dataset.website==='start'){
-    const form=document.getElementById('checkout-form'),availability=document.getElementById('availability'),fields=document.getElementById('checkout-fields'),error=document.getElementById('checkout-error');
-    websiteApi('/api/commerce/catalog').then(catalog=>{
-      if(!catalog.enabled){availability.textContent='Online purchasing is coming soon. Explore the platform and license in the meantime. Existing users can sign in as usual.';return;}
-      availability.textContent='Your organization is activated once your payment is confirmed.';
-      document.getElementById('terms-link').href=catalog.termsUrl;document.getElementById('privacy-link').href=catalog.privacyUrl;fields.disabled=false;
-      if(new URLSearchParams(location.search).has('cancelled'))availability.textContent='Your checkout was cancelled. You can continue using the same details.';
-    }).catch(()=>{availability.textContent='Online purchasing is currently unavailable. Please try again later.';});
-    form.addEventListener('submit',async event=>{
-      event.preventDefault();error.hidden=true;const button=document.getElementById('checkout-submit');button.disabled=true;button.textContent='Opening secure checkout…';
-      try{const data=Object.fromEntries(new FormData(form));data.interval=websiteInterval;data.accepted=data.accepted==='on';const result=await websiteApi('/api/commerce/checkout',data);if(result.processing){location.assign('/welcome');return;}const url=new URL(result.url);if(url.protocol!=='https:'||url.hostname!=='checkout.stripe.com')throw Error('The payment page could not be opened safely.');location.assign(url.href);}
-      catch(err){error.textContent=err.message;error.hidden=false;button.disabled=false;button.textContent='Continue to secure checkout ↗';}
-    });
-  }
-  if(document.body.dataset.website==='welcome'){
-    let attempts=0;const title=document.getElementById('welcome-title'),message=document.getElementById('welcome-message'),retry=document.getElementById('check-again');
-    async function checkOrder(){
-      retry.hidden=true;
-      try{const result=await websiteApi('/api/commerce/status');
-        if(result.status==='active'){title.textContent='Your organization is ready.';message.textContent='Your license is active. Sign in with the email and password you chose during checkout.';document.getElementById('welcome-console').hidden=false;return;}
-        if(result.status==='unavailable'){title.textContent='No order found.';message.textContent='Open this page in the browser you used to start your purchase. Already have an account? Sign in to your organization console.';document.getElementById('welcome-console').hidden=false;return;}
-        if(++attempts<20){setTimeout(checkOrder,3000);return;}
-        message.textContent='Your payment has not been confirmed yet. Some payment methods take longer. You do not need to pay again; please check the status later.';
-      }catch(_){message.textContent='We cannot retrieve your status right now. Please try again. You do not need to pay again.';}retry.hidden=false;
-    }
-    retry.addEventListener('click',()=>{attempts=0;checkOrder();});checkOrder();
-  }
-  if(document.body.dataset.website==='billing')document.getElementById('billing-portal')?.addEventListener('click',async event=>{
-    const button=event.currentTarget,message=document.getElementById('billing-message');button.disabled=true;message.hidden=true;
-    try{const result=await websiteApi('/api/commerce/portal',{});const url=new URL(result.url);if(url.protocol!=='https:'||url.hostname!=='billing.stripe.com')throw Error('Unable to open the billing portal safely.');location.assign(url.href);}
-    catch(err){message.textContent=err.message;message.hidden=false;button.disabled=false;}
-  });
-
-}
+})();
