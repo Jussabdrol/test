@@ -8,3 +8,5 @@ coverage/
 .DS_Store
 
 supabase/.temp/
+
+/public/website.js

@@ -77,3 +77,10 @@ verified workflows, changed yearly-response semantics and remaining scheduling
 limitations. Run `npm run verify` after combining planning and security changes.
 Browser verification must use a disposable database with synthetic fixtures;
 never start the normal application against a production database for this purpose.
+
+## Website release
+
+The sales website lives at `/`; the protected application lives at `/console`.
+This website-only release requires no database migration. Online checkout stays
+disabled pending merchant setup and approval of the separately prepared license
+migration. See [website release](website.md).

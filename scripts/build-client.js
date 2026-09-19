@@ -26,6 +26,7 @@ if (require.main === module) {
     }
   } else {
     fs.writeFileSync(output, source);
+    fs.writeFileSync(path.join(root, 'public/website.js'), fs.readFileSync(path.join(sourceDir, 'website.js'), 'utf8'));
     console.log('Built public/app.js from src/client/manifest.json');
   }
 }

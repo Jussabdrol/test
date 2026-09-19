@@ -22,5 +22,6 @@
   "management-reviews.js",
   "init.js",
   "ai/agent.js",
-  "relationships.js"
+  "relationships.js",
+  "website.js"
 ]
