@@ -26,8 +26,12 @@ const { ensureTaskInstances, parseIntParam, isValidDateStr, validateRecurrenceFi
 const { validateWebhookUrl, sendValidatedWebhook, fireWebhooks } = require('./services/webhooks');
 
 const app = express();
+app.set('trust proxy', 1);
+require('./routes/commerce').registerStripeWebhook(app, { express, db, rateLimit });
 require('./middleware/route-handling').installRouteHandling(app, db);
 const { getOrgId, requireOrgContext, requireOpsAccess, requireSuperadmin, requireAdmin, bumpUserSessionVersion, authRateLimiter } = require('./middleware/security').configureSecurity(app, { crypto, db, express, helmet, rateLimit });
+
+require('./routes/commerce').registerCommerceRoutes(app, { db, bcrypt, rateLimit });
 
 app.use('/api', require('./middleware/authorization').authorizeApi(db));
 require('./middleware/resource-limits').installResourceLimits(app);
@@ -35,10 +39,16 @@ require('./middleware/resource-limits').installResourceLimits(app);
 // Serve login page without auth
 app.get('/login', async (req, res) => {
   if (req.session.userId) {
-    return res.redirect('/');
+    return res.redirect('/console');
   }
   res.sendFile(path.join(__dirname, '../../public', 'login.html'));
 });
+
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, '../../public/website/index.html')));
+app.get('/start', (req, res) => res.sendFile(path.join(__dirname, '../../public/website/start.html')));
+app.get('/welcome', (req, res) => res.sendFile(path.join(__dirname, '../../public/website/welcome.html')));
+app.get('/billing', (req, res) => res.sendFile(path.join(__dirname, '../../public/website/billing.html')));
+app.get('/console', (req, res) => res.sendFile(path.join(__dirname, '../../public/index.html')));
 
 app.use(express.static(path.join(__dirname, '../../public')));
 

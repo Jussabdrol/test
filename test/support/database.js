@@ -21,6 +21,13 @@ class TestPool {
 }
 function installTestDatabase() {
   require('pg').Pool = TestPool;
-  return require('../../src/server/database');
+  const db = require('../../src/server/database');
+  const init = db.initDatabase;
+  db.initDatabase = async (...args) => {
+    await init(...args);
+    await db.exec("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; END $$;");
+    await db.exec(require('node:fs').readFileSync(require('node:path').join(__dirname, '../../supabase/migrations/20260919111330_commerce_licensing.sql'), 'utf8'));
+  };
+  return db;
 }
 module.exports = { installTestDatabase, TestPool };

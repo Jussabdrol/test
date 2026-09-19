@@ -260,7 +260,7 @@ function configureSecurity(app, { crypto, db, express, helmet, rateLimit }) {
 
   // Auth middleware for static files - protect everything except login page
   app.use(async (req, res, next) => {
-    const publicPath = ['/login', '/login.html', '/health', '/api/auth/login', '/api/auth/check'].includes(req.path);
+    const publicPath = ['/', '/start', '/welcome', '/brand.css', '/website/index.html', '/website/start.html', '/website/welcome.html', '/website/style.css', '/website.js', '/api/commerce/catalog', '/api/commerce/checkout', '/api/commerce/status', '/login', '/login.html', '/health', '/api/auth/login', '/api/auth/check'].includes(req.path);
     if (req.session.userId) {
       const user = await db.get('SELECT id, role, status, organization_id, permissions, session_version, expiry_date FROM users WHERE id=?', req.session.userId);
       const expired = user?.expiry_date && String(user.expiry_date).slice(0,10) < new Date().toISOString().slice(0,10);
@@ -271,6 +271,15 @@ function configureSecurity(app, { crypto, db, express, helmet, rateLimit }) {
         ? await db.get('SELECT is_active FROM organizations WHERE id=?', user.organization_id) : null;
       if (!valid || (user.role !== 'superadmin' && (!org || !org.is_active))) req.session.destroy();
       else req.authUser = user;
+    }
+    if (req.authUser && req.authUser.role !== 'superadmin' && !publicPath &&
+        !['/billing', '/api/commerce/portal', '/api/auth/logout', '/api/auth/logout-all'].includes(req.path) &&
+        !['/brand.css','/website/style.css','/website.js','/website/favicon.svg'].includes(req.path)) {
+      const license = await db.get('SELECT status, access_until FROM bop_licenses WHERE organization_id=?', req.authUser.organization_id);
+      if (license && (license.status !== 'active' || !license.access_until || new Date(license.access_until).getTime() <= Date.now())) {
+        if (req.path.startsWith('/api/')) return res.status(402).json({ error: 'Your organization license is not active. Ask your administrator to review billing.' });
+        return res.redirect('/billing');
+      }
     }
     if (!publicPath && !req.authUser) {
       if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Authentication required or session revoked' });

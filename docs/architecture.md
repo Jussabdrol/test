@@ -85,3 +85,13 @@ CSS selectors, page markup and public URLs are deliberately stable.
 Frontend fragments are not isolated ES modules yet. The manifest and complete
 bundle linting make dependencies visible while allowing one screen at a time to
 be migrated later. Changes to initialization and globals need browser validation.
+
+## Public website and licensing
+
+`routes/commerce.js` and `services/commerce.js` own public checkout, signed Stripe
+webhooks, billing portal access and license provisioning. The isolated webhook is
+registered before browser security middleware to preserve its raw request body;
+all other commerce routes retain normal CSRF and session validation. Protected
+organization requests check the additive `bop_licenses` ledger regardless of the
+new-checkout flag. See [website and billing](website-and-billing.md) for release,
+merchant onboarding, verification, boundaries and rollback.

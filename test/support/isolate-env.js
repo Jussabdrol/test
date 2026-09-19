@@ -1,6 +1,6 @@
 // Loaded before every test file. Tests must install an in-memory pool explicitly.
 for (const key of Object.keys(process.env)) {
-  if (/^(SUPABASE_|NEXT_PUBLIC_SUPABASE_|DB_|OPENAI_|SESSION_SECRET$)/.test(key)) {
+  if (/^(SUPABASE_|NEXT_PUBLIC_SUPABASE_|DB_|OPENAI_|STRIPE_|BOP_|SESSION_SECRET$)/.test(key)) {
     delete process.env[key];
   }
 }

@@ -32,17 +32,20 @@ after(async()=>{if(server){server.closeAllConnections();await new Promise(resolv
 
 test('browser entry points and locally referenced assets survive source relocation', async () => {
   const anonymous = await fetch(base + '/', { redirect: 'manual' });
-  assert.equal(anonymous.status, 302);
-  assert.equal(anonymous.headers.get('location'), '/login');
+  assert.equal(anonymous.status, 200);
+  assert.match(await anonymous.text(), /Clarity for your organization/);
+  const consolePage = await fetch(base + '/console', { redirect: 'manual' });
+  assert.equal(consolePage.status, 302);
+  assert.equal(consolePage.headers.get('location'), '/login');
   const login = await fetch(base + '/login');
   assert.equal(login.status, 200);
   assert.match(await login.text(), /<html/);
-  const page = await fetch(base + '/', { headers: { cookie } });
+  const page = await fetch(base + '/console', { headers: { cookie } });
   assert.equal(page.status, 200);
   const html = await page.text();
   const assets = [...html.matchAll(/(?:src|href)="([^"#]+\.(?:js|mjs|css))"/g)]
     .map(match => match[1]).filter(url => !url.startsWith('http'));
-  assert.ok(assets.includes('app.js'));
+  assert.ok(assets.includes('/app.js'));
   for (const asset of assets) {
     const result = await fetch(new URL(asset, base + '/'), { headers: { cookie } });
     assert.equal(result.status, 200, asset);

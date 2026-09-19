@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/style.css">
   <!-- Leaflet.js Map Library -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
@@ -17,7 +17,7 @@
   <!-- React Flow – drag-and-drop process flowchart editor -->
   <link rel="stylesheet" href="https://unpkg.com/@xyflow/react@12/dist/style.css">
   <script type="module" src="/flowchart-editor.mjs"></script>
-  <link rel="stylesheet" href="relationships.css">
+  <link rel="stylesheet" href="/relationships.css">
 </head>
 <body>
   <!-- Mobile top bar (hamburger + logo) – visible only on mobile -->
@@ -132,6 +132,8 @@
           <span class="uwm-icon">&#9745;</span>
           <span>My Tasks</span>
         </a>
+        <a class="user-widget-menu-item" href="/billing" role="menuitem"><span class="uwm-icon">▤</span><span>License &amp; billing</span></a>
+        <a class="user-widget-menu-item" href="/" role="menuitem"><span class="uwm-icon">↗</span><span>Bop website</span></a>
         <div class="user-widget-divider"></div>
         <a class="user-widget-menu-item danger" onclick="logout()" role="menuitem">
           <span class="uwm-icon">&#10006;</span>
@@ -2805,6 +2807,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>

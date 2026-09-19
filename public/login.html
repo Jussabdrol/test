@@ -178,7 +178,7 @@
 
         const data = await res.json();
         if (res.ok) {
-          window.location.href = '/';
+          window.location.href = '/console';
         } else {
           showError(data.error || 'Login failed');
         }

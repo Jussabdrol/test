@@ -77,3 +77,11 @@ verified workflows, changed yearly-response semantics and remaining scheduling
 limitations. Run `npm run verify` after combining planning and security changes.
 Browser verification must use a disposable database with synthetic fixtures;
 never start the normal application against a production database for this purpose.
+
+## Website release
+
+The public website now lives at `/`; the authenticated workspace lives at
+`/console`. Apply the additive licensing migration before releasing this version.
+Keep new checkout disabled until the merchant account, legal pages, tax settings
+and real Stripe test-mode acceptance checks are complete. See
+[website and billing](website-and-billing.md).
