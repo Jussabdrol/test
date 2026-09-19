@@ -4,6 +4,7 @@ function registerWebsiteRoutes(app) {
   const pageLimit = rateLimit({ windowMs: 60000, max: 120, standardHeaders: true, legacyHeaders: false, message: 'Too many requests. Please try again shortly.' });
   const site = file => path.join(__dirname, '../../../public/website', file);
   app.get('/', pageLimit, (req, res) => res.sendFile(site('index.html')));
+  for (const page of ['tour', 'guides', 'security', 'contact']) app.get('/' + page, pageLimit, (req, res) => res.sendFile(site(page + '.html')));
   app.get('/start', pageLimit, (req, res) => res.sendFile(site('start.html')));
   app.get('/welcome', pageLimit, (req, res) => res.sendFile(site('welcome.html')));
   app.get('/billing', pageLimit, (req, res) => res.sendFile(site('billing.html')));
