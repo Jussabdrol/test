@@ -72,4 +72,4 @@ async function relatedItems(db, orgId, type, id) {
 function registerRelationships(app,db,requireOrgContext) {
   app.get('/api/relations/:type/:id',requireOrgContext,async(req,res)=>res.json(await relatedItems(db,req.orgId,req.params.type,req.params.id)));
 }
-module.exports={ relatedItems,registerRelationships };
+module.exports={ relationships,relatedItems,registerRelationships };

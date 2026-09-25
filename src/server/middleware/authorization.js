@@ -14,8 +14,8 @@ const routeModules = {
   tasks: ['ops', 'org'], actions: ['ops', 'org'], 'task-instances': ['ops', 'org'],
   'plan-bundles': ['ops', 'org'], dashboard: ['ops', 'org'], yearly: ['ops', 'org'], meta: MODULES,
   mission: ['org'], kpis: ['org'], architecture: ['org'], 'use-cases': ['org'], suppliers: ['org'],
-  'management-reviews': ['org'], 'my-tasks': ['ops', 'org'], 'org-users': MODULES,
-  documents: MODULES, agent: MODULES, 'entity-types': MODULES, 'compliance-overview': MODULES,
+  'management-reviews': ['org'], 'org-users': MODULES,
+  documents: MODULES, agent: MODULES, 'entity-types': MODULES, 'compliance-overview': MODULES, sphere: ['org'],
 };
 function permissions(user) {
   try { const values = JSON.parse(user?.permissions || '[]'); return Array.isArray(values) ? values.filter(p => MODULES.includes(p)) : []; }
@@ -35,7 +35,8 @@ function authorizeApi(db) {
     if (!user) return res.status(401).json({ error: 'Authentication required' });
     req.canAccessEntity = type => canAccessEntity(user, type);
     const checkType = type => { if (!req.canAccessEntity(type)) throw new HttpError(403, 'Access to this module is not permitted'); };
-    if (['linkable', 'linked-record', 'relations'].includes(resource)) checkType(path[2]);
+    if (resource === 'my-tasks' && req.method === 'GET') { /* Personal landing page; the handler filters every module. */ }
+    else if (['linkable', 'linked-record', 'relations'].includes(resource)) checkType(path[2]);
     else if (resource === 'cross-links') {
       if (req.method === 'POST') { checkType(req.body.source_type); checkType(req.body.target_type); }
       else if (req.method === 'DELETE') {

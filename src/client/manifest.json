@@ -17,6 +17,8 @@
   "soa.js",
   "ai/use-cases.js",
   "organization/mission.js",
+  "organization/sphere-model.js",
+  "organization/sphere.js",
   "organization/architecture.js",
   "documents.js",
   "account.js",

@@ -568,50 +568,50 @@ function registerOrganizationRoutes(app, { db, fireWebhooks, requireOrgContext }
     const ph = matches.map(() => '?').join(', '); // reusable placeholders
 
     // --- Recurring Tasks ---
-    const tasks = await db.prepare(
+    const tasks = req.canAccessEntity('task') ? await db.prepare(
       `SELECT * FROM tasks WHERE organization_id = ? AND is_active = 1 AND assignee IN (${ph}) ORDER BY next_due ASC`
-    ).all(req.orgId, ...matches);
+    ).all(req.orgId, ...matches) : [];
 
     // --- Follow-up Actions ---
-    const actions = await db.prepare(
+    const actions = req.canAccessEntity('action') ? await db.prepare(
       `SELECT a.*, COALESCE(t.title, 'Standalone') AS task_title
-       FROM actions a LEFT JOIN tasks t ON a.task_id = t.id
+       FROM actions a LEFT JOIN tasks t ON a.task_id = t.id AND t.organization_id = a.organization_id
        WHERE a.organization_id = ? AND a.assignee IN (${ph}) AND a.status NOT IN ('resolved','closed')
        ORDER BY a.due_date ASC NULLS LAST, a.created_at DESC`
-    ).all(req.orgId, ...matches);
+    ).all(req.orgId, ...matches) : [];
 
     // --- Non-Conformities ---
-    const ncrs = await db.prepare(
+    const ncrs = req.canAccessEntity('ncr') ? await db.prepare(
       `SELECT n.*, a.title AS audit_title FROM non_conformities n
-       JOIN audits a ON n.audit_id = a.id
+       JOIN audits a ON n.audit_id = a.id AND a.organization_id = n.organization_id
        WHERE n.organization_id = ? AND n.responsible IN (${ph}) AND n.status NOT IN ('closed','verified')
        ORDER BY n.due_date ASC NULLS LAST, n.created_at DESC`
-    ).all(req.orgId, ...matches);
+    ).all(req.orgId, ...matches) : [];
 
     // --- Audits (as lead auditor or auditee, not yet completed) ---
-    const audits = await db.prepare(
+    const audits = req.canAccessEntity('audit') ? await db.prepare(
       `SELECT * FROM audits
        WHERE organization_id = ? AND status != 'completed'
          AND (lead_auditor IN (${ph}) OR auditee IN (${ph}))
        ORDER BY planned_date ASC NULLS LAST`
-    ).all(req.orgId, ...matches, ...matches); // matches twice for both IN clauses
+    ).all(req.orgId, ...matches, ...matches) : []; // matches twice for both IN clauses
 
     // --- Risk Treatments (open/in-progress) ---
-    const treatments = await db.prepare(
+    const treatments = req.canAccessEntity('treatment') ? await db.prepare(
       `SELECT rt.*, r.title AS risk_title FROM risk_treatments rt
-       JOIN risks r ON rt.risk_id = r.id
+       JOIN risks r ON rt.risk_id = r.id AND r.organization_id = rt.organization_id
        WHERE r.organization_id = ? AND rt.responsible IN (${ph}) AND rt.status IN ('planned','in_progress')
        ORDER BY rt.due_date ASC NULLS LAST, rt.created_at DESC`
-    ).all(req.orgId, ...matches);
+    ).all(req.orgId, ...matches) : [];
 
     // --- Management Review Outputs (open/in-progress, assigned to user or their roles) ---
-    const mgmtOutputs = await db.prepare(
+    const mgmtOutputs = req.canAccessEntity('review_output') ? await db.prepare(
       `SELECT o.*, mr.title AS review_title, mr.review_date
        FROM management_review_outputs o
-       JOIN management_reviews mr ON o.review_id = mr.id
+       JOIN management_reviews mr ON o.review_id = mr.id AND mr.organization_id = o.organization_id
        WHERE o.organization_id = ? AND o.assigned_to IN (${ph}) AND o.status IN ('open','in_progress')
        ORDER BY o.due_date ASC NULLS LAST, o.created_at DESC`
-    ).all(req.orgId, ...matches);
+    ).all(req.orgId, ...matches) : [];
 
     res.json({
       tasks, actions, ncrs, audits, treatments, mgmtOutputs,
