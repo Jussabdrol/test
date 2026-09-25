@@ -107,17 +107,6 @@ function applyModulePermissions() {
       moduleEl.style.display = 'none';
     }
   });
-
-  // If the current default view (mission-control) is not accessible,
-  // navigate to the first available view
-  const currentDefault = 'mission-control';
-  const defaultModuleAllowed = allowedModules.has('org-planning');
-  if (!defaultModuleAllowed) {
-    const firstVisibleLink = document.querySelector('.nav-module:not([style*="display: none"]) .nav-link');
-    if (firstVisibleLink) {
-      switchView(firstVisibleLink.dataset.view);
-    }
-  }
 }
 
 async function logout() {
@@ -465,6 +454,8 @@ document.querySelectorAll('.nav-module').forEach(moduleEl => {
   });
 });
 
+VIEW_TO_MODULE['mission-control'] = 'org-planning';
+
 // Retain the permission boundary for existing task shortcuts and relationship links.
 VIEW_TO_MODULE.tasks = VIEW_TO_MODULE.yearly;
 VIEW_TO_MODULE['task-log'] = VIEW_TO_MODULE.actions = VIEW_TO_MODULE['operational-tasks'];
@@ -513,6 +504,7 @@ async function switchView(view) {
   }
   closeControlTicket();
   currentView = view;
+  if (view !== 'mission-control') suspendSphere();
   updateExperienceChrome();
   closeExperienceDossier('risk', false);
   closeExperienceDossier('document', false);

@@ -47,6 +47,7 @@ Paths below are relative to `src/server/routes/` and `src/client/` respectively.
 | Requirements | `requirements.js` | `requirements.js` |
 | Threats, risks, treatment, SoA | `threats.js`, `risks.js`, `treatments.js`, `soa.js` | Matching domain files |
 | Mission, KPIs, architecture, AI use cases | `organization.js` | `organization/`, `ai/use-cases.js` |
+| Sphere relationship map | `sphere.js` (registered by `links.js`) | `organization/sphere-model.js`, `organization/sphere.js`, `public/sphere.css` |
 | Suppliers | `suppliers.js` | `organization/architecture.js` |
 | Documents and conversion | `documents.js` | `documents.js` |
 | Cross-links and attention overview | `links.js`, `relationships.js`, `overview.js` | `relationships.js`, `core.js` |
@@ -56,6 +57,7 @@ Paths below are relative to `src/server/routes/` and `src/client/` respectively.
 
 ## Shared services
 
+- `sphere.js`: permission-scoped relationship snapshots and record details; see [Sphere](sphere.md).
 - `entities.js`: fixed entity registry, tenant-aware lookup and link helpers.
 - `recurrence.js`: calendar recurrence and date validation.
 - `planning.js`: transactional, gap-filling task instance generation, input helpers and process events.

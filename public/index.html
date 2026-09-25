@@ -19,6 +19,7 @@
   <script type="module" src="/flowchart-editor.mjs"></script>
   <link rel="stylesheet" href="/relationships.css">
   <link rel="stylesheet" href="/experience.css">
+  <link rel="stylesheet" href="/sphere.css">
 </head>
 <body class="bop-console">
   <!-- Mobile top bar (hamburger + logo) – visible only on mobile -->
@@ -680,11 +681,12 @@
           <div><p class="experience-subtitle">A clear view of what needs your attention.</p></div>
         </div>
         <div class="experience-tabs" role="tablist" aria-label="Mission Control sections" data-experience-tabs="mission">
-          <button type="button" id="mission-tab-overview" role="tab" aria-selected="true" aria-controls="mission-panel-overview" onclick="selectExperienceTab('mission','overview')">Overview</button>
+          <button type="button" id="mission-tab-sphere" role="tab" aria-selected="true" aria-controls="mission-panel-sphere" onclick="selectExperienceTab('mission','sphere')">Sphere</button>
+          <button type="button" id="mission-tab-overview" role="tab" aria-selected="false" tabindex="-1" aria-controls="mission-panel-overview" onclick="selectExperienceTab('mission','overview')">Overview</button>
           <button type="button" id="mission-tab-organization" role="tab" aria-selected="false" tabindex="-1" aria-controls="mission-panel-organization" onclick="selectExperienceTab('mission','organization')">Organization</button>
           <button type="button" id="mission-tab-process" role="tab" aria-selected="false" tabindex="-1" aria-controls="mission-panel-process" onclick="selectExperienceTab('mission','process')">Process KPIs</button>
         </div>
-        <div id="mission-panel-overview" role="tabpanel" aria-labelledby="mission-tab-overview">
+        <div id="mission-panel-overview" role="tabpanel" aria-labelledby="mission-tab-overview" hidden>
           <div id="experience-mission-metrics" class="experience-metrics"></div>
           <section id="attention-overview" aria-label="Work that needs attention"></section>
           <h3 class="section-title">Operational overview</h3>
@@ -697,6 +699,45 @@
         <div id="mission-panel-process" role="tabpanel" aria-labelledby="mission-tab-process" hidden>
           <h3 class="section-title">Process KPIs</h3>
           <div id="custom-kpi-list"></div>
+        </div>
+        <div id="mission-panel-sphere" role="tabpanel" aria-labelledby="mission-tab-sphere">
+          <section class="sphere-workspace" aria-label="Organization relationships">
+            <div class="sphere-tools">
+              <details id="sphere-options" class="sphere-options">
+                <summary aria-label="Search and map options" title="Search and map options"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg></summary>
+                <div class="sphere-options-panel">
+                  <div class="sphere-filters">
+                    <label class="sphere-search">Find a record<input id="sphere-search" type="search" placeholder="Search records…" oninput="changeSphereFilters()"></label>
+                    <label>Record type<select id="sphere-type" onchange="changeSphereFilters()"><option value="">All types</option></select></label>
+                    <label>Process network<select id="sphere-process" onchange="changeSphereFilters()"><option value="">All processes</option></select></label>
+                    <button type="button" class="sphere-clear" onclick="resetSphereFilters()">Clear filters</button>
+                  </div>
+                  <div id="sphere-legend" class="sphere-legend" aria-label="Record type legend"></div>
+                  <div class="sphere-map-controls" role="group" aria-label="Map controls"><button type="button" onclick="rotateSphere(-.22,0)" aria-label="Rotate left">←</button><button type="button" onclick="rotateSphere(.22,0)" aria-label="Rotate right">→</button><button type="button" onclick="zoomSphere(1.2)" aria-label="Zoom in">+</button><button type="button" onclick="zoomSphere(1/1.2)" aria-label="Zoom out">−</button><button type="button" onclick="loadSphere(true)">Refresh</button></div>
+                  <p id="sphere-counts" role="status">Loading relationships…</p>
+                  <p id="sphere-stage-caption"></p>
+                  <p id="sphere-map-help">Drag to rotate. Pinch to zoom. Select a point for details. Keyboard: arrows to rotate, + / − to zoom, Home to reset. Use the record list to select with a keyboard.</p>
+                  <p class="sphere-explanation">Lines show saved relationships. Position does not imply ownership.</p>
+                </div>
+              </details>
+              <div class="sphere-view-switch" role="group" aria-label="Relationship view"><button type="button" id="sphere-map-mode" title="3D map" aria-label="3D map" aria-pressed="true" onclick="setSphereMode('map')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg></button><button type="button" id="sphere-list-mode" title="Record list" aria-label="Record list" aria-pressed="false" onclick="setSphereMode('list')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M3 6h1M3 12h1M3 18h1"/></svg></button></div>
+              <button type="button" id="sphere-rotation" class="sphere-reset" onclick="toggleSphereRotation()" aria-label="Pause rotation" title="Pause rotation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg></button>
+              <button type="button" class="sphere-reset" onclick="resetSphereCamera()" aria-label="Reset map position" title="Reset view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10a8 8 0 1 1 2 8M4 4v6h6"/></svg></button>
+            </div>
+            <div id="sphere-message" role="status" hidden></div>
+            <div id="sphere-scope" class="sphere-scope" hidden></div>
+            <div class="sphere-body">
+              <div class="sphere-explorer">
+                <div id="sphere-stage" class="sphere-stage">
+                  <canvas id="sphere-canvas" tabindex="0" role="img" aria-label="Interactive three-dimensional relationship map. Use the record list to select records with a keyboard." aria-describedby="sphere-map-help"></canvas>
+                  <div id="sphere-tooltip" class="sphere-tooltip" hidden></div>
+                  <div id="sphere-stage-empty" class="sphere-stage-empty" hidden></div>
+                </div>
+                <div id="sphere-record-list" class="sphere-record-list" hidden></div>
+              </div>
+              <aside id="sphere-detail" class="sphere-detail" aria-label="Selected record details" hidden></aside>
+            </div>
+          </section>
         </div>
       </section>
 

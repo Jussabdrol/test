@@ -1,0 +1,118 @@
+/* Mission Control / Sphere. The canvas is a view of saved relationships. */
+.sphere-workspace { --sphere-ink:#19322d; --sphere-muted:#687874; }
+.sphere-filters { display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap; }
+.sphere-filters label { display:flex; flex-direction:column; gap:7px; color:var(--text-muted); font-size:12px; flex:1 1 170px; min-width:0; }
+.sphere-filters .sphere-search { flex:2 1 240px; }
+.sphere-filters input,.sphere-filters select { width:100%; min-width:0; height:39px; padding:8px 11px; border:1px solid var(--border); border-radius:6px; color:var(--text); background:#fff; font:inherit; font-size:13px; }
+.sphere-clear { padding:10px 0; border:0; background:transparent; color:var(--text-muted); font:inherit; font-size:12px; cursor:pointer; }
+.sphere-clear:hover { color:var(--experience-accent); }
+.sphere-summary { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:20px 0 13px; font-size:12px; color:var(--text-muted); }
+.sphere-view-switch { display:flex; background:#e9eeec; border-radius:7px; padding:3px; gap:3px; flex-shrink:0; }
+.sphere-view-switch button { border:0; background:transparent; color:#64736e; font:500 12px/1.5 system-ui,sans-serif; padding:6px 12px; border-radius:5px; cursor:pointer; }
+.sphere-view-switch button[aria-pressed=true] { background:#fff; color:#183c31; box-shadow:0 1px 3px #213c3114; }
+#sphere-message { display:flex; gap:15px; align-items:center; padding:16px 18px; margin:12px 0; background:#edf4f1; border-radius:8px; color:#31594d; font-size:13px; }
+.sphere-scope { display:flex; gap:14px; flex-wrap:wrap; align-items:center; background:#eaf2ee; color:#345f50; border-radius:7px; padding:12px 15px; margin-bottom:12px; font-size:12px; }
+.sphere-scope strong { font-weight:600; overflow-wrap:anywhere; }
+.sphere-scope > span { flex:1; }
+.sphere-scope select,.sphere-scope button { font:inherit; color:inherit; border:1px solid #cadbd2; background:#f8fbf9; border-radius:4px; padding:6px 9px; cursor:pointer; }
+.sphere-body { display:grid; grid-template-columns:minmax(0,1fr) 310px; gap:18px; align-items:start; }
+.sphere-explorer { min-width:0; }
+.sphere-stage { position:relative; height:570px; border-radius:12px; overflow:hidden; background:radial-gradient(ellipse at 48% 46%,#1e3e44 0%,#112b36 45%,#0c1c29 100%); box-shadow:inset 0 0 0 1px #ffffff0c; }
+#sphere-canvas { display:block; width:100%; height:100%; touch-action:none; cursor:grab; border-radius:12px; }
+#sphere-canvas:active { cursor:grabbing; }
+.bop-console #sphere-canvas:focus-visible { outline:2px solid #8fe1c9; outline-offset:-4px; }
+.sphere-tooltip { position:absolute; pointer-events:none; z-index:3; width:max-content; max-width:210px; border:1px solid #587079; background:#152e39f2; color:#f1f9f7; border-radius:6px; padding:9px 12px; font-size:12px; line-height:1.5; box-shadow:0 5px 20px #0003; overflow-wrap:anywhere; }
+.sphere-map-controls { position:absolute; bottom:48px; left:50%; transform:translateX(-50%); display:flex; gap:2px; padding:4px; border:1px solid #739a9c30; border-radius:8px; background:#132d38e8; white-space:nowrap; }
+.sphere-map-controls button { background:transparent; color:#c6dcd9; border:0; border-radius:5px; padding:7px 10px; font:500 12px/1.5 system-ui,sans-serif; cursor:pointer; min-width:32px; }
+.sphere-map-controls button:hover { background:#ffffff12; color:#fff; }
+#sphere-map-help { position:absolute; bottom:16px; left:12px; right:12px; text-align:center; color:#91aaad; font-size:10px; line-height:1.5; pointer-events:none; margin:0; }
+.sphere-stage-empty { position:absolute; top:42%; left:24px; right:24px; text-align:center; color:#d8e9e5; }
+.sphere-stage-empty h3 { font-size:18px; margin-bottom:10px; font-weight:500; }
+.sphere-stage-empty p { font-size:12px; line-height:1.8; max-width:300px; margin:0 auto; color:#adc3c2; }
+.sphere-stage-empty button { margin-top:16px; border:1px solid #54716e; border-radius:5px; background:#27423f; color:#e1f7ee; padding:8px 13px; cursor:pointer; }
+.sphere-legend { display:flex; gap:6px 16px; flex-wrap:wrap; margin:15px 0 10px; }
+.sphere-legend button { display:flex; align-items:center; gap:7px; background:none; border:0; font:500 11px/1.5 system-ui,sans-serif; color:#5d6d68; padding:4px 0; cursor:pointer; }
+.sphere-legend button:hover,.sphere-legend button[aria-pressed=true] { text-decoration:underline; text-underline-offset:4px; color:#203c31; }
+.sphere-workspace i { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--sphere-color); box-shadow:inset 0 0 0 1px #1c39321c; flex-shrink:0; }
+.sphere-explanation { font-size:11px; line-height:1.7; color:#788681; margin:0 0 15px; max-width:610px; }
+.sphere-detail { background:#fff; border:1px solid var(--border); border-radius:12px; padding:21px; min-height:570px; max-height:790px; overflow-y:auto; scroll-margin-top:76px; }
+.sphere-detail header { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:16px; }
+.sphere-type-label { display:flex; align-items:center; gap:7px; color:#74847c; font-size:10px; }
+.sphere-close { border:0; background:#f1f5f3; color:#63786e; font-size:20px; border-radius:5px; width:28px; height:28px; cursor:pointer; flex-shrink:0; }
+.sphere-detail > h3 { font-size:20px; line-height:1.4; letter-spacing:-.4px; font-weight:550; color:#253c35; overflow-wrap:anywhere; margin:0 0 12px; }
+.sphere-record-meta { display:flex; flex-wrap:wrap; gap:12px; color:#718078; font-size:10px; margin-bottom:16px; }
+.sphere-record-meta span:first-child { color:#326453; }
+.sphere-description { font-size:12px; color:#64756c; line-height:1.85; white-space:pre-wrap; overflow-wrap:anywhere; max-height:220px; overflow:auto; }
+.sphere-muted { color:#7a867f; font-size:12px; line-height:1.8; }
+.sphere-detail-actions { display:flex; gap:8px; flex-wrap:wrap; padding:18px 0 24px; }
+.sphere-detail-actions .btn { font-size:11px; padding:8px 11px; }
+.sphere-connections-heading { display:flex; justify-content:space-between; align-items:center; border-top:1px solid #e6eee9; padding-top:20px; margin-bottom:8px; color:#718078; font-size:11px; }
+.sphere-connections-heading h4 { color:#344b40; font-size:12px; font-weight:600; margin:0; }
+.sphere-connections { padding:0; list-style:none; margin:0; }
+.sphere-connections li { padding:14px 0; border-bottom:1px solid #edf1ee; }
+.sphere-connections button { display:block; width:100%; border:0; padding:0; background:none; text-align:left; cursor:pointer; }
+.sphere-connections strong { display:flex; justify-content:space-between; gap:10px; font-size:12px; line-height:1.6; font-weight:500; color:#2b4b3b; margin-top:7px; overflow-wrap:anywhere; }
+.sphere-connections button:hover strong { text-decoration:underline; text-underline-offset:3px; }
+.sphere-connections .sphere-connection-group { padding:18px 0 0; border:0; }
+.sphere-connection-group h5 { display:flex; gap:8px; align-items:center; margin:0; font-size:11px; font-weight:500; color:#657d70; }
+.sphere-connection-group h5 span { margin-left:auto; font-weight:400; }
+.sphere-connections li > p { font-size:11px; color:#667e71; margin:7px 0 0; }
+.sphere-connections small { display:block; font-size:10px; color:#8a978f; margin-top:4px; }
+.sphere-connections details { font-size:11px; line-height:1.7; color:#74867c; margin-top:8px; overflow-wrap:anywhere; }
+.sphere-connections summary { cursor:pointer; }
+.sphere-record-list { min-height:570px; max-height:790px; overflow:auto; border:1px solid var(--border); background:#fff; border-radius:12px; }
+.sphere-list-heading { display:flex; justify-content:space-between; padding:20px; align-items:center; border-bottom:1px solid var(--border); color:#7b8982; font-size:12px; }
+.sphere-list-heading h3 { font-size:14px; font-weight:500; color:#344b40; margin:0; }
+.sphere-record-list ul { list-style:none; padding:0; margin:0; }
+.sphere-record-list li > button { display:flex; align-items:center; gap:12px; width:100%; background:none; border:0; border-bottom:1px solid #edf1ee; text-align:left; padding:15px 20px; cursor:pointer; }
+.sphere-record-list li > button:hover,.sphere-record-list li > button[aria-pressed=true] { background:#f0f6f3; }
+.sphere-record-list strong { font-size:12px; color:#2d4438; font-weight:500; display:block; line-height:1.6; overflow-wrap:anywhere; }
+.sphere-record-list small { display:block; font-size:10px; color:#7c8981; margin-top:4px; }
+.sphere-list-degree { margin-left:auto; text-align:right; flex-shrink:0; color:#506f60; font-size:13px; }
+.sphere-list-degree small { font-size:9px; }
+.sphere-pagination { display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:11px; color:#7c8981; padding:16px 10px; }
+.sphere-pagination button { font:inherit; background:#f5f8f6; border:1px solid #e2ebe5; border-radius:4px; color:#486451; padding:7px 9px; cursor:pointer; }
+.sphere-pagination button:disabled { opacity:.4; cursor:default; }
+.sphere-list-empty { padding:25px; color:#78867e; font-size:13px; }
+
+/* The default view contains only the sphere and a compact utility bar. */
+#view-mission-control:has(#mission-tab-sphere[aria-selected="true"]) > .view-header { display:none; }
+.sphere-workspace { position:relative; }
+.sphere-body { display:block; position:relative; }
+.sphere-stage { height:clamp(520px,calc(100dvh - 200px),900px); }
+.sphere-tools { position:absolute; top:16px; right:16px; z-index:5; display:flex; align-items:center; gap:6px; }
+.sphere-tools svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; display:block; }
+.sphere-options summary,.sphere-reset,.sphere-view-switch button { display:flex; align-items:center; justify-content:center; width:36px; height:36px; padding:0; border:0; border-radius:7px; color:#b6cece; cursor:pointer; background:#18343ee8; }
+.sphere-options summary { list-style:none; }
+.sphere-options summary::-webkit-details-marker { display:none; }
+.sphere-options[open] summary,.sphere-reset:hover,.sphere-options summary:hover { color:#fff; background:#2e4b53; }
+.sphere-options.has-filters summary { box-shadow:inset 0 -3px #66ddc1; }
+.sphere-view-switch { padding:0; background:#18343ee8; gap:0; border-radius:7px; }
+.sphere-view-switch button { background:transparent; }
+.sphere-view-switch button[aria-pressed=true] { color:#e3fff4; background:#2d4b51; box-shadow:none; }
+.sphere-options-panel { position:absolute; top:44px; right:0; width:320px; max-width:calc(100vw - 70px); max-height:65vh; overflow:auto; background:#fff; border:1px solid var(--border); border-radius:10px; padding:20px; box-shadow:0 12px 40px #0003; }
+.sphere-options-panel .sphere-filters { flex-direction:column; align-items:stretch; gap:12px; }
+.sphere-options-panel .sphere-filters label { flex:initial; }
+.sphere-options-panel p { color:#687874; font-size:11px; line-height:1.7; margin:12px 0 0; }
+#sphere-map-help { position:static; text-align:left; pointer-events:auto; }
+.sphere-map-controls { position:static; transform:none; margin-top:16px; background:#eef3f0; justify-content:space-between; }
+.sphere-map-controls button { color:#355349; }
+.sphere-detail { position:absolute; right:14px; top:64px; width:310px; min-height:0; max-height:calc(100% - 78px); background:#fffffff5; box-shadow:0 8px 32px #0002; z-index:3; }
+.sphere-record-list { padding-top:54px; height:clamp(520px,calc(100dvh - 200px),900px); min-height:0; }
+#sphere-message { position:absolute; top:72px; left:20px; right:20px; z-index:2; margin:0; }
+.sphere-scope { margin:0; padding:10px 16px; padding-right:180px; }
+@media(min-width:768px){.sphere-body:has(.sphere-detail:not([hidden])) .sphere-record-list{padding-right:338px;}}
+@media(max-width:767px) {
+ .sphere-stage { height:calc(100dvh - 220px); min-height:420px; }
+ .sphere-tools { top:12px; right:12px; }
+ .sphere-options summary,.sphere-reset,.sphere-view-switch button { width:40px; height:40px; }
+ .sphere-options-panel { top:48px; }
+ .sphere-filters input,.sphere-filters select { font-size:16px; min-height:44px; }
+ .sphere-detail { position:relative; width:100%; top:auto; right:auto; max-height:none; margin-top:12px; padding:20px; }
+ .sphere-record-list { min-height:420px; max-height:70vh; }
+ .sphere-record-list li>button { padding:14px; }
+ .sphere-list-degree small { display:none; }
+ .sphere-scope { padding:12px; padding-top:62px; }
+}
+@media(pointer:coarse){.sphere-workspace button,.sphere-options summary{min-height:44px;min-width:44px;}.sphere-legend button{min-height:32px;}}
+@media print{.sphere-stage,.sphere-tools,.sphere-detail-actions{display:none;} .sphere-record-list{display:block!important;max-height:none;height:auto;} .sphere-detail{position:static;width:auto;max-height:none;}}

@@ -5,6 +5,12 @@ const archTypeLabels = { role: 'Roles & Responsibilities', process: 'Processes',
 
 function switchArchTab(type) {
   currentArchTab = type;
+  updateArchitectureChrome(type);
+
+  return loadArchitecture();
+}
+
+function updateArchitectureChrome(type) {
   document.querySelectorAll('#arch-tabs [role="tab"]').forEach(tab => {
     const selected = tab.id === `architecture-tab-${type}`;
     tab.classList.toggle('active', selected);
@@ -28,16 +34,6 @@ function switchArchTab(type) {
     }
   }
 
-  if (type === 'supplier') {
-    // Hide the org-chart / map sections when on suppliers
-    const oc = document.getElementById('org-chart-section');
-    const fm = document.getElementById('facilities-map-section');
-    if (oc) oc.style.display = 'none';
-    if (fm) fm.style.display = 'none';
-    loadSuppliers();
-  } else {
-    loadArchitecture();
-  }
 }
 
 let orgChartZoom = 1;
@@ -45,6 +41,14 @@ let _archLoadId = 0;           // counter-based stale-result guard (belt)
 let _archAbortCtrl = null;     // AbortController for in-flight requests (suspenders)
 
 async function loadArchitecture() {
+  updateArchitectureChrome(currentArchTab);
+  if (currentArchTab === 'supplier') {
+    _archAbortCtrl?.abort(); _archLoadId++;
+    for (const id of ['org-chart-section','facilities-map-section']) {
+      const el=document.getElementById(id); if(el)el.style.display='none';
+    }
+    return loadSuppliers();
+  }
   // Cancel any previous in-flight load immediately, freeing browser connection slots.
   // This is the primary fix for slow/corporate networks: old requests no longer
   // hold TCP connections that would queue-block the new tab's requests.

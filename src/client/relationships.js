@@ -27,7 +27,7 @@ async function openRelatedRecord(type, id) {
   try {
     const dialog = document.getElementById('relationship-inspector');
     if (dialog?.open) dialog.close();
-    if (['role','process','system','asset','facility','ai_model','ai_dataset'].includes(type)) currentArchTab=type;
+    if (['role','process','system','asset','facility','ai_model','ai_dataset','supplier'].includes(type)) currentArchTab=type;
     await switchView(view);
     const opener = {
       risk:openRiskDossier, task:openTaskDetailModal, instance:openControlTicket, action:openActionModal, audit:openAuditModal,

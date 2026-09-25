@@ -5,6 +5,7 @@ function registerLinksRoutes(app, { db, requireOrgContext }) {
   require('../services/entities').registerLinkRoutes(app, db, requireOrgContext);
   require('../routes/relationships').registerRelationships(app, db, requireOrgContext);
   require('../routes/overview').registerOverview(app, db, requireOrgContext);
+  require('../routes/sphere').registerSphere(app, db, requireOrgContext);
 
   // Cross-linking references endpoint (legacy for document control)
   app.get('/api/link-references', requireOrgContext, async (req, res) => {

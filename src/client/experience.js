@@ -64,6 +64,7 @@ function updateExperienceChrome() {
 }
 
 function selectExperienceTab(group, name) {
+  if (group === 'mission' && name !== 'sphere') suspendSphere();
   document.querySelectorAll(`[data-experience-tabs="${group}"] [role="tab"]`).forEach(button => {
     const selected = button.id === `${group}-tab-${name}`;
     button.setAttribute('aria-selected', String(selected));
@@ -71,6 +72,10 @@ function selectExperienceTab(group, name) {
     const panel = document.getElementById(button.getAttribute('aria-controls'));
     if (panel) panel.hidden = !selected;
   });
+  if (group === 'mission') {
+    if (name === 'sphere') loadSphere();
+    else loadMissionControl().catch(error => showToast('Could not load Mission Control: ' + error.message, 'error'));
+  }
 }
 
 function experienceStatus(status) {

@@ -1,6 +1,7 @@
 
 // --- Organizational Planning: Mission Control ---
 async function loadMissionControl() {
+  if (document.getElementById('mission-tab-sphere')?.getAttribute('aria-selected') === 'true') return loadSphere();
   await renderAttentionOverview();
   const mission = await api('/api/mission');
   const missionSection = document.getElementById('mission-section');
@@ -78,9 +79,17 @@ async function loadMissionControl() {
     </div>`;
 
   // Auto KPIs
-  const d = await api('/api/kpis/auto');
-  if (d.error) { console.warn('KPI auto load failed:', d.error); return; }
-  renderMissionExperience(d);
+  let modulePermissions=[];
+  try { modulePermissions=JSON.parse(currentUser?.permissions || '[]'); } catch {}
+  const canReadAllMetrics=isSuperadmin||['admin','org_admin'].includes(currentUser?.role)||['org','ops','risk','audit'].every(module=>modulePermissions.includes(module));
+  if(canReadAllMetrics){
+    const d=await api('/api/kpis/auto');
+    renderMissionExperience(d);
+  }else{
+    document.getElementById('experience-mission-metrics').replaceChildren();
+    document.getElementById('organization-kpi-grid').replaceChildren();
+    document.getElementById('auto-kpi-grid').innerHTML='<p class="empty-state">Cross-module metrics require access to all modules.</p>';
+  }
 
   // Process KPIs (grouped by process)
   const kpis = await api('/api/kpis');
