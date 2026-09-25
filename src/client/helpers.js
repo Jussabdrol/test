@@ -56,8 +56,7 @@ async function setOpPlanContext(type, id) {
   // Reload the current view with the new context applied
   if (currentView === 'tasks') loadTasks();
   else if (currentView === 'yearly') applyPlanningFilters();
-  else if (currentView === 'actions') loadActions();
-  else if (currentView === 'task-log') loadTaskLog();
+  else if (currentView === 'operational-tasks') reloadWorkPanel();
 }
 
 // ─── Bundle modal ─────────────────────────────────────────────────────────────

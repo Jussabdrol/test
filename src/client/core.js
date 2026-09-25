@@ -32,9 +32,7 @@ let currentView = 'mission-control';
 let allTasks = [];
 let meta = { assignees: [], categories: [] };
 let filters = { active: 'true', assignee: '', priority: '', search: '' };
-let actionFilters = { status: '', priority: '', assignee: '' };
 let yearlyFilters = { status: '' };
-let taskLogSearch = '';
 let yearlyYear = new Date().getFullYear();
 let lastInstanceContext = null; // { instance_id, task_id, scheduled_date }
 let yearlyData = null; // cached yearly API data
@@ -44,7 +42,7 @@ let isSuperadmin = false;
 let activeOrg = null; // { id, name, slug } when superadmin is inside an org
 
 // --- Operational Planning process context ---
-const OP_PLAN_VIEWS = ['tasks', 'yearly', 'actions', 'task-log'];
+const OP_PLAN_VIEWS = ['yearly', 'operational-tasks'];
 let opPlanContext = { type: 'all', id: null }; // type: 'all' | 'process' | 'bundle'
 let opPlanProcesses = []; // cached list of processes from org_architecture
 let opPlanBundles = [];   // cached list of plan_bundles
@@ -469,6 +467,7 @@ document.querySelectorAll('.nav-module').forEach(moduleEl => {
 
 // Retain the permission boundary for existing task shortcuts and relationship links.
 VIEW_TO_MODULE.tasks = VIEW_TO_MODULE.yearly;
+VIEW_TO_MODULE['task-log'] = VIEW_TO_MODULE.actions = VIEW_TO_MODULE['operational-tasks'];
 
 // Reverse lookup: module → permission key
 const MODULE_TO_PERM = Object.fromEntries(
@@ -505,7 +504,14 @@ function showViewLoadingState(viewId) {
 
 async function switchView(view) {
   if (!hasPermissionForView(view)) return;
+  workSourceRequest++;
   if (view === 'tasks') { yearlyTab = 'series'; view = 'yearly'; }
+  if (view === 'task-log' || view === 'actions') {
+    workTab = view === 'actions' ? 'followups' : 'tickets';
+    workActionSource = null;
+    view = 'operational-tasks';
+  }
+  closeControlTicket();
   currentView = view;
   updateExperienceChrome();
   closeExperienceDossier('risk', false);
@@ -540,7 +546,7 @@ async function switchView(view) {
   if (ctxBar) {
     if (OP_PLAN_VIEWS.includes(view)) {
       ctxBar.classList.remove('hidden');
-      const slot = document.getElementById(view === 'yearly' ? 'yearly-context-slot' : 'op-plan-context-home');
+      const slot = document.getElementById(view === 'yearly' ? 'yearly-context-slot' : 'work-context-slot');
       slot.appendChild(ctxBar);
       await loadOpPlanContextData();
       if (currentView !== view) return;
@@ -552,8 +558,7 @@ async function switchView(view) {
 
   if (view === 'tasks') await loadTasks();
   else if (view === 'yearly') await loadYearlyPlan();
-  else if (view === 'actions') await loadActions();
-  else if (view === 'task-log') await loadTaskLog();
+  else if (view === 'operational-tasks') await loadOperationalTasks();
   else if (view === 'audit-plan') await loadAuditPlan();
   else if (view === 'audit-execute') await loadAuditExecuteView();
   else if (view === 'audit-ncrs') await loadNcrs();

@@ -83,121 +83,32 @@ function toggleTaskLinks(taskId) {
   renderCrossLinks('task', taskId, `task-links-${taskId}`);
 }
 
-// --- Task Log (scheduled instances of each task series) ---
-let taskLogTab = 'pending'; // 'pending' | 'completed' | 'skipped'
-let taskLogFilters = { task_id: '', completed_by: '' };
-
-function switchTaskLogTab(tab) {
-  taskLogTab = tab;
-  if (tab !== 'completed') taskLogFilters.completed_by = '';
-  document.querySelectorAll('#task-log-tabs .tab-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === tab);
-  });
-  loadTaskLog();
-}
-
-async function loadTaskLog() {
-  const params = new URLSearchParams({ status: taskLogTab, limit: '500' });
-  if (taskLogFilters.task_id) params.set('task_id', taskLogFilters.task_id);
-  if (taskLogTab === 'completed' && taskLogFilters.completed_by) params.set('completed_by', taskLogFilters.completed_by);
-  // Process context filter (matches on task_category like the rest of Operational
-  // Planning). Applied server-side so the row limit can't truncate context rows;
-  // names containing commas fall back to the client-side filter below.
-  const ctxNames = getOpPlanContextNames();
-  if (ctxNames && ctxNames.length && ctxNames.every(n => !n.includes(','))) {
-    params.set('categories', ctxNames.join(','));
-  }
-  let instances;
-  try {
-    instances = await api(`/api/task-instances?${params}`);
-  } catch (err) {
-    document.getElementById('task-log-table-body').innerHTML =
-      `<tr><td colspan="7" class="empty-state" style="color:var(--danger)">Failed to load task log: ${esc(err.message)}</td></tr>`;
-    return;
-  }
-  if (ctxNames) instances = instances.filter(i => ctxNames.includes(i.task_category));
-
-  if (taskLogSearch) {
-    const q = taskLogSearch.toLowerCase();
-    instances = instances.filter(i =>
-      (i.task_title || '').toLowerCase().includes(q) ||
-      (i.completed_by || '').toLowerCase().includes(q) ||
-      (i.notes || '').toLowerCase().includes(q)
-    );
-  }
-
-  renderTaskLogFilters(instances);
-  renderTaskLogSummary(instances);
-  renderTaskLogTable(instances);
-}
-
-// At-a-glance counts for the open tab: the first question this view answers
-// is "what needs attention right now?"
-function renderTaskLogSummary(instances) {
-  const el = document.getElementById('task-log-summary');
-  if (!el) return;
-  if (taskLogTab !== 'pending' || instances.length === 0) { el.innerHTML = ''; return; }
-  const today = new Date().toISOString().split('T')[0];
-  const overdue = instances.filter(i => i.scheduled_date < today).length;
-  const dueToday = instances.filter(i => i.scheduled_date === today).length;
-  const upcoming = instances.length - overdue - dueToday;
-  el.innerHTML = `<div class="task-log-summary-chips">
-    <span class="tl-chip${overdue > 0 ? ' tl-chip-overdue' : ''}">${overdue} overdue</span>
-    <span class="tl-chip${dueToday > 0 ? ' tl-chip-today' : ''}">${dueToday} due today</span>
-    <span class="tl-chip">${upcoming} upcoming</span>
-  </div>`;
-}
-
-function renderTaskLogFilters(instances) {
-  const bar = document.getElementById('task-log-filters-bar');
-  const taskOptions = (allTasks.length ? allTasks : [...new Map(instances.map(i => [i.task_id, { id: i.task_id, title: i.task_title }])).values()])
-    .map(t => `<option value="${t.id}" ${taskLogFilters.task_id == t.id ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
-  const completers = [...new Set(instances.map(i => i.completed_by).filter(Boolean))];
-  bar.innerHTML = `
-    <input type="search" placeholder="Search task log..." value="${esc(taskLogSearch)}"
-      style="min-width:180px" oninput="taskLogSearch=this.value;loadTaskLog()">
-    <select onchange="taskLogFilters.task_id=this.value;loadTaskLog()">
-      <option value="">All Series</option>
-      ${taskOptions}
-    </select>
-    ${taskLogTab === 'completed' ? `
-      <select onchange="taskLogFilters.completed_by=this.value;loadTaskLog()">
-        <option value="">All Completers</option>
-        ${completers.map(n => `<option value="${esc(n)}" ${taskLogFilters.completed_by === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}
-      </select>` : ''}
-  `;
-}
-
+// --- Individual control tickets ---
 function renderTaskLogTable(instances) {
   const tbody = document.getElementById('task-log-table-body');
-  const statusCol = document.getElementById('task-log-status-col');
-  if (statusCol) statusCol.textContent = taskLogTab === 'pending' ? 'Status' : taskLogTab === 'completed' ? 'Completed' : 'Skipped';
   if (instances.length === 0) {
-    const emptyMsg = taskLogTab === 'pending' ? 'No open tasks in the log. Nice work!' :
-                     taskLogTab === 'completed' ? 'No completed tasks yet.' :
-                     'No skipped tasks.';
-    tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${emptyMsg}</td></tr>`;
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No control tickets match this selection.<br>Try another status, series or date range.<br><br><button type="button" class="btn btn-secondary btn-sm" onclick="resetWorkFilters()">Reset filters</button></td></tr>';
     return;
   }
   const today = new Date().toISOString().split('T')[0];
   tbody.innerHTML = instances.map(i => {
-    const overdue = taskLogTab === 'pending' && i.scheduled_date < today;
+    const overdue = i.status === 'pending' && i.scheduled_date < today;
     const scheduledCell = overdue
       ? `<span style="color:var(--danger);font-weight:600">${esc(i.scheduled_date || '')}</span>`
       : esc(i.scheduled_date || '');
     let statusCell = '';
-    if (taskLogTab === 'pending') {
+    if (i.status === 'pending') {
       statusCell = overdue
         ? '<span class="badge badge-overdue">Overdue</span>'
         : (i.scheduled_date === today ? '<span class="badge badge-due-today">Due Today</span>' : '<span class="badge badge-upcoming">Upcoming</span>');
-    } else if (taskLogTab === 'completed') {
+    } else if (i.status === 'completed') {
       const who = i.completed_by ? ` by ${esc(i.completed_by)}` : '';
-      statusCell = `${i.completed_at ? new Date(i.completed_at).toLocaleDateString() : ''}${who}`;
+      statusCell = `<span class="badge badge-low">Completed</span><br>${i.completed_at ? new Date(i.completed_at).toLocaleDateString() : ''}${who}`;
     } else {
-      statusCell = i.notes ? esc(i.notes) : '<span style="color:var(--text-muted)">—</span>';
+      statusCell = '<span class="badge badge-inactive">Skipped</span>' + (i.notes ? `<br><small>${esc(i.notes)}</small>` : '');
     }
     const menuItems = [];
-    if (taskLogTab === 'pending') {
+    if (i.status === 'pending') {
       menuItems.push({ label: '&#10003; Complete', onclick: `openInstanceCompleteModal(${i.id})`, cls: 'success' });
       menuItems.push({ label: '&#8856; Skip', onclick: `skipInstance(${i.id})` });
     } else {
@@ -212,21 +123,21 @@ function renderTaskLogTable(instances) {
     const indicators = [];
     if (i.action_count > 0) {
       const openCount = i.open_action_count || 0;
-      indicators.push(`<span class="ti-indicator${openCount > 0 ? ' ti-indicator-open' : ''}"
+      indicators.push(`<button type="button" class="ti-indicator${openCount > 0 ? ' ti-indicator-open' : ''}"
         title="${openCount} open of ${i.action_count} follow-up${i.action_count > 1 ? 's' : ''} — click to view"
-        onclick="event.stopPropagation();viewInstanceActions(${i.id},${i.task_id})">&#9889; ${openCount > 0 ? openCount + ' open' : i.action_count}</span>`);
+        onclick="event.stopPropagation();viewInstanceActions(${i.id},${i.task_id})">&#9889; ${openCount > 0 ? openCount + ' open' : i.action_count} follow-ups</button>`);
     }
     if (evidenceFiles.length > 0) {
-      indicators.push(`<span class="ti-indicator" title="${esc(evidenceFiles.map(f => f.name).join(', '))}">&#128206; ${evidenceFiles.length}</span>`);
+      indicators.push(`<button type="button" class="ti-indicator" onclick="openControlTicket(${i.id})" title="View evidence">&#128206; ${evidenceFiles.length} files</button>`);
     }
     return `<tr>
-      <td><strong style="cursor:pointer;color:var(--primary)" onclick="openTaskDetailModal(${i.task_id})">${esc(i.task_title)}</strong>${indicators.length ? `<span class="ti-indicators">${indicators.join('')}</span>` : ''}</td>
+      <td><button type="button" class="experience-text-button" onclick="openControlTicket(${i.id})">${esc(i.task_title)}</button><div class="work-ticket-reference">Ticket #${i.id}</div>${indicators.length ? `<span class="ti-indicators">${indicators.join('')}</span>` : ''}</td>
       <td>${i.task_category && i.task_category !== 'General' ? `<span class="op-ctx-process-tag">${esc(i.task_category)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
       <td>${esc(i.task_assignee || '-')}</td>
       <td><span class="badge badge-${(i.task_priority || 'Medium').toLowerCase()}">${esc(i.task_priority || 'Medium')}</span></td>
       <td>${scheduledCell}</td>
       <td>${statusCell}</td>
-      <td>${actionMenu(menuItems)}</td>
+      <td><div class="work-inline-actions">${i.status === 'pending' ? `<button type="button" class="btn btn-primary btn-sm" onclick="openInstanceCompleteModal(${i.id})">Complete</button>` : ''}${actionMenu(menuItems)}</div></td>
     </tr>`;
   }).join('');
 }
@@ -243,6 +154,7 @@ async function openInstanceCompleteModal(instanceId) {
   document.getElementById('complete-modal-title').textContent = `${inst.task_title} — scheduled ${inst.scheduled_date}`;
   // Override submit behaviour for instance-direct completion
   lastInstanceContext = { instance_id: instanceId, task_id: inst.task_id, scheduled_date: inst.scheduled_date };
+  delete document.getElementById('complete-form').dataset.expectedDue;
   document.getElementById('complete-form').dataset.instanceId = instanceId;
   document.getElementById('complete-modal').classList.remove('hidden');
 }
@@ -257,7 +169,8 @@ async function skipInstance(instanceId) {
     showToast('Could not skip: ' + err.message, 'error');
   }
   invalidateYearlyCache();
-  loadTaskLog();
+  closeControlTicket();
+  refreshCurrentView();
 }
 
 async function reopenInstance(instanceId) {
@@ -269,19 +182,23 @@ async function reopenInstance(instanceId) {
     showToast('Could not reopen: ' + err.message, 'error');
   }
   invalidateYearlyCache();
-  loadTaskLog();
+  closeControlTicket();
+  refreshCurrentView();
 }
 
-async function createFollowUpForInstance(instanceId, taskId) {
-  lastInstanceContext = { instance_id: instanceId, task_id: taskId, scheduled_date: null };
-  await openActionModal();
-  // openActionModal clears the instance/task id; restore them after the modal is set up.
-  document.getElementById('action-instance-id').value = instanceId;
-  document.getElementById('action-task-id').value = taskId;
-  const task = await api(`/api/tasks/${taskId}`);
-  const process = opPlanProcesses.find(p => p.name === task.category);
-  if (process) document.getElementById('action-process-id').value = process.id;
-  document.getElementById('action-assignee').value = task.assignee || '';
+async function createFollowUpForInstance(instanceId) {
+  try {
+    const instance = await api(`/api/task-instances/${instanceId}`);
+    await openActionModal();
+    document.getElementById('action-instance-id').value = instance.id;
+    document.getElementById('action-task-id').value = instance.task_id;
+    const source = document.getElementById('action-source-ticket');
+    source.hidden = false;
+    source.textContent = `Control ticket #${instance.id} · ${instance.task_title} · Scheduled ${instance.scheduled_date}`;
+    const process = opPlanProcesses.find(p => p.name === instance.task_category);
+    document.getElementById('action-process-id').value = process ? process.id : '';
+    document.getElementById('action-assignee').value = instance.task_assignee || '';
+  } catch (error) { showToast('Could not prepare follow-up: '+error.message,'error'); }
 }
 
 // --- Task Detail Modal (read-only timeline view) ---

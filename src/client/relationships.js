@@ -30,7 +30,7 @@ async function openRelatedRecord(type, id) {
     if (['role','process','system','asset','facility','ai_model','ai_dataset'].includes(type)) currentArchTab=type;
     await switchView(view);
     const opener = {
-      risk:openRiskDossier, task:openTaskDetailModal, action:openActionModal, audit:openAuditModal,
+      risk:openRiskDossier, task:openTaskDetailModal, instance:openControlTicket, action:openActionModal, audit:openAuditModal,
       ncr:openNcrModal, treatment:openTreatmentModal, requirement:openRequirementModal,
       document:openDocumentDossier, supplier:openSupplierModal, kpi:openKpiModal,
       management_review:openMgmtReviewModal, usecase:openUseCaseModal, ai_usecase:openUseCaseModal,

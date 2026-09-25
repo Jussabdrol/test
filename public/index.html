@@ -87,8 +87,7 @@
           </a>
           <ul class="module-submenu">
             <li><a href="#" class="nav-link" data-view="yearly">Yearly Plan</a></li>
-            <li><a href="#" class="nav-link" data-view="task-log">Task Log</a></li>
-            <li><a href="#" class="nav-link" data-view="actions">Follow-ups</a></li>
+            <li><a href="#" class="nav-link" data-view="operational-tasks">Tasks</a></li>
           </ul>
         </li>
         <li class="nav-module">
@@ -272,33 +271,59 @@
       <!-- Operational Planning process context bar (shared across the 4 op-plan views) -->
       <div id="op-plan-context-home"><div id="op-plan-context-bar" class="hidden"></div></div>
 
-      <!-- Task Log View (generated instances of each series) -->
-      <section id="view-task-log" class="view hidden">
+      <!-- Individual control tickets and their follow-up actions -->
+      <section id="view-operational-tasks" class="view hidden">
         <div class="view-header">
-          <h2>Task Log</h2>
-          <div class="tab-switch" id="task-log-tabs">
-            <button class="tab-btn active" data-tab="pending" onclick="switchTaskLogTab('pending')">Open</button>
-            <button class="tab-btn" data-tab="completed" onclick="switchTaskLogTab('completed')">Completed</button>
-            <button class="tab-btn" data-tab="skipped" onclick="switchTaskLogTab('skipped')">Skipped</button>
+          <div><h2>Tasks</h2><p class="planning-intro">Run your scheduled controls and follow through on what they uncover.</p></div>
+          <div class="work-header-actions">
+            <button type="button" class="btn btn-secondary" onclick="switchView('yearly')">Yearly Plan</button>
+            <button type="button" class="btn btn-primary" id="work-new-action" onclick="newWorkspaceAction()" hidden>+ New follow-up</button>
           </div>
         </div>
-        <div class="filters" id="task-log-filters-bar"></div>
-        <div id="task-log-summary"></div>
-        <div class="task-table-wrap">
-          <table class="task-table" id="task-log-table">
-            <thead>
-              <tr>
-                <th>Task</th>
-                <th>Category</th>
-                <th>Role</th>
-                <th>Priority</th>
-                <th>Scheduled</th>
-                <th id="task-log-status-col">Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
+        <div class="experience-tabs" role="tablist" aria-label="Task workspace" data-experience-tabs="work">
+          <button type="button" id="work-tab-tickets" role="tab" aria-selected="true" aria-controls="work-panel-tickets" onclick="selectWorkTab('tickets')">Control tickets</button>
+          <button type="button" id="work-tab-followups" role="tab" aria-selected="false" tabindex="-1" aria-controls="work-panel-followups" onclick="selectWorkTab('followups')">Follow-up actions</button>
+        </div>
+        <div class="planning-filter-panel" id="work-filter-panel">
+          <div id="work-context-slot"></div>
+          <div class="filters planning-filters" id="work-filters"></div>
+          <p class="planning-filter-hint">Search, process scope, series, role and priority apply to both tabs.</p>
+        </div>
+        <div id="work-panel-tickets" role="tabpanel" aria-labelledby="work-tab-tickets">
+          <div class="planning-panel-toolbar work-controls">
+            <label class="planning-field">Ticket status
+              <select id="work-ticket-status" onchange="workTicketStatus=this.value;loadWorkTickets()">
+                <option value="pending">Open tickets</option><option value="overdue">Overdue</option><option value="today">Due today</option><option value="upcoming">Upcoming</option>
+                <option value="completed">Completed</option><option value="skipped">Skipped</option><option value="">All statuses</option>
+              </select>
+            </label>
+            <label class="planning-field">Scheduled from<input type="date" id="work-from" onchange="workDates.from=this.value;loadWorkTickets()"></label>
+            <label class="planning-field">Scheduled to<input type="date" id="work-to" onchange="workDates.to=this.value;loadWorkTickets()"></label>
+            <label class="planning-field" id="work-completer-field" hidden>Completed by<input type="search" id="work-completer" placeholder="Name…" oninput="workCompletedBy=this.value;renderWorkTickets()"></label>
+          </div>
+          <p class="planning-filter-hint">Each ticket is one scheduled control. Upcoming tickets cover the next two weeks; choose an end date to look further ahead.</p>
+          <div id="task-log-summary" role="status" aria-live="polite"></div>
+          <div id="work-ticket-notice" class="work-notice" role="status" hidden></div>
+          <div class="task-table-wrap"><table class="task-table" id="task-log-table">
+            <thead><tr><th>Control ticket</th><th>Process</th><th>Role</th><th>Priority</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody id="task-log-table-body"></tbody>
-          </table>
+          </table></div>
+        </div>
+        <div id="work-panel-followups" role="tabpanel" aria-labelledby="work-tab-followups" hidden>
+          <div id="work-source-banner" class="work-source-banner" hidden></div>
+          <div class="planning-panel-toolbar">
+            <p class="planning-intro">Track the actions raised by your controls, from assignment to resolution.</p>
+            <label class="planning-field">Action status
+              <select id="work-action-status" onchange="workActionStatus=this.value;renderWorkActions()">
+                <option value="active">Open &amp; in progress</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option><option value="">All statuses</option>
+              </select>
+            </label>
+          </div>
+          <p id="work-action-summary" class="planning-filter-hint" role="status" aria-live="polite"></p>
+          <div class="task-table-wrap"><table class="task-table" id="action-table">
+            <thead><tr><th>Follow-up action</th><th>Process</th><th>Source control</th><th>Role</th><th>Priority</th><th>Due date</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="action-table-body"></tbody>
+          </table></div>
         </div>
       </section>
 
@@ -365,32 +390,6 @@
           </div>
           <p id="yearly-series-count" class="planning-filter-hint" role="status"></p>
           <div id="task-table-body" class="task-mgmt-cards"></div>
-        </div>
-      </section>
-
-      <!-- Follow-ups View -->
-      <section id="view-actions" class="view hidden">
-        <div class="view-header">
-          <h2>Follow-ups</h2>
-          <button class="btn btn-primary" onclick="openActionModal()">+ New Follow-up</button>
-        </div>
-        <div class="filters" id="action-filters-bar"></div>
-        <div class="task-table-wrap">
-          <table class="task-table" id="action-table">
-            <thead>
-              <tr>
-                <th>Follow-up</th>
-                <th>Process</th>
-                <th>Source Task</th>
-                <th>Role</th>
-                <th>Priority</th>
-                <th>Due Date</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="action-table-body"></tbody>
-          </table>
         </div>
       </section>
 
@@ -1634,6 +1633,7 @@
         <input type="hidden" id="action-id">
         <input type="hidden" id="action-instance-id">
         <input type="hidden" id="action-task-id">
+        <div id="action-source-ticket" class="work-source-banner" hidden></div>
         <div class="form-group">
           <label for="action-title">Action Title *</label>
           <input type="text" id="action-title" required placeholder="What needs to be done?">
@@ -1692,6 +1692,11 @@
     </div>
   </div>
 
+  <dialog id="control-ticket-dialog" class="control-ticket-dialog" aria-labelledby="control-ticket-title" oncancel="ticketDetailRequest++" onclick="if(event.target===this)closeControlTicket()">
+    <header><h2 id="control-ticket-title">Control ticket</h2><button type="button" class="modal-close" aria-label="Close control ticket" onclick="closeControlTicket()">&times;</button></header>
+    <div id="control-ticket-content" aria-live="polite"></div>
+  </dialog>
+
   <!-- Post-completion action prompt -->
   <div id="post-complete-modal" class="modal hidden">
     <div class="modal-overlay" onclick="closePostCompleteModal()"></div>
@@ -1743,6 +1748,7 @@
         </div>
       </div>
       <div class="form-actions">
+        <button type="button" class="btn btn-secondary" onclick="viewCompletedTicketActions()">View follow-up actions</button>
         <button class="btn btn-secondary" onclick="closePostCompleteModal()">Done</button>
       </div>
     </div>

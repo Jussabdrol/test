@@ -1,67 +1,12 @@
 
 // --- Actions View ---
-async function loadActions() {
-  const params = new URLSearchParams();
-  if (actionFilters.status) params.set('status', actionFilters.status);
-  if (opPlanContext.type === 'process' && opPlanContext.id) params.set('process_id', opPlanContext.id);
-  // Bundle context: filter by process_id membership server-side
-  let bundleIds = null;
-  if (opPlanContext.type === 'bundle') {
-    const bundle = opPlanBundles.find(b => b.id === opPlanContext.id);
-    bundleIds = bundle ? JSON.parse(bundle.process_ids || '[]') : [];
-    if (bundleIds.length) params.set('process_ids', bundleIds.join(','));
-  }
-
-  let actions, roles;
-  try {
-    [actions, roles] = await Promise.all([
-      api(`/api/actions?${params}`),
-      api('/api/architecture?arch_type=role'),
-    ]);
-  } catch (err) {
-    document.getElementById('action-table-body').innerHTML =
-      `<tr><td colspan="8" class="empty-state" style="color:var(--danger)">Failed to load follow-ups: ${esc(err.message)}</td></tr>`;
-    return;
-  }
-  renderActionFilters(roles);
-  // An empty bundle contains no processes, so it can't have any actions
-  let filtered = bundleIds && bundleIds.length === 0 ? [] : actions;
-  if (actionFilters.priority) filtered = filtered.filter(a => a.priority === actionFilters.priority);
-  if (actionFilters.assignee) filtered = filtered.filter(a => a.assignee === actionFilters.assignee);
-  renderActionTable(filtered);
-}
-
-function renderActionFilters(roles = []) {
-  const bar = document.getElementById('action-filters-bar');
-  bar.innerHTML = `
-    <select onchange="actionFilters.status=this.value;loadActions()">
-      <option value="" ${actionFilters.status===''?'selected':''}>All Statuses</option>
-      <option value="open" ${actionFilters.status==='open'?'selected':''}>Open</option>
-      <option value="in_progress" ${actionFilters.status==='in_progress'?'selected':''}>In Progress</option>
-      <option value="resolved" ${actionFilters.status==='resolved'?'selected':''}>Resolved</option>
-      <option value="closed" ${actionFilters.status==='closed'?'selected':''}>Closed</option>
-    </select>
-    <select onchange="actionFilters.priority=this.value;loadActions()">
-      <option value="">All Priorities</option>
-      <option value="Low" ${actionFilters.priority==='Low'?'selected':''}>Low</option>
-      <option value="Medium" ${actionFilters.priority==='Medium'?'selected':''}>Medium</option>
-      <option value="High" ${actionFilters.priority==='High'?'selected':''}>High</option>
-      <option value="Critical" ${actionFilters.priority==='Critical'?'selected':''}>Critical</option>
-    </select>
-    <select onchange="actionFilters.assignee=this.value;loadActions()">
-      <option value="">All Assignees</option>
-      ${roles.map(r => `<option value="${esc(r.name)}" ${actionFilters.assignee===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}
-    </select>
-  `;
-}
-
 function renderActionTable(actions) {
   const tbody = document.getElementById('action-table-body');
   const today = new Date().toISOString().split('T')[0];
   if (actions.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-state">No follow-ups found for the current filters or process context.<br>
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state">No follow-up actions match this selection.<br>
       Follow-ups track corrective work coming out of your recurring checks.<br><br>
-      <button class="btn btn-primary btn-sm" onclick="openActionModal()">+ New Follow-up</button></td></tr>`;
+      <button class="btn btn-primary btn-sm" onclick="newWorkspaceAction()">+ New Follow-up</button></td></tr>`;
     return;
   }
   tbody.innerHTML = actions.map(a => {
@@ -69,20 +14,20 @@ function renderActionTable(actions) {
     const statusClass = a.status === 'open' ? 'badge-high' : a.status === 'in_progress' ? 'badge-medium' : 'badge-low';
     const statusLabel = a.status.replace('_', ' ');
     return `<tr>
-      <td><strong style="cursor:pointer;color:var(--primary)" onclick="openActionModal(${a.id})">${esc(a.title)}</strong>${a.description ? '<br><small style="color:var(--text-muted);cursor:pointer" onclick="openActionModal(' + a.id + ')">' + esc(a.description) + '</small>' : ''}</td>
+      <td><button type="button" class="experience-text-button" onclick="openActionModal(${a.id})">${esc(a.title)}</button>${a.description ? '<br><small style="color:var(--text-muted);cursor:pointer" onclick="openActionModal(' + a.id + ')">' + esc(a.description) + '</small>' : ''}</td>
       <td>${a.process_name ? `<span class="op-ctx-process-tag">${esc(a.process_name)}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
-      <td>${esc(a.task_title)}</td>
+      <td>${a.instance_id ? `<button type="button" class="experience-text-button" onclick="openControlTicket(${a.instance_id})">${esc(a.task_title)}</button><div class="work-ticket-reference">Ticket #${a.instance_id} · ${esc(a.instance_scheduled_date || '')}</div>` : a.task_id ? `<button type="button" class="experience-text-button" onclick="openTaskDetailModal(${a.task_id})">${esc(a.task_title)}</button><div class="work-ticket-reference">Series-level action</div>` : '<span class="work-ticket-reference">Standalone action</span>'}</td>
       <td>${esc(a.assignee || '-')}</td>
       <td><span class="badge badge-${a.priority.toLowerCase()}">${a.priority}</span></td>
       <td>${a.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + esc(a.due_date) + '</span>' : esc(a.due_date)) : '-'}</td>
       <td><span class="badge ${statusClass}">${statusLabel}</span></td>
-      <td>${actionMenu([
+      <td><div class="work-inline-actions">${a.status === 'open' ? `<button type="button" class="btn btn-primary btn-sm" onclick="updateActionStatus(${a.id},'in_progress')">Start</button>` : a.status === 'in_progress' ? `<button type="button" class="btn btn-primary btn-sm" onclick="resolveAction(${a.id})">Resolve</button>` : ''}${actionMenu([
         ...(a.status === 'open' ? [{ label: '&#9654; Start', onclick: `updateActionStatus(${a.id},'in_progress')`, cls: 'primary' }] : []),
         ...(a.status === 'in_progress' ? [{ label: '&#10003; Resolve', onclick: `resolveAction(${a.id})`, cls: 'success' }] : []),
         { label: '&#9998; Edit', onclick: `openActionModal(${a.id})` },
         'sep',
         { label: '&#128465; Delete', onclick: `deleteAction(${a.id})`, cls: 'danger' },
-      ])}</td>
+      ])}</div></td>
     </tr>`;
   }).join('');
 }
@@ -131,6 +76,7 @@ async function openActionModal(id) {
   const modal = document.getElementById('action-modal');
   const form = document.getElementById('action-form');
   form.reset();
+  document.getElementById('action-source-ticket').hidden = true;
   document.getElementById('action-id').value = '';
   document.getElementById('action-instance-id').value = '';
   document.getElementById('action-task-id').value = '';
@@ -160,6 +106,11 @@ async function openActionModal(id) {
     document.getElementById('action-id').value = action.id;
     document.getElementById('action-instance-id').value = action.instance_id || '';
     document.getElementById('action-task-id').value = action.task_id;
+    if (action.instance_id) {
+      const source = document.getElementById('action-source-ticket');
+      source.textContent = `Linked to control ticket #${action.instance_id} · ${action.task_title || ''}`;
+      source.hidden = false;
+    }
     document.getElementById('action-title').value = action.title;
     document.getElementById('action-description').value = action.description;
     document.getElementById('action-assignee').value = action.assignee;
@@ -246,40 +197,4 @@ async function saveAction(e) {
   closeActionModal();
   showToast(id ? 'Follow-up updated' : 'Follow-up created');
   refreshCurrentView();
-}
-
-// View follow-ups for a specific task-instance
-async function viewInstanceActions(instanceId, taskId) {
-  lastInstanceContext = { instance_id: instanceId, task_id: taskId, scheduled_date: null };
-  const actions = await api(`/api/actions?instance_id=${instanceId}`);
-
-  const titleEl = document.getElementById('post-complete-title');
-  if (titleEl) titleEl.textContent = 'Follow-ups for this occurrence';
-
-  // Show this occurrence's evidence alongside its follow-ups
-  const evidenceWrap = document.getElementById('post-complete-evidence-wrap');
-  if (evidenceWrap) {
-    evidenceWrap.style.display = 'block';
-    activeInstanceId = instanceId;
-    refreshInstanceEvidence(instanceId, 'post-complete-evidence-list');
-  }
-
-  const list = document.getElementById('post-complete-actions-list');
-  if (actions.length === 0) {
-    list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;font-style:italic;padding:4px 0">No follow-ups for this occurrence yet — add one below.</div>';
-  } else list.innerHTML = actions.map(a => {
-    const statusClass = a.status === 'open' ? 'badge-high' : a.status === 'in_progress' ? 'badge-medium' : 'badge-low';
-    return `<div class="task-card" style="margin-bottom:8px">
-      <div class="task-card-info">
-        <h4>${esc(a.title)}</h4>
-        <div class="meta">${esc(a.assignee || 'Unassigned')} &middot; <span class="badge badge-${a.priority.toLowerCase()}">${esc(a.priority)}</span> &middot; <span class="badge ${statusClass}">${esc(a.status.replace('_',' '))}</span>${a.due_date ? ' &middot; Due: ' + esc(a.due_date) : ''}</div>
-      </div>
-    </div>`;
-  }).join('');
-
-  document.getElementById('quick-action-title').value = '';
-  document.getElementById('quick-action-assignee').value = '';
-  document.getElementById('quick-action-priority').value = 'Medium';
-  document.getElementById('quick-action-due').value = '';
-  document.getElementById('post-complete-modal').classList.remove('hidden');
 }
