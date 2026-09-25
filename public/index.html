@@ -87,7 +87,6 @@
           </a>
           <ul class="module-submenu">
             <li><a href="#" class="nav-link" data-view="yearly">Yearly Plan</a></li>
-            <li><a href="#" class="nav-link" data-view="tasks">Manage Series</a></li>
             <li><a href="#" class="nav-link" data-view="task-log">Task Log</a></li>
             <li><a href="#" class="nav-link" data-view="actions">Follow-ups</a></li>
           </ul>
@@ -271,19 +270,7 @@
       </section>
 
       <!-- Operational Planning process context bar (shared across the 4 op-plan views) -->
-      <div id="op-plan-context-bar" class="hidden"></div>
-
-      <!-- Manage Series View (defines recurring task series) -->
-      <section id="view-tasks" class="view hidden">
-        <div class="view-header">
-          <h2>Manage Series</h2>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-primary" onclick="openTaskModal()">+ New Series</button>
-          </div>
-        </div>
-        <div class="filters" id="filters-bar"></div>
-        <div id="task-table-body" class="task-mgmt-cards"></div>
-      </section>
+      <div id="op-plan-context-home"><div id="op-plan-context-bar" class="hidden"></div></div>
 
       <!-- Task Log View (generated instances of each series) -->
       <section id="view-task-log" class="view hidden">
@@ -318,20 +305,38 @@
       <!-- Yearly Plan View -->
       <section id="view-yearly" class="view hidden">
         <div class="view-header">
-          <h2 id="yearly-title">Yearly Plan 2026</h2>
+          <div><h2 id="yearly-title">Yearly Plan</h2><p class="planning-intro">Plan your recurring work and manage the series behind it.</p></div>
           <div style="display:flex;gap:8px;align-items:center">
-            <button class="btn btn-secondary btn-sm" onclick="changeYear(-1)">&larr; Prev</button>
-            <button class="btn btn-secondary btn-sm" onclick="changeYear(0)">Today</button>
-            <button class="btn btn-secondary btn-sm" onclick="changeYear(1)">Next &rarr;</button>
             <button class="btn btn-primary" onclick="openTaskModal()">+ New Series</button>
           </div>
         </div>
 
-        <!-- Yearly summary stats -->
-        <div class="yearly-summary" id="yearly-summary"></div>
-
-        <!-- Yearly filters (applied to Coming Up & Overdue section) -->
-        <div class="filters" id="yearly-filters-bar" style="margin-top:8px;margin-bottom:0"></div>
+        <div class="experience-tabs" role="tablist" aria-label="Yearly plan" data-experience-tabs="yearly">
+          <button type="button" id="yearly-tab-timeline" role="tab" aria-selected="true" aria-controls="yearly-panel-timeline" onclick="selectYearlyTab('timeline')">Task timeline</button>
+          <button type="button" id="yearly-tab-series" role="tab" aria-selected="false" tabindex="-1" aria-controls="yearly-panel-series" onclick="selectYearlyTab('series')">Manage series</button>
+        </div>
+        <div class="planning-filter-panel">
+          <div id="yearly-context-slot"></div>
+          <div class="filters planning-filters" id="yearly-filters-bar"></div>
+          <p class="planning-filter-hint">Search, process scope, role and priority apply to both tabs.</p>
+        </div>
+        <div id="yearly-panel-timeline" role="tabpanel" aria-labelledby="yearly-tab-timeline">
+          <div class="planning-panel-toolbar">
+            <div class="planning-year-controls" aria-label="Timeline year">
+              <button type="button" class="btn btn-secondary btn-sm" aria-label="Previous year" onclick="changeYear(-1)">&larr;</button>
+              <strong id="yearly-selected-year"></strong>
+              <button type="button" class="btn btn-secondary btn-sm" aria-label="Next year" onclick="changeYear(1)">&rarr;</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="changeYear(0)">This year</button>
+            </div>
+            <label class="planning-field">Occurrence status
+              <select id="yearly-status" onchange="yearlyFilters.status=this.value;renderYearlyPlan()">
+                <option value="">All occurrences</option><option value="pending">Open</option>
+                <option value="overdue">Overdue</option><option value="completed">Completed</option><option value="skipped">Skipped</option>
+              </select>
+            </label>
+          </div>
+          <p class="planning-filter-hint">Timeline, totals and upcoming work reflect the selected year and filters.</p>
+          <div class="yearly-summary" id="yearly-summary"></div>
 
         <!-- Legend -->
         <div class="yearly-legend">
@@ -348,6 +353,19 @@
 
         <!-- Coming Up & Overdue -->
         <div id="yearly-upcoming"></div>
+        </div>
+        <div id="yearly-panel-series" role="tabpanel" aria-labelledby="yearly-tab-series" hidden>
+          <div class="planning-panel-toolbar">
+            <p class="planning-intro">Manage recurring schedules across all years.</p>
+            <label class="planning-field">Series status
+              <select id="yearly-series-status" onchange="filters.active=this.value;renderTaskTable()">
+                <option value="true">Active series</option><option value="false">Inactive series</option><option value="">All series</option>
+              </select>
+            </label>
+          </div>
+          <p id="yearly-series-count" class="planning-filter-hint" role="status"></p>
+          <div id="task-table-body" class="task-mgmt-cards"></div>
+        </div>
       </section>
 
       <!-- Follow-ups View -->
@@ -1458,7 +1476,7 @@
     <div class="modal-overlay" onclick="closeTaskModal()"></div>
     <div class="modal-content">
       <div class="modal-header">
-        <h3 id="modal-title">New Task</h3>
+        <h3 id="modal-title">New Series</h3>
         <button class="modal-close" onclick="closeTaskModal()">&times;</button>
       </div>
       <form id="task-form" onsubmit="saveTask(event)">
@@ -1545,7 +1563,7 @@
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" onclick="closeTaskModal()">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Task</button>
+          <button type="submit" class="btn btn-primary">Save Series</button>
         </div>
       </form>
     </div>
@@ -1598,7 +1616,7 @@
       <div id="task-detail-body" style="max-height:65vh;overflow-y:auto"></div>
       <div class="form-actions" style="margin-top:16px">
         <button class="btn btn-secondary" onclick="closeTaskDetailModal()">Close</button>
-        <button class="btn btn-primary" id="task-detail-edit-btn">&#9998; Edit Task</button>
+        <button class="btn btn-primary" id="task-detail-edit-btn">&#9998; Edit Series</button>
         <button class="btn btn-success" id="task-detail-complete-btn">&#10003; Complete</button>
       </div>
     </div>

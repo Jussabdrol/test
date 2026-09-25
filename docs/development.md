@@ -103,3 +103,24 @@ reads. Do not create or edit customer records for a smoke test.
 
 Rollback: revert the experience release with a normal Git revert. Keep the website
 release and all security/planning fixes. No data rollback is needed.
+
+## Yearly Plan tabs and filters
+
+Yearly Plan contains Task timeline and Manage series, using the Mission Control
+accessible tab pattern. The legacy `switchView('tasks')` entry opens Manage series
+inside Yearly Plan and retains its operational-planning permission mapping.
+Search (title/process/role), role, priority and process scope are shared between
+the tabs. Occurrence status and year apply to the timeline, including its totals
+and upcoming list; active/inactive applies only to the series list, across all
+years. Reset filters clears both tab-specific statuses and shared scope, returning
+to active series and all occurrence statuses without changing the selected year.
+
+The process/bundle selector also remains available in Task Log and Follow-ups.
+Changing a bundle refreshes its active view. Saving or deactivating a series uses
+the existing workflows and refreshes the selected Yearly Plan tab.
+
+Validate with `npm run verify` and the isolated PGlite browser fixture: shared
+filters across both tabs; empty results and reset; completed/skipped/open status;
+year switching; arrow-key tab navigation; create/edit series then return to the
+timeline; legacy task shortcuts; process scope across Task Log and Follow-ups;
+and mobile filter stacking. No schema or server API change is required.

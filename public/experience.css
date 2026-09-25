@@ -148,3 +148,29 @@ body.bop-console { --bg:#f5f6f7; --text:#18242e; --text-muted:#626d77; --border:
 .bop-console #doc-filters-bar .experience-filter:first-child { flex:2 1 220px; }
 .bop-console #doc-filters-bar .experience-filter input,.bop-console #doc-filters-bar .experience-filter select { width:100%; min-width:0!important; }
 @media(max-width:767px){.bop-console #doc-filters-bar .experience-filter{flex:1 1 calc(50% - 10px);}.bop-console #doc-filters-bar .experience-filter:first-child{flex-basis:100%;}}
+
+/* Operational planning: one scope and shared filters above both yearly-plan tabs. */
+.planning-intro { margin:6px 0 0; color:var(--text-muted); font-size:13px; line-height:1.6; }
+.planning-filter-panel { padding:18px 20px; border:1px solid var(--border); border-radius:12px; background:var(--bg-card, #fff); margin-bottom:24px; }
+.planning-scope, .planning-panel-toolbar, .planning-year-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.planning-scope { align-items:flex-end; }
+#op-plan-context-home .planning-scope { margin-bottom:20px; padding:16px; border:1px solid var(--border); border-radius:12px; }
+.planning-filters { flex-wrap:wrap; margin:16px 0 0; align-items:flex-end; gap:12px; }
+.planning-field { display:flex; flex-direction:column; gap:7px; color:var(--text-muted); font-size:12px; font-weight:500; min-width:150px; }
+.planning-field input, .planning-field select { box-sizing:border-box; width:100%; min-height:38px; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--bg-card, #fff); color:var(--text); font:inherit; font-size:13px; }
+.planning-field select { max-width:340px; }
+.planning-search { flex:1; min-width:220px; }
+.planning-filter-hint { margin:12px 0 0; font-size:12px; color:var(--text-muted); line-height:1.6; }
+.planning-panel-toolbar { justify-content:space-between; margin-bottom:12px; }
+.planning-year-controls strong { min-width:48px; text-align:center; }
+#yearly-panel-series .task-mgmt-cards { margin-top:16px; overflow-x:auto; }
+#yearly-upcoming { overflow-x:auto; }
+#yearly-upcoming .arch-table { min-width:850px; }
+#yearly-panel-series .task-list-table { min-width:750px; }
+@media(max-width:600px) {
+  .planning-filter-panel { padding:14px; }
+  .planning-filters .planning-field, .planning-scope .planning-field { flex:1 1 100%; min-width:0; }
+  .planning-field select { max-width:none; }
+  .planning-panel-toolbar { align-items:flex-start; }
+  .planning-panel-toolbar > .planning-field { flex:1 1 100%; }
+}

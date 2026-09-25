@@ -1,7 +1,9 @@
 
 // --- Yearly Plan ---
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const DAY_LABELS = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+let yearlyTab = 'timeline';
+let yearlyRawData = null;
+let yearlyLoadRequest = 0;
 
 function changeYear(delta) {
   if (delta === 0) yearlyYear = new Date().getFullYear();
@@ -12,22 +14,54 @@ function changeYear(delta) {
 
 function invalidateYearlyCache() {
   yearlyData = null;
+  yearlyRawData = null;
+  yearlyLoadRequest++;
 }
 
-function filterYearlyDataByCategories(data, names) {
-  const filterEntries = obj => {
-    const out = {};
-    for (const [ds, items] of Object.entries(obj)) {
-      const filtered = items.filter(t => names.includes(t.category));
-      if (filtered.length) out[ds] = filtered;
-    }
-    return out;
-  };
-  return {
-    ...data,
-    dueDates: filterEntries(data.dueDates || {}),
-    completedDates: filterEntries(data.completedDates || {}),
-  };
+async function selectYearlyTab(tab) {
+  if (!['timeline', 'series'].includes(tab)) return;
+  yearlyTab = tab;
+  closeDayDetail();
+  selectExperienceTab('yearly', tab);
+  await loadYearlyPlan();
+}
+
+function matchesPlanningFilters(task) {
+  const names = getOpPlanContextNames();
+  if (names && !names.includes(task.category)) return false;
+  if (filters.priority && task.priority !== filters.priority) return false;
+  if (filters.assignee && task.assignee !== filters.assignee) return false;
+  const query = filters.search.trim().toLowerCase();
+  return !query || [task.title, task.category, task.assignee].some(value => (value || '').toLowerCase().includes(query));
+}
+
+function filterYearlyData(data) {
+  const today = new Date().toISOString().slice(0, 10);
+  const filterEntries = (entries, completed = false) => Object.fromEntries(
+    Object.entries(entries || {}).map(([date, tasks]) => [date, tasks.filter(task => {
+      const status = completed ? 'completed' : task.status;
+      return matchesPlanningFilters(task) && (!yearlyFilters.status ||
+        (yearlyFilters.status === 'overdue' ? status === 'pending' && date < today : status === yearlyFilters.status));
+    })]).filter(([, tasks]) => tasks.length)
+  );
+  return { ...data, dueDates: filterEntries(data.dueDates), completedDates: filterEntries(data.completedDates, true) };
+}
+
+function applyPlanningFilters() {
+  closeDayDetail();
+  if (yearlyTab === 'series') renderTaskTable();
+  else renderYearlyPlan();
+}
+
+function resetPlanningFilters() {
+  filters = { active: 'true', assignee: '', priority: '', search: '' };
+  yearlyFilters.status = '';
+  opPlanContext = { type: 'all', id: null };
+  document.getElementById('yearly-status').value = '';
+  document.getElementById('yearly-series-status').value = 'true';
+  renderOpPlanContextBar();
+  renderYearlyFilters();
+  applyPlanningFilters();
 }
 
 function renderYearlyUpcoming() {
@@ -50,13 +84,7 @@ function renderYearlyUpcoming() {
     return `<span style="font-size:12px">${label} · <span style="color:var(--text-muted);font-size:11px">in ${diff}d</span></span>`;
   };
 
-  let items = yearlyUpcomingCache;
-  if (yearlyFilters.overdue_only) items = items.filter(i => i._status === 'overdue');
-  if (yearlyFilters.priority) items = items.filter(i => i.priority === yearlyFilters.priority);
-  if (yearlyFilters.search) {
-    const q = yearlyFilters.search.toLowerCase();
-    items = items.filter(i => i.title.toLowerCase().includes(q) || (i.category || '').toLowerCase().includes(q));
-  }
+  const items = yearlyUpcomingCache;
 
   const overdueCount = items.filter(i => i._status === 'overdue').length;
   const upcomingCount = items.filter(i => i._status === 'upcoming').length;
@@ -106,31 +134,66 @@ function renderYearlyUpcoming() {
 function renderYearlyFilters() {
   const bar = document.getElementById('yearly-filters-bar');
   if (!bar) return;
+  const roles = [...new Set([...(meta.assignees || []), filters.assignee].filter(Boolean))].sort((a,b) => a.localeCompare(b));
   bar.innerHTML = `
-    <input type="search" placeholder="Search tasks..." value="${esc(yearlyFilters.search)}"
-      style="min-width:160px" oninput="yearlyFilters.search=this.value;renderYearlyUpcoming()">
-    <select onchange="yearlyFilters.priority=this.value;renderYearlyUpcoming()">
-      <option value="">All Priorities</option>
-      <option value="Low" ${yearlyFilters.priority==='Low'?'selected':''}>Low</option>
-      <option value="Medium" ${yearlyFilters.priority==='Medium'?'selected':''}>Medium</option>
-      <option value="High" ${yearlyFilters.priority==='High'?'selected':''}>High</option>
-      <option value="Critical" ${yearlyFilters.priority==='Critical'?'selected':''}>Critical</option>
-    </select>
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
-      <input type="checkbox" ${yearlyFilters.overdue_only?'checked':''} onchange="yearlyFilters.overdue_only=this.checked;renderYearlyUpcoming()">
-      Overdue only
+    <label class="planning-field planning-search">Search
+      <input type="search" placeholder="Search tasks, processes or roles…" value="${esc(filters.search)}"
+        oninput="filters.search=this.value;applyPlanningFilters()">
     </label>
-  `;
+    <label class="planning-field">Role
+      <select onchange="filters.assignee=this.value;applyPlanningFilters()">
+        <option value="">All roles</option>
+        ${roles.map(role => `<option value="${esc(role)}" ${filters.assignee === role ? 'selected' : ''}>${esc(role)}</option>`).join('')}
+      </select>
+    </label>
+    <label class="planning-field">Priority
+      <select onchange="filters.priority=this.value;applyPlanningFilters()">
+        <option value="">All priorities</option>
+        ${['Low','Medium','High','Critical'].map(priority => `<option ${filters.priority === priority ? 'selected' : ''}>${priority}</option>`).join('')}
+      </select>
+    </label>
+    <button type="button" class="btn btn-secondary" onclick="resetPlanningFilters()">Reset filters</button>`;
 }
 
 async function loadYearlyPlan() {
-  document.getElementById('yearly-title').textContent = `Yearly Plan ${yearlyYear}`;
+  selectExperienceTab('yearly', yearlyTab);
+  document.getElementById('yearly-selected-year').textContent = yearlyYear;
+  document.getElementById('yearly-status').value = yearlyFilters.status;
+  document.getElementById('yearly-series-status').value = filters.active;
   renderYearlyFilters();
+  const request = ++yearlyLoadRequest;
+  const year = yearlyYear;
+  const tab = yearlyTab;
+  if (tab === 'timeline') {
+    yearlyRawData = null;
+    yearlyData = null;
+    document.getElementById('yearly-summary').innerHTML = '<div class="empty-state" role="status">Loading timeline…</div>';
+    document.getElementById('gantt-wrap').innerHTML = '';
+    document.getElementById('yearly-upcoming').innerHTML = '';
+  }
   try {
-  const rawData = await api(`/api/yearly?year=${yearlyYear}`);
-  // Apply process context filter to yearly data
-  const yearCtxNames = getOpPlanContextNames();
-  const data = yearCtxNames ? filterYearlyDataByCategories(rawData, yearCtxNames) : rawData;
+    const [nextMeta, rawData] = await Promise.all([
+      api('/api/meta'),
+      tab === 'series' ? loadTasks() : api(`/api/yearly?year=${year}`),
+    ]);
+    if (request !== yearlyLoadRequest || currentView !== 'yearly') return;
+    meta = nextMeta;
+    renderYearlyFilters();
+    if (tab === 'timeline') {
+      yearlyRawData = rawData;
+      renderYearlyPlan();
+    }
+  } catch (err) {
+    if (request !== yearlyLoadRequest || currentView !== 'yearly') return;
+    const el = document.getElementById(tab === 'series' ? 'task-table-body' : 'yearly-summary');
+    el.innerHTML = `<div class="empty-state" style="color:var(--danger)">Could not load plan: ${esc(err.message)} <button class="btn btn-secondary btn-sm" onclick="loadYearlyPlan()">Retry</button></div>`;
+  }
+}
+
+function renderYearlyPlan() {
+  closeDayDetail();
+  if (!yearlyRawData) return;
+  const data = filterYearlyData(yearlyRawData);
   yearlyData = data;
   const today = new Date().toISOString().split('T')[0];
 
@@ -206,11 +269,6 @@ async function loadYearlyPlan() {
   yearlyUpcomingCache = [...overdueItems, ...upcomingItems];
 
   renderYearlyUpcoming();
-  } catch (err) {
-    console.error('[loadYearlyPlan] Failed:', err);
-    const el = document.getElementById('yearly-summary');
-    if (el) el.innerHTML = `<div class="empty-state" style="color:var(--danger)">Failed to load yearly plan: ${esc(err.message)}</div>`;
-  }
 }
 
 async function quickComplete(taskId, dateStr) {
