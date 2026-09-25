@@ -36,6 +36,7 @@ async function loadOperationalTasks() {
 
 function renderWorkChrome() {
   selectExperienceTab('work', workTab);
+  updatePlanningFilterSummary('work');
   const focused = workTab === 'followups' && workActionSource;
   document.getElementById('work-filter-panel').hidden = Boolean(focused);
   document.getElementById('work-new-action').hidden = workTab !== 'followups';
@@ -58,12 +59,12 @@ function renderWorkChrome() {
 
 function renderWorkFilters() {
   const roles = [...new Set([...workRoles.map(r => r.name), ...workSeries.map(t => t.assignee), workFilters.assignee].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  document.getElementById('work-search').value = workFilters.search;
+  updatePlanningFilterSummary('work');
   document.getElementById('work-filters').innerHTML = `
-    <label class="planning-field planning-search">Search<input type="search" placeholder="Search tickets or actions…" value="${esc(workFilters.search)}" oninput="workFilters.search=this.value;renderWorkPanel()"></label>
     <label class="planning-field">Series<select onchange="workFilters.series=this.value;reloadWorkPanel()"><option value="">All series</option>${workSeries.map(t=>`<option value="${t.id}" ${String(t.id)===workFilters.series?'selected':''}>${esc(t.title)}${t.is_active?'':' (inactive)'}</option>`).join('')}</select></label>
     <label class="planning-field">Role<select onchange="workFilters.assignee=this.value;renderWorkPanel()"><option value="">All roles</option>${roles.map(name=>`<option value="${esc(name)}" ${name===workFilters.assignee?'selected':''}>${esc(name)}</option>`).join('')}</select></label>
-    <label class="planning-field">Priority<select onchange="workFilters.priority=this.value;renderWorkPanel()"><option value="">All priorities</option>${['Low','Medium','High','Critical'].map(p=>`<option ${p===workFilters.priority?'selected':''}>${p}</option>`).join('')}</select></label>
-    <button type="button" class="btn btn-secondary" onclick="resetWorkFilters()">Reset filters</button>`;
+    <label class="planning-field">Priority<select onchange="workFilters.priority=this.value;renderWorkPanel()"><option value="">All priorities</option>${['Low','Medium','High','Critical'].map(p=>`<option ${p===workFilters.priority?'selected':''}>${p}</option>`).join('')}</select></label>`;
 }
 
 async function selectWorkTab(tab) {
@@ -80,6 +81,7 @@ function reloadWorkPanel() {
 }
 
 function renderWorkPanel() {
+  updatePlanningFilterSummary('work');
   if (workTab === 'tickets') renderWorkTickets();
   else renderWorkActions();
 }

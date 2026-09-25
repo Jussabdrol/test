@@ -49,6 +49,7 @@ function filterYearlyData(data) {
 
 function applyPlanningFilters() {
   closeDayDetail();
+  updatePlanningFilterSummary('yearly');
   if (yearlyTab === 'series') renderTaskTable();
   else renderYearlyPlan();
 }
@@ -88,12 +89,12 @@ function renderYearlyUpcoming() {
 
   const overdueCount = items.filter(i => i._status === 'overdue').length;
   const upcomingCount = items.filter(i => i._status === 'upcoming').length;
-  const upcomingGridCols = '2fr 140px 90px 1fr 80px 100px 110px';
+  const upcomingGridCols = 'minmax(160px,2fr) 116px 82px minmax(100px,1fr) 70px 92px 148px';
   const buildTableRow = item => {
     const isOverdue = item._status === 'overdue';
-    return `<div class="arch-table-row" style="grid-template-columns:${upcomingGridCols}${isOverdue ? ';background:var(--danger-bg,#fff5f5)' : ''}">
-      <div class="arch-col-name" style="cursor:pointer" onclick="openTaskModal(${item.task_id})">
-        <span class="arch-name" style="color:var(--primary)">${esc(item.title)}</span>
+    return `<div class="arch-table-row" style="grid-template-columns:${upcomingGridCols}">
+      <div class="arch-col-name">
+        <button type="button" class="experience-text-button arch-name" onclick="openTaskModal(${item.task_id})">${esc(item.title)}</button>
         ${item.category ? `<span class="arch-desc">${esc(item.category)}</span>` : ''}
       </div>
       <div class="arch-col-detail">${formatDueDate(item.date, isOverdue)}</div>
@@ -107,17 +108,13 @@ function renderYearlyUpcoming() {
       <div class="arch-col-detail"><span class="task-recurrence-badge">&#8635; ${recurrenceLabel(item.recurrence)}</span></div>
       <div class="arch-col-actions" style="gap:6px">
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="openTaskModal(${item.task_id})">&#9998; Edit</button>
-        <button class="btn btn-primary btn-sm" style="font-size:11px" onclick="quickComplete(${item.task_id},'${item.date}')">&#10003;</button>
+        <button type="button" class="btn btn-secondary btn-sm" aria-label="Complete ${esc(item.title)} scheduled ${item.date}" onclick="quickComplete(${item.task_id},'${item.date}')">Complete</button>
       </div>
     </div>`;
   };
 
-  let html = `<h3 class="section-title" style="margin-top:28px">
-    Tasks — Overdue &amp; Next 4 Weeks
-    <span class="req-cat-count" style="margin-left:6px">(${items.length})</span>
-    ${overdueCount > 0 ? `<span class="badge badge-critical" style="margin-left:8px;font-size:11px">${overdueCount} overdue</span>` : ''}
-    ${upcomingCount > 0 ? `<span style="font-size:12px;color:var(--text-muted);margin-left:6px">${upcomingCount} upcoming</span>` : ''}
-  </h3>`;
+  document.getElementById('yearly-upcoming-count').textContent = `${overdueCount} overdue · ${upcomingCount} upcoming`;
+  let html = '';
   if (items.length === 0) {
     html += '<div class="empty-state">No overdue or upcoming tasks match the filters.</div>';
   } else {
@@ -135,11 +132,9 @@ function renderYearlyFilters() {
   const bar = document.getElementById('yearly-filters-bar');
   if (!bar) return;
   const roles = [...new Set([...(meta.assignees || []), filters.assignee].filter(Boolean))].sort((a,b) => a.localeCompare(b));
+  document.getElementById('yearly-search').value = filters.search;
+  updatePlanningFilterSummary('yearly');
   bar.innerHTML = `
-    <label class="planning-field planning-search">Search
-      <input type="search" placeholder="Search tasks, processes or roles…" value="${esc(filters.search)}"
-        oninput="filters.search=this.value;applyPlanningFilters()">
-    </label>
     <label class="planning-field">Role
       <select onchange="filters.assignee=this.value;applyPlanningFilters()">
         <option value="">All roles</option>
@@ -151,8 +146,7 @@ function renderYearlyFilters() {
         <option value="">All priorities</option>
         ${['Low','Medium','High','Critical'].map(priority => `<option ${filters.priority === priority ? 'selected' : ''}>${priority}</option>`).join('')}
       </select>
-    </label>
-    <button type="button" class="btn btn-secondary" onclick="resetPlanningFilters()">Reset filters</button>`;
+    </label>`;
 }
 
 async function loadYearlyPlan() {
@@ -235,11 +229,11 @@ function renderYearlyPlan() {
   const summaryEl = document.getElementById('yearly-summary');
   const pct = totalDue > 0 ? Math.round((totalCompleted / totalDue) * 100) : 0;
   summaryEl.innerHTML = `
-    <div class="stat-card"><div class="stat-value">${totalDue}</div><div class="stat-label">Total Scheduled (${yearlyYear})</div></div>
-    <div class="stat-card done"><div class="stat-value">${totalCompleted}</div><div class="stat-label">Completed occurrences</div></div>
-    <div class="stat-card${totalOverdue > 0 ? ' overdue' : ''}"><div class="stat-value">${totalOverdue}</div><div class="stat-label">Overdue</div></div>
-    <div class="stat-card"><div class="stat-value">${totalSkipped}</div><div class="stat-label">Skipped</div></div>
-    <div class="stat-card"><div class="stat-value">${pct}%</div><div class="stat-label">Completion Rate</div></div>
+    <div><dt>Scheduled · ${yearlyYear}</dt><dd>${totalDue}</dd></div>
+    <div><dt>Completed</dt><dd>${totalCompleted}</dd></div>
+    <div${totalOverdue ? ' class="planning-metric-alert"' : ''}><dt>Overdue</dt><dd>${totalOverdue}</dd></div>
+    <div><dt>Skipped</dt><dd>${totalSkipped}</dd></div>
+    <div><dt>Completion rate</dt><dd>${pct}%</dd></div>
   `;
 
   // Render Gantt chart

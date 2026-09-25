@@ -152,3 +152,19 @@ and escaped ticket detail. Browser checks must use isolated synthetic fixtures:
 open ticket → follow-ups → new linked action; back to shared filters; completion
 and post-completion navigation; start/resolve actions; keyboard tabs; mobile layout.
 Rollback is a normal Git revert; there is no data migration to undo.
+
+
+## Operational Planning layout
+
+Search and process scope stay in the primary toolbar in Yearly Plan and Tasks.
+More filters expands the role/priority controls (and series in Tasks). Its count
+and a plain-language active-filter summary remain visible when collapsed; reset
+keeps the existing full reset behavior. Disclosure state survives tab switches.
+Bundle creation/editing is available from Process bundle options beside the scope
+selector. All scheduled dates and statuses remain available in their own tab.
+
+Yearly totals use one semantic summary row. Due work expands below the timeline,
+retaining the full overdue/upcoming list and its existing actions. Tables use
+neutral labels, with overdue/critical work emphasized. There are no API changes.
+Validate expanded and collapsed filters, active summaries, reset, bundle controls,
+Due work actions, all four planning tabs and mobile/tablet navigation.
