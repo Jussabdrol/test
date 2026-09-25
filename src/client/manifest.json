@@ -5,6 +5,7 @@
   "operations/tasks.js",
   "operations/actions.js",
   "operations/yearly-plan.js",
+  "operations/workspace.js",
   "audits/planning.js",
   "audits/execution.js",
   "audits/non-conformities.js",

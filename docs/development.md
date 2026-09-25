@@ -115,12 +115,40 @@ and upcoming list; active/inactive applies only to the series list, across all
 years. Reset filters clears both tab-specific statuses and shared scope, returning
 to active series and all occurrence statuses without changing the selected year.
 
-The process/bundle selector also remains available in Task Log and Follow-ups.
+The process/bundle selector also remains available in the combined Tasks workspace.
 Changing a bundle refreshes its active view. Saving or deactivating a series uses
 the existing workflows and refreshes the selected Yearly Plan tab.
 
 Validate with `npm run verify` and the isolated PGlite browser fixture: shared
 filters across both tabs; empty results and reset; completed/skipped/open status;
 year switching; arrow-key tab navigation; create/edit series then return to the
-timeline; legacy task shortcuts; process scope across Task Log and Follow-ups;
+timeline; legacy task shortcuts; process scope across Tasks tabs;
 and mobile filter stacking. No schema or server API change is required.
+
+## Tasks workspace
+
+The Operational Planning navigation now has Yearly Plan and Tasks. Tasks combines
+Control tickets (individual scheduled executions) and Follow-up actions using the
+same accessible tab pattern as Mission Control. Legacy `task-log` and `actions`
+shortcuts select the corresponding tab and retain operational-planning permissions.
+
+Process/bundle scope, series, role, priority and search persist between tabs.
+Ticket status, scheduled dates and completed-by apply only to tickets; action
+status applies only to follow-ups. Defaults show open tickets and open/in-progress
+actions. Reset clears both tab-specific filters and shared scope. Ticket results
+use the existing API's 2,000-record limit; when reached, the UI explicitly asks for
+a narrower series/date range and labels totals/search as covering loaded tickets.
+
+Opening a ticket shows its exact scheduled date, notes, evidence and linked actions.
+The follow-up shortcut focuses on that instance, includes resolved actions and
+temporarily hides shared filters without discarding them. Back to all follow-ups
+restores those filters. Creating a follow-up here inherits the authoritative
+instance/task IDs, role and process. Completion, skipping, reopening, evidence and
+action mutations use existing APIs; no database or server migration is needed.
+
+Run `npm run verify`. The client tests cover filter persistence, instance linkage,
+resolved-action visibility, invalid dates, empty bundles, stale requests, retries
+and escaped ticket detail. Browser checks must use isolated synthetic fixtures:
+open ticket → follow-ups → new linked action; back to shared filters; completion
+and post-completion navigation; start/resolve actions; keyboard tabs; mobile layout.
+Rollback is a normal Git revert; there is no data migration to undo.
