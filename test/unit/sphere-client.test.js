@@ -32,7 +32,7 @@ test('record selection pauses motion and groups escaped integration metadata by 
  assert.match(elements.get('sphere-detail').innerHTML,/Platform &lt;img/);
  const html=elements.get('sphere-connections').innerHTML;
  assert.match(html,/sphere-connection-group/);assert.match(html,/Document/);assert.match(html,/Process/);assert.match(html,/serving/);
- assert.match(html,/Note &lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img/);
+ assert.match(html,/Note &lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img/i);
  assert.match(elements.get('sphere-record-description').innerHTML,/&lt;img/);
  assert.equal(elements.get('sphere-open-record').disabled,false);
 });
