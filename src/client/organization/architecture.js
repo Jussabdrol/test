@@ -5,8 +5,13 @@ const archTypeLabels = { role: 'Roles & Responsibilities', process: 'Processes',
 
 function switchArchTab(type) {
   currentArchTab = type;
-  document.querySelectorAll('.arch-tab').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.arch-tab[onclick="switchArchTab('${type}')"]`).classList.add('active');
+  document.querySelectorAll('#arch-tabs [role="tab"]').forEach(tab => {
+    const selected = tab.id === `architecture-tab-${type}`;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  document.getElementById('architecture-panel').setAttribute('aria-labelledby', `architecture-tab-${type}`);
 
   // Toggle the Add button label / visibility
   const addBtn = document.querySelector('#view-architecture .view-header button.btn-primary');

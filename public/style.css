@@ -1415,19 +1415,6 @@ body {
 .kpi-spark-bar { width: 8px; background: #111827; border-radius: 2px 2px 0 0; opacity: .7; }
 
 /* Architecture */
-.arch-tabs { display: flex; gap: 6px; margin-bottom: 18px; flex-wrap: wrap; }
-.arch-tab {
-  padding: 8px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all .15s ease;
-}
-.arch-tab:hover { border-color: #9ca3af; background: #f9fafb; }
-.arch-tab.active { background: #111827; color: #fff; border-color: #111827; }
 .arch-items { display: flex; flex-direction: column; gap: 10px; }
 .arch-item {
   background: var(--card-bg);

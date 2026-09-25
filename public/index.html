@@ -705,65 +705,67 @@
         <div class="view-header page-toolbar">
           <button class="btn btn-primary" onclick="openArchModal()">+ Add Item</button>
         </div>
-        <div class="arch-tabs" id="arch-tabs">
-          <button class="arch-tab active" onclick="switchArchTab('role')">Roles & Responsibilities</button>
-          <button class="arch-tab" onclick="switchArchTab('process')">Processes</button>
-          <button class="arch-tab" onclick="switchArchTab('system')">Systems / Data</button>
-          <button class="arch-tab" onclick="switchArchTab('asset')">Assets</button>
-          <button class="arch-tab" onclick="switchArchTab('facility')">Facilities</button>
-          <button class="arch-tab" onclick="switchArchTab('supplier')">Suppliers</button>
-          <button class="arch-tab" onclick="switchArchTab('ai_model')">AI Model Inventory</button>
-          <button class="arch-tab" onclick="switchArchTab('ai_dataset')">Data Catalog</button>
-          <button class="arch-tab" onclick="switchArchTab('ai_usecase')">AI Use Cases</button>
+        <div class="experience-tabs arch-tabs" id="arch-tabs" role="tablist" aria-label="Architecture sections" data-experience-tabs="architecture">
+          <button type="button" class="arch-tab active" id="architecture-tab-role" role="tab" aria-selected="true" aria-controls="architecture-panel" onclick="switchArchTab('role')">Roles & Responsibilities</button>
+          <button type="button" class="arch-tab" id="architecture-tab-process" role="tab" aria-selected="false" aria-controls="architecture-panel" tabindex="-1" onclick="switchArchTab('process')">Processes</button>
+          <button type="button" class="arch-tab" id="architecture-tab-system" role="tab" aria-selected="false" aria-controls="architecture-panel" tabindex="-1" onclick="switchArchTab('system')">Systems / Data</button>
+          <button type="button" class="arch-tab" id="architecture-tab-asset" role="tab" aria-selected="false" aria-controls="architecture-panel" tabindex="-1" onclick="switchArchTab('asset')">Assets</button>
+          <button type="button" class="arch-tab" id="architecture-tab-facility" role="tab" aria-selected="false" aria-controls="architecture-panel" tabindex="-1" onclick="switchArchTab('facility')">Facilities</button>
+          <button type="button" class="arch-tab" id="architecture-tab-supplier" role="tab" aria-selected="false" aria-controls="architecture-panel" tabindex="-1" onclick="switchArchTab('supplier')">Suppliers</button>
+          <button type="button" class="arch-tab" id="architecture-tab-ai_model" role="tab" aria-selected="false" aria-controls="architecture-panel" tabindex="-1" onclick="switchArchTab('ai_model')">AI Model Inventory</button>
+          <button type="button" class="arch-tab" id="architecture-tab-ai_dataset" role="tab" aria-selected="false" aria-controls="architecture-panel" tabindex="-1" onclick="switchArchTab('ai_dataset')">Data Catalog</button>
+          <button type="button" class="arch-tab" id="architecture-tab-ai_usecase" role="tab" aria-selected="false" aria-controls="architecture-panel" tabindex="-1" onclick="switchArchTab('ai_usecase')">AI Use Cases</button>
         </div>
-        <!-- Organization Chart Section (only visible for Roles tab) -->
-        <div id="org-chart-section" class="org-chart-section" style="display:none">
-          <div class="org-chart-header">
-            <h3 class="section-title" style="margin:0;border:none;padding:0">
-              <span class="org-chart-toggle" onclick="toggleOrgChart()">
-                &#128202; Organization Chart
-                <span id="org-chart-arrow" class="org-chart-arrow">&#9660;</span>
-              </span>
-            </h3>
-            <div class="org-chart-controls">
-              <button class="btn btn-secondary btn-sm" onclick="zoomOrgChart(-0.1)" title="Zoom Out">−</button>
-              <span id="org-chart-zoom-level" style="font-size:12px;color:var(--text-muted);min-width:40px;text-align:center">100%</span>
-              <button class="btn btn-secondary btn-sm" onclick="zoomOrgChart(0.1)" title="Zoom In">+</button>
-              <button class="btn btn-secondary btn-sm" onclick="resetOrgChartZoom()" title="Reset">Reset</button>
+        <div id="architecture-panel" role="tabpanel" aria-labelledby="architecture-tab-role" tabindex="0">
+          <!-- Organization Chart Section (only visible for Roles tab) -->
+          <div id="org-chart-section" class="org-chart-section" style="display:none">
+            <div class="org-chart-header">
+              <h3 class="section-title" style="margin:0;border:none;padding:0">
+                <span class="org-chart-toggle" onclick="toggleOrgChart()">
+                  &#128202; Organization Chart
+                  <span id="org-chart-arrow" class="org-chart-arrow">&#9660;</span>
+                </span>
+              </h3>
+              <div class="org-chart-controls">
+                <button class="btn btn-secondary btn-sm" onclick="zoomOrgChart(-0.1)" title="Zoom Out">−</button>
+                <span id="org-chart-zoom-level" style="font-size:12px;color:var(--text-muted);min-width:40px;text-align:center">100%</span>
+                <button class="btn btn-secondary btn-sm" onclick="zoomOrgChart(0.1)" title="Zoom In">+</button>
+                <button class="btn btn-secondary btn-sm" onclick="resetOrgChartZoom()" title="Reset">Reset</button>
+              </div>
+            </div>
+            <div id="org-chart-container" class="org-chart-container">
+              <div id="org-chart" class="org-chart"></div>
             </div>
           </div>
-          <div id="org-chart-container" class="org-chart-container">
-            <div id="org-chart" class="org-chart"></div>
-          </div>
-        </div>
-        <!-- Facilities Map Section (only visible for Facilities tab) -->
-        <div id="facilities-map-section" class="facilities-map-section" style="display:none">
-          <div class="facilities-map-header">
-            <h3 class="section-title" style="margin:0;border:none;padding:0">
-              <span class="facilities-map-toggle" onclick="toggleFacilitiesMap()">
-                &#127759; Facility Locations
-                <span id="facilities-map-arrow" class="facilities-map-arrow">&#9660;</span>
-              </span>
-            </h3>
-            <div class="facilities-map-controls">
-              <button class="btn btn-secondary btn-sm" onclick="centerMapOnFacilities()" title="Fit all locations">&#127760; Fit All</button>
-              <button class="btn btn-secondary btn-sm" onclick="refreshFacilitiesMap()" title="Refresh map">&#8635; Refresh</button>
+          <!-- Facilities Map Section (only visible for Facilities tab) -->
+          <div id="facilities-map-section" class="facilities-map-section" style="display:none">
+            <div class="facilities-map-header">
+              <h3 class="section-title" style="margin:0;border:none;padding:0">
+                <span class="facilities-map-toggle" onclick="toggleFacilitiesMap()">
+                  &#127759; Facility Locations
+                  <span id="facilities-map-arrow" class="facilities-map-arrow">&#9660;</span>
+                </span>
+              </h3>
+              <div class="facilities-map-controls">
+                <button class="btn btn-secondary btn-sm" onclick="centerMapOnFacilities()" title="Fit all locations">&#127760; Fit All</button>
+                <button class="btn btn-secondary btn-sm" onclick="refreshFacilitiesMap()" title="Refresh map">&#8635; Refresh</button>
+              </div>
+            </div>
+            <div id="facilities-map-container" class="facilities-map-container">
+              <div id="facilities-map" class="facilities-map"></div>
+              <div id="facilities-map-legend" class="facilities-map-legend">
+                <div class="legend-item"><span class="legend-marker active"></span> Active</div>
+                <div class="legend-item"><span class="legend-marker planned"></span> Planned</div>
+                <div class="legend-item"><span class="legend-marker retired"></span> Retired</div>
+              </div>
+            </div>
+            <div id="facilities-map-empty" class="facilities-map-empty hidden">
+              <div class="map-empty-icon">&#128205;</div>
+              <div class="map-empty-text">No facility locations configured. Add coordinates to your facilities to see them on the map.</div>
             </div>
           </div>
-          <div id="facilities-map-container" class="facilities-map-container">
-            <div id="facilities-map" class="facilities-map"></div>
-            <div id="facilities-map-legend" class="facilities-map-legend">
-              <div class="legend-item"><span class="legend-marker active"></span> Active</div>
-              <div class="legend-item"><span class="legend-marker planned"></span> Planned</div>
-              <div class="legend-item"><span class="legend-marker retired"></span> Retired</div>
-            </div>
-          </div>
-          <div id="facilities-map-empty" class="facilities-map-empty hidden">
-            <div class="map-empty-icon">&#128205;</div>
-            <div class="map-empty-text">No facility locations configured. Add coordinates to your facilities to see them on the map.</div>
-          </div>
+          <div id="arch-list"></div>
         </div>
-        <div id="arch-list"></div>
       </section>
 
       <!-- Document Control View -->
