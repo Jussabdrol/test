@@ -8,7 +8,7 @@ function fixture() {
   const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
   const elements=new Map([...html.matchAll(/id="([^"]+)"/g)].map(([,id])=>[id,{
     value:'',innerHTML:'',textContent:'',hidden:false,open:false,dataset:{},
-    showModal(){this.open=true;},close(){this.open=false;},classList:{add(){},remove(){}},
+    setAttribute(name,value){this[name]=value;},showModal(){this.open=true;},close(){this.open=false;},classList:{add(){},remove(){}},
   }]));
   const context=vm.createContext({
     document:{getElementById:id=>elements.get(id)},currentView:'operational-tasks',
@@ -18,7 +18,7 @@ function fixture() {
     esc:value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
     api:async()=>[],actionMenu:()=>'',
   });
-  for(const name of ['tasks','actions','workspace'])vm.runInContext(fs.readFileSync(path.join(root,`src/client/operations/${name}.js`),'utf8'),context);
+  for(const name of ['layout','tasks','actions','workspace'])vm.runInContext(fs.readFileSync(path.join(root,`src/client/operations/${name}.js`),'utf8'),context);
   return {context,elements};
 }
 function run(context,code){return vm.runInContext(code,context);}
@@ -108,4 +108,21 @@ test('follow-up creation targets the authoritative instance and shows its schedu
   assert.equal(elements.get('action-instance-id').value,11);
   assert.equal(elements.get('action-task-id').value,3);
   assert.match(elements.get('action-source-ticket').textContent,/2026-01-01/);
+});
+
+
+test('collapsing extra filters keeps restrictions visible and reset clears the summary',async()=>{
+  const {context,elements}=fixture();context.tickets=[ticket];
+  elements.get('work-extra-filters').hidden=true;
+  run(context,"workTickets=tickets;workFilters.assignee='Owner';workFilters.priority='High';renderWorkPanel();togglePlanningFilters('work')");
+  assert.equal(elements.get('work-filter-toggle')['aria-expanded'],'true');
+  run(context,"togglePlanningFilters('work')");
+  assert.equal(elements.get('work-extra-filters').hidden,true);
+  assert.equal(elements.get('work-filter-toggle')['aria-expanded'],'false');
+  assert.equal(elements.get('work-filter-toggle').textContent,'More filters (2)');
+  assert.equal(elements.get('work-active-filters').textContent,'Role: Owner · Priority: High');
+  assert.match(elements.get('task-log-summary').innerHTML,/1 tickets shown/);
+  await run(context,'resetWorkFilters()');
+  assert.equal(elements.get('work-active-filters').hidden,true);
+  assert.equal(elements.get('work-filter-toggle').textContent,'More filters');
 });

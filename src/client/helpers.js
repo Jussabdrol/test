@@ -45,8 +45,10 @@ function renderOpPlanContextBar() {
           ${opPlanBundles.length ? `<optgroup label="Process bundles">${opPlanBundles.map(b => `<option value="bundle:${b.id}" ${selected('bundle',b.id)}>${esc(b.name)}</option>`).join('')}</optgroup>` : ''}
         </select>
       </label>
-      ${opPlanContext.type === 'bundle' ? `<button type="button" class="btn btn-secondary btn-sm" onclick="openBundleModal(${opPlanContext.id})">Edit bundle</button>` : ''}
-      <button type="button" class="btn btn-secondary btn-sm" onclick="openBundleModal()">+ New bundle</button>
+      <details class="planning-bundle-tools"><summary aria-label="Process bundle options" title="Process bundle options">···</summary><div>
+        ${opPlanContext.type === 'bundle' ? `<button type="button" class="experience-text-button" onclick="this.closest('details').open=false;openBundleModal(${opPlanContext.id})">Edit bundle</button>` : ''}
+        <button type="button" class="experience-text-button" onclick="this.closest('details').open=false;openBundleModal()">+ New bundle</button>
+      </div></details>
     </div>`;
 }
 

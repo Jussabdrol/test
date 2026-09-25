@@ -210,3 +210,99 @@ body.bop-console { --bg:#f5f6f7; --text:#18242e; --text-muted:#626d77; --border:
   .work-ticket-facts { grid-template-columns:1fr; }
   .control-ticket-dialog { padding:18px; }
 }
+
+/* Operational planning: compact controls and one quiet content hierarchy. */
+.planning-view .experience-tabs { margin-bottom:20px; }
+.planning-view .planning-filter-panel { padding:0 0 18px; margin-bottom:20px; border:0; border-bottom:1px solid var(--border); border-radius:0; background:transparent; }
+.planning-filter-main { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+.planning-filter-main > .planning-search { flex:2 1 240px; min-width:180px; }
+.planning-context-slot { flex:1 1 240px; min-width:180px; }
+.planning-context-slot .planning-scope { flex-wrap:nowrap; gap:6px; }
+.planning-context-slot .planning-field { flex:1; min-width:0; }
+.planning-context-slot select { max-width:none; }
+.planning-view .planning-field { font-size:11px; gap:5px; }
+.planning-view .planning-field :is(input,select) { min-height:38px; }
+.planning-view .planning-reset { font-size:12px; color:var(--text-muted); min-height:38px; padding:8px 4px; }
+.planning-extra-filters { padding:16px; margin-top:14px; border-radius:6px; background:#eef1f3; }
+.planning-extra-filters .planning-filters { margin:0; }
+.planning-extra-filters .planning-filter-hint { margin-top:8px; }
+.planning-active-filters { color:var(--experience-accent); font-size:12px; line-height:1.6; margin:10px 0 0; overflow-wrap:anywhere; }
+.planning-bundle-tools { position:relative; flex-shrink:0; }
+.planning-bundle-tools summary { cursor:pointer; list-style:none; padding:8px; border-radius:5px; font-size:18px; line-height:22px; color:var(--text-muted); }
+.planning-bundle-tools summary::-webkit-details-marker { display:none; }
+.planning-bundle-tools summary:hover { background:var(--experience-soft); }
+.planning-bundle-tools > div { position:absolute; right:0; top:100%; min-width:170px; padding:10px 14px; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; box-shadow:var(--shadow-lg); z-index:10; }
+.planning-bundle-tools button { display:block; width:100%; padding:10px 0; font-size:13px; }
+.planning-view .planning-panel-toolbar { margin-bottom:16px; }
+.planning-view .planning-metrics { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:0; padding:18px 0; margin:8px 0 22px; border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
+.planning-metrics > div { padding:0 20px; border-right:1px solid var(--border); }
+.planning-metrics > div:first-child { padding-left:0; }
+.planning-metrics > div:last-child { border:0; }
+.planning-metrics dt { font-size:12px; font-weight:400; color:var(--text-muted); }
+.planning-metrics dd { margin:6px 0 0; font-size:25px; font-weight:500; font-variant-numeric:tabular-nums; letter-spacing:-.5px; }
+.planning-metric-alert dd { color:#a34135; }
+.planning-timeline-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+.bop-console .planning-timeline-heading .section-title { margin:0; }
+.planning-view .yearly-legend { margin:0; gap:14px; flex-wrap:wrap; font-size:11px; }
+.planning-view .legend-dot { box-shadow:none; width:7px; height:7px; }
+.planning-view .gantt-wrap { box-shadow:none; border-radius:6px; margin-bottom:20px; }
+.planning-view .gantt-dot { box-shadow:none; width:8px; height:8px; }
+.planning-view .gantt-dot.due { background:#647f91; }
+.planning-view .gantt-dot.completed { background:#448575; }
+.planning-view .gantt-dot.overdue { background:#bc6258; }
+.planning-view .gantt-today-line { width:2px; background:#bf8b45; }
+.planning-view .legend-due { background:#647f91; }
+.planning-view .legend-completed { background:#448575; }
+.planning-view .legend-overdue { background:#bc6258; }
+.planning-view .legend-today-marker { background:#bf8b45; }
+.planning-upcoming { border-top:1px solid var(--border); }
+.planning-upcoming > summary { padding:18px 0; cursor:pointer; font-size:14px; font-weight:500; }
+.planning-upcoming > summary > span { font-size:12px; font-weight:400; color:var(--text-muted); margin-left:14px; }
+.planning-upcoming .planning-detail-hint { float:right; }
+.planning-view :is(.task-list-table,.task-table,.arch-table) { box-shadow:none; border-radius:6px; }
+.planning-view :is(.task-list-head,.task-table th,.arch-table-head) { background:#f0f3f5; text-transform:none; letter-spacing:0; font-size:12px; font-weight:500; }
+.planning-view .task-list-row-wrap { border-left:0; background:var(--card-bg); }
+.planning-view .task-list-row-wrap .task-list-row:hover { background:#f7f9fa; }
+.planning-view .task-list-row,.planning-view .task-list-head { grid-template-columns:minmax(180px,2fr) minmax(140px,1.4fr) 72px 92px 100px 110px 120px; gap:10px; }
+.planning-view .task-list-title { color:var(--text); font-size:13px; font-weight:500; white-space:normal; text-align:left; }
+.planning-view :is(.task-table td,.arch-name) { font-size:13px; }
+.planning-view :is(.badge,.task-recurrence-badge,.op-ctx-process-tag) { background:transparent; border:0; border-radius:3px; color:var(--text-muted); font-size:11px; font-weight:500; letter-spacing:0; text-transform:none; padding:2px 0; }
+.planning-view :is(.badge-overdue,.badge-critical) { color:#a34135; }
+.planning-view .badge-due-today { color:#926021; }
+.planning-view .task-table td:first-child > .experience-text-button { font-weight:500; }
+.planning-view .task-table td > small { display:inline-block; max-width:32ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.planning-view .task-log-summary-chips { gap:18px; padding:0; margin:14px 0; }
+.planning-view .tl-chip { background:transparent; border:0; padding:0; color:var(--text-muted); font-size:12px; font-weight:400; }
+.planning-view .tl-chip-overdue { color:#a34135; }
+.planning-view .work-source-banner { background:transparent; border:0; border-left:2px solid var(--experience-accent); border-radius:0; padding:4px 0 4px 16px; }
+.planning-view .work-controls { gap:12px; }
+@media(max-width:1000px) {
+  .planning-filter-main > .planning-search { flex-basis:calc(50% - 12px); }
+  .planning-context-slot { flex-basis:calc(50% - 12px); }
+}
+@media(max-width:600px) {
+  .planning-view .planning-filter-panel { padding-bottom:16px; }
+  .planning-filter-main > .planning-search,.planning-context-slot { flex-basis:100%; }
+  .planning-view .planning-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px 0; }
+  .planning-metrics > div { padding:0 12px; }
+  .planning-metrics > div:nth-child(3) { border:0; }
+  .planning-metrics > div:nth-child(4) { padding-left:0; }
+  .planning-metrics dd { font-size:22px; }
+  .planning-metrics dt { font-size:11px; }
+  .planning-upcoming .planning-detail-hint { float:none; display:block; margin:8px 0 0 18px; }
+  .planning-view .work-controls .planning-field { flex:1 1 calc(50% - 12px); min-width:0; }
+  .planning-view .work-controls .planning-field:first-child { flex-basis:100%; }
+}
+.planning-view .gantt-cell { min-width:52px; }
+.planning-view .gantt-table th { text-transform:none; letter-spacing:0; font-weight:500; }
+.planning-view .gantt-table td:first-child { font-weight:500; }
+#yearly-panel-series .task-list-table { min-width:940px; }
+.planning-view .task-list-row,.planning-view .task-list-head { grid-template-columns:minmax(160px,2fr) minmax(120px,1.4fr) 60px 80px 90px 90px 105px; }
+#yearly-upcoming .arch-table { min-width:950px; }
+/* The legacy tablet rail hid all submenu links even when the sidebar expanded. */
+@media(min-width:768px) and (max-width:1023px) {
+  .bop-console .sidebar:not(.collapsed) :is(.logo-wordmark,.module-text,.module-arrow,.sidebar-toggle-label) { display:inline; }
+  .bop-console .sidebar:not(.collapsed) .module-submenu { display:block; }
+  .bop-console .sidebar:not(.collapsed) .module-toggle { justify-content:flex-start; padding:11px 10px; }
+  .bop-console .sidebar:not(.collapsed) .logo { justify-content:flex-start; }
+}

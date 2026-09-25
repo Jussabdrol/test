@@ -21,7 +21,7 @@ function renderActionTable(actions) {
       <td><span class="badge badge-${a.priority.toLowerCase()}">${a.priority}</span></td>
       <td>${a.due_date ? (isOverdue ? '<span style="color:var(--danger);font-weight:600">' + esc(a.due_date) + '</span>' : esc(a.due_date)) : '-'}</td>
       <td><span class="badge ${statusClass}">${statusLabel}</span></td>
-      <td><div class="work-inline-actions">${a.status === 'open' ? `<button type="button" class="btn btn-primary btn-sm" onclick="updateActionStatus(${a.id},'in_progress')">Start</button>` : a.status === 'in_progress' ? `<button type="button" class="btn btn-primary btn-sm" onclick="resolveAction(${a.id})">Resolve</button>` : ''}${actionMenu([
+      <td><div class="work-inline-actions">${a.status === 'open' ? `<button type="button" class="btn btn-secondary btn-sm" onclick="updateActionStatus(${a.id},'in_progress')">Start</button>` : a.status === 'in_progress' ? `<button type="button" class="btn btn-secondary btn-sm" onclick="resolveAction(${a.id})">Resolve</button>` : ''}${actionMenu([
         ...(a.status === 'open' ? [{ label: '&#9654; Start', onclick: `updateActionStatus(${a.id},'in_progress')`, cls: 'primary' }] : []),
         ...(a.status === 'in_progress' ? [{ label: '&#10003; Resolve', onclick: `resolveAction(${a.id})`, cls: 'success' }] : []),
         { label: '&#9998; Edit', onclick: `openActionModal(${a.id})` },

@@ -21,6 +21,7 @@ function pageContext() {
       ? { id: 42, task_id: 5, task_title: 'Access review', scheduled_date: '2026-04-30', notes: 'Retain existing work' }
       : [],
   });
+  vm.runInContext(fs.readFileSync(path.join(root, 'src/client/operations/layout.js'), 'utf8'), context);
   return { context, elements };
 }
 
@@ -78,7 +79,7 @@ test('shared scope, search, role and priority filter the timeline, totals and up
   vm.runInContext('yearlyRawData=plan;renderYearlyPlan()',context);
   assert.equal(chart.dueDates['2026-01-01'].length,1);
   assert.equal(chart.completedDates['2026-01-01'].length,1);
-  const values=[...elements.get('yearly-summary').innerHTML.matchAll(/class="stat-value">([^<]+)/g)].map(m=>m[1]);
+  const values=[...elements.get('yearly-summary').innerHTML.matchAll(/<dd>([^<]+)/g)].map(m=>m[1]);
   assert.deepEqual(values,['2','1','1','0','50%']);
   assert.match(elements.get('yearly-upcoming').innerHTML,/Access review/);
   assert.doesNotMatch(elements.get('yearly-upcoming').innerHTML,/Onboarding/);

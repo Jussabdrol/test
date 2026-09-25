@@ -51,7 +51,7 @@ function renderTaskTable() {
     return `<div class="task-list-row-wrap status-${status}${!t.is_active ? ' task-inactive' : ''}">
       <div class="task-list-row">
         <div class="task-list-col-title">
-          <span class="task-list-title" onclick="openTaskDetailModal(${t.id})">${esc(t.title)}</span>
+          <button type="button" class="experience-text-button task-list-title" onclick="openTaskDetailModal(${t.id})">${esc(t.title)}</button>
           ${t.description ? `<span class="task-list-desc">${esc(t.description)}</span>` : ''}
         </div>
         <div class="task-list-col">${assigneeParts.length ? `<span style="font-size:12px;color:var(--text-muted)">${assigneeParts.join(' · ')}</span>` : '<span style="color:var(--text-muted);font-size:11px">-</span>'}</div>
@@ -60,7 +60,7 @@ function renderTaskTable() {
         <div class="task-list-col"><span style="font-size:12px">${esc(t.next_due)}</span></div>
         <div class="task-list-col"><span class="task-recurrence-badge">&#8635; ${recLabel}</span></div>
         <div class="task-list-col-actions">
-          ${t.is_active ? `<button class="btn btn-primary btn-sm" style="font-size:11px" onclick="openCompleteModal(${t.id})">&#10003;</button>` : ''}
+          ${t.is_active ? `<button type="button" class="btn btn-secondary btn-sm" aria-label="Complete ${esc(t.title)}" onclick="openCompleteModal(${t.id})">Complete</button>` : ''}
           ${actionMenu([
             { label: '&#10003; Complete', onclick: `openCompleteModal(${t.id})`, cls: 'success' },
             { label: '&#128279; Links', onclick: `toggleTaskLinks(${t.id})` },
@@ -137,7 +137,7 @@ function renderTaskLogTable(instances) {
       <td><span class="badge badge-${(i.task_priority || 'Medium').toLowerCase()}">${esc(i.task_priority || 'Medium')}</span></td>
       <td>${scheduledCell}</td>
       <td>${statusCell}</td>
-      <td><div class="work-inline-actions">${i.status === 'pending' ? `<button type="button" class="btn btn-primary btn-sm" onclick="openInstanceCompleteModal(${i.id})">Complete</button>` : ''}${actionMenu(menuItems)}</div></td>
+      <td><div class="work-inline-actions">${i.status === 'pending' ? `<button type="button" class="btn btn-secondary btn-sm" onclick="openInstanceCompleteModal(${i.id})">Complete</button>` : ''}${actionMenu(menuItems)}</div></td>
     </tr>`;
   }).join('');
 }

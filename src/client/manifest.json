@@ -2,6 +2,7 @@
   "core.js",
   "support.js",
   "dashboard.js",
+  "operations/layout.js",
   "operations/tasks.js",
   "operations/actions.js",
   "operations/yearly-plan.js",

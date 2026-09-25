@@ -272,7 +272,7 @@
       <div id="op-plan-context-home"><div id="op-plan-context-bar" class="hidden"></div></div>
 
       <!-- Individual control tickets and their follow-up actions -->
-      <section id="view-operational-tasks" class="view hidden">
+      <section id="view-operational-tasks" class="view planning-view hidden">
         <div class="view-header">
           <div><h2>Tasks</h2><p class="planning-intro">Run your scheduled controls and follow through on what they uncover.</p></div>
           <div class="work-header-actions">
@@ -285,9 +285,19 @@
           <button type="button" id="work-tab-followups" role="tab" aria-selected="false" tabindex="-1" aria-controls="work-panel-followups" onclick="selectWorkTab('followups')">Follow-up actions</button>
         </div>
         <div class="planning-filter-panel" id="work-filter-panel">
-          <div id="work-context-slot"></div>
-          <div class="filters planning-filters" id="work-filters"></div>
-          <p class="planning-filter-hint">Search, process scope, series, role and priority apply to both tabs.</p>
+          <div class="planning-filter-main">
+            <label class="planning-field planning-search">Search
+              <input id="work-search" type="search" placeholder="Search tickets or actions…" oninput="workFilters.search=this.value;renderWorkPanel()">
+            </label>
+            <div id="work-context-slot" class="planning-context-slot"></div>
+            <button type="button" class="btn btn-secondary" id="work-filter-toggle" aria-expanded="false" aria-controls="work-extra-filters" onclick="togglePlanningFilters('work')">More filters</button>
+            <button type="button" class="experience-text-button planning-reset" onclick="resetWorkFilters()">Reset</button>
+          </div>
+          <div id="work-extra-filters" class="planning-extra-filters" hidden>
+            <div class="filters planning-filters" id="work-filters"></div>
+            <p class="planning-filter-hint">These filters apply to both tabs.</p>
+          </div>
+          <p id="work-active-filters" class="planning-active-filters" hidden></p>
         </div>
         <div id="work-panel-tickets" role="tabpanel" aria-labelledby="work-tab-tickets">
           <div class="planning-panel-toolbar work-controls">
@@ -328,7 +338,7 @@
       </section>
 
       <!-- Yearly Plan View -->
-      <section id="view-yearly" class="view hidden">
+      <section id="view-yearly" class="view planning-view hidden">
         <div class="view-header">
           <div><h2 id="yearly-title">Yearly Plan</h2><p class="planning-intro">Plan your recurring work and manage the series behind it.</p></div>
           <div style="display:flex;gap:8px;align-items:center">
@@ -341,9 +351,19 @@
           <button type="button" id="yearly-tab-series" role="tab" aria-selected="false" tabindex="-1" aria-controls="yearly-panel-series" onclick="selectYearlyTab('series')">Manage series</button>
         </div>
         <div class="planning-filter-panel">
-          <div id="yearly-context-slot"></div>
-          <div class="filters planning-filters" id="yearly-filters-bar"></div>
-          <p class="planning-filter-hint">Search, process scope, role and priority apply to both tabs.</p>
+          <div class="planning-filter-main">
+            <label class="planning-field planning-search">Search
+              <input id="yearly-search" type="search" placeholder="Search series, processes or roles…" oninput="filters.search=this.value;applyPlanningFilters()">
+            </label>
+            <div id="yearly-context-slot" class="planning-context-slot"></div>
+            <button type="button" class="btn btn-secondary" id="yearly-filter-toggle" aria-expanded="false" aria-controls="yearly-extra-filters" onclick="togglePlanningFilters('yearly')">More filters</button>
+            <button type="button" class="experience-text-button planning-reset" onclick="resetPlanningFilters()">Reset</button>
+          </div>
+          <div id="yearly-extra-filters" class="planning-extra-filters" hidden>
+            <div class="filters planning-filters" id="yearly-filters-bar"></div>
+            <p class="planning-filter-hint">These filters apply to both tabs.</p>
+          </div>
+          <p id="yearly-active-filters" class="planning-active-filters" hidden></p>
         </div>
         <div id="yearly-panel-timeline" role="tabpanel" aria-labelledby="yearly-tab-timeline">
           <div class="planning-panel-toolbar">
@@ -360,11 +380,11 @@
               </select>
             </label>
           </div>
-          <p class="planning-filter-hint">Timeline, totals and upcoming work reflect the selected year and filters.</p>
-          <div class="yearly-summary" id="yearly-summary"></div>
+          <dl class="yearly-summary planning-metrics" id="yearly-summary" aria-label="Year summary"></dl>
 
-        <!-- Legend -->
-        <div class="yearly-legend">
+        <div class="planning-timeline-heading">
+        <h3 class="section-title">Task timeline</h3>
+        <div class="yearly-legend" aria-label="Timeline legend">
           <span class="legend-item"><span class="legend-dot legend-completed"></span> Completed</span>
           <span class="legend-item"><span class="legend-dot legend-skipped"></span> Skipped</span>
           <span class="legend-item"><span class="legend-dot legend-due"></span> Due</span>
@@ -372,12 +392,15 @@
           <span class="legend-item"><span class="legend-dot legend-today-marker"></span> Today</span>
         </div>
 
+        </div>
         <!-- Gantt Chart -->
-        <h3 class="section-title" style="margin-bottom:0">Task Timeline</h3>
         <div class="gantt-wrap" id="gantt-wrap"></div>
 
         <!-- Coming Up & Overdue -->
-        <div id="yearly-upcoming"></div>
+        <details class="planning-upcoming">
+          <summary>Due work <span id="yearly-upcoming-count"></span><span class="planning-detail-hint">Overdue &amp; next 4 weeks</span></summary>
+          <div id="yearly-upcoming"></div>
+        </details>
         </div>
         <div id="yearly-panel-series" role="tabpanel" aria-labelledby="yearly-tab-series" hidden>
           <div class="planning-panel-toolbar">
