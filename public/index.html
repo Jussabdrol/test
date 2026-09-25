@@ -39,7 +39,6 @@
       <div class="logo">
         <span class="logo-wordmark">Bop</span>
       </div>
-      <div class="experience-workspace"><strong id="experience-org">Your workspace</strong></div>
       <div class="experience-shortcuts">
         <button type="button" class="experience-nav" data-shortcut="mission-control" onclick="switchView('mission-control');closeMobileNav()"><span data-experience-icon="overview"></span><span class="module-text">Mission Control</span></button>
         <button type="button" class="experience-nav" data-shortcut="my-tasks" onclick="switchView('my-tasks');closeMobileNav()"><span data-experience-icon="tasks"></span><span class="module-text">My Tasks</span></button>
@@ -147,11 +146,12 @@
     </div>
 
     <main class="content">
-      <header class="experience-topbar"><span><span class="experience-compact-workspace"><span id="experience-context">Workspace</span><span aria-hidden="true"> / </span></span><strong id="experience-page">Mission Control</strong></span></header>
+      <header class="experience-topbar">
+        <h1 class="experience-page-title"><span id="experience-organization" hidden><span id="experience-context"></span><span class="experience-title-separator"> / </span></span><span id="experience-page">Mission Control</span></h1>
+      </header>
       <!-- AI Agent View -->
-      <section id="view-ai-agent" class="view hidden">
-        <div class="view-header">
-          <h2>&#10024; AI Agent</h2>
+      <section id="view-ai-agent" data-page-title="AI Agent" class="view hidden">
+        <div class="view-header page-toolbar">
           <button class="btn btn-secondary btn-sm" onclick="clearAgentChat()">Clear chat</button>
         </div>
         <div class="agent-container" id="agent-container">
@@ -181,9 +181,8 @@
       </section>
 
       <!-- My Tasks View -->
-      <section id="view-my-tasks" class="view hidden">
-        <div class="view-header">
-          <h2>&#9745; My Tasks</h2>
+      <section id="view-my-tasks" data-page-title="My Tasks" class="view hidden">
+        <div class="view-header page-toolbar">
           <button class="btn btn-secondary btn-sm" onclick="loadMyTasks()">&#8635; Refresh</button>
         </div>
         <div id="my-tasks-content">
@@ -192,11 +191,10 @@
       </section>
 
       <!-- Management Reviews View -->
-      <section id="view-management-reviews" class="view hidden">
+      <section id="view-management-reviews" data-page-title="Management Reviews" class="view hidden">
         <!-- List Panel -->
         <div id="mgmt-reviews-list-panel">
-          <div class="view-header">
-            <h2>&#128203; Management Reviews</h2>
+          <div class="view-header page-toolbar">
             <button class="btn btn-primary btn-sm" onclick="openMgmtReviewModal()">&#43; New Review</button>
           </div>
           <div id="mgmt-reviews-arch-list">
@@ -272,9 +270,9 @@
       <div id="op-plan-context-home"><div id="op-plan-context-bar" class="hidden"></div></div>
 
       <!-- Individual control tickets and their follow-up actions -->
-      <section id="view-operational-tasks" class="view planning-view hidden">
+      <section id="view-operational-tasks" data-page-title="Tasks" class="view planning-view hidden">
         <div class="view-header">
-          <div><h2>Tasks</h2><p class="planning-intro">Run your scheduled controls and follow through on what they uncover.</p></div>
+          <div><p class="planning-intro">Run your scheduled controls and follow through on what they uncover.</p></div>
           <div class="work-header-actions">
             <button type="button" class="btn btn-secondary" onclick="switchView('yearly')">Yearly Plan</button>
             <button type="button" class="btn btn-primary" id="work-new-action" onclick="newWorkspaceAction()" hidden>+ New follow-up</button>
@@ -338,9 +336,9 @@
       </section>
 
       <!-- Yearly Plan View -->
-      <section id="view-yearly" class="view planning-view hidden">
+      <section id="view-yearly" data-page-title="Yearly Plan" class="view planning-view hidden">
         <div class="view-header">
-          <div><h2 id="yearly-title">Yearly Plan</h2><p class="planning-intro">Plan your recurring work and manage the series behind it.</p></div>
+          <div><p class="planning-intro">Plan your recurring work and manage the series behind it.</p></div>
           <div style="display:flex;gap:8px;align-items:center">
             <button class="btn btn-primary" onclick="openTaskModal()">+ New Series</button>
           </div>
@@ -417,9 +415,8 @@
       </section>
 
       <!-- AI Use Cases View – Kanban Board -->
-      <section id="view-use-cases" class="view hidden">
-        <div class="view-header">
-          <h2>&#127919; AI Use Cases</h2>
+      <section id="view-use-cases" data-page-title="AI Use Cases" class="view hidden">
+        <div class="view-header page-toolbar">
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <select id="uc-filter-domain" onchange="ucApplyFilter()" style="height:34px;padding:0 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--card-bg)">
               <option value="">All Domains</option>
@@ -463,9 +460,8 @@
       </div>
 
       <!-- Requirements View -->
-      <section id="view-audit-requirements" class="view hidden">
-        <div class="view-header">
-          <h2>Standard Requirements</h2>
+      <section id="view-audit-requirements" data-page-title="Standard Requirements" class="view hidden">
+        <div class="view-header page-toolbar">
           <div style="display:flex;gap:8px">
             <button class="btn btn-secondary" onclick="openImportRequirementsModal()">Import Template</button>
             <button class="btn btn-primary" onclick="openRequirementModal()">+ Add Requirement</button>
@@ -477,9 +473,8 @@
       </section>
 
       <!-- Audit Plan View -->
-      <section id="view-audit-plan" class="view hidden">
-        <div class="view-header">
-          <h2>Audit Plan</h2>
+      <section id="view-audit-plan" data-page-title="Audit Plan" class="view hidden">
+        <div class="view-header page-toolbar">
           <div style="display:flex;gap:8px;align-items:center">
             <button class="btn btn-secondary btn-sm" onclick="changeAuditYear(-1)">&larr; Prev</button>
             <button class="btn btn-secondary btn-sm" onclick="changeAuditYear(0)">Today</button>
@@ -495,9 +490,8 @@
       </section>
 
       <!-- Audit Execute View -->
-      <section id="view-audit-execute" class="view hidden">
-        <div class="view-header">
-          <h2>Execute Audit</h2>
+      <section id="view-audit-execute" data-page-title="Execute Audit" class="view hidden">
+        <div class="view-header page-toolbar">
           <div style="display:flex;gap:8px;align-items:center">
             <select id="audit-exec-select" onchange="loadAuditExecution(this.value)" style="padding:7px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px">
               <option value="">Select an audit...</option>
@@ -508,9 +502,8 @@
       </section>
 
       <!-- Non-Conformities View -->
-      <section id="view-audit-ncrs" class="view hidden">
-        <div class="view-header">
-          <h2>Non-Conformities</h2>
+      <section id="view-audit-ncrs" data-page-title="Non-Conformities" class="view hidden">
+        <div class="view-header page-toolbar">
           <button class="btn btn-primary" onclick="openNcrModal()">+ New NCR</button>
         </div>
         <div class="filters" id="ncr-filters-bar"></div>
@@ -535,9 +528,8 @@
       </section>
 
       <!-- Threat Intelligence View -->
-      <section id="view-threat-intelligence" class="view hidden">
-        <div class="view-header">
-          <h2>Threat Intelligence</h2>
+      <section id="view-threat-intelligence" data-page-title="Threat Intelligence" class="view hidden">
+        <div class="view-header page-toolbar">
           <div style="display:flex;gap:8px">
             <button class="btn btn-secondary" onclick="openManageFeedsModal()">Manage Feeds</button>
             <button class="btn btn-primary" onclick="refreshAllFeeds()">Refresh Feeds</button>
@@ -655,9 +647,9 @@
       </div>
 
       <!-- Risk Identification View -->
-      <section id="view-risk-identification" class="view hidden">
+      <section id="view-risk-identification" data-page-title="Risk Identification" class="view hidden">
         <div class="view-header">
-          <div><h2>Risk Identification</h2><p class="experience-subtitle">Ownership, exposure and treatment in one place.</p></div>
+          <div><p class="experience-subtitle">Ownership, exposure and treatment in one place.</p></div>
           <button class="btn btn-primary" onclick="openRiskModal()">+ New Risk</button>
         </div>
         <div class="filters" id="risk-filters-bar"></div>
@@ -667,18 +659,14 @@
       </section>
 
       <!-- Risk Treatment View -->
-      <section id="view-risk-treatment" class="view hidden">
-        <div class="view-header">
-          <h2>Risk Treatment Planning</h2>
-        </div>
+      <section id="view-risk-treatment" data-page-title="Risk Treatment Planning" class="view hidden">
         <div class="filters" id="treatment-filters-bar"></div>
         <div id="treatment-list"></div>
       </section>
 
       <!-- Statement of Applicability View -->
-      <section id="view-risk-soa" class="view hidden">
-        <div class="view-header">
-          <h2>Statement of Applicability</h2>
+      <section id="view-risk-soa" data-page-title="Statement of Applicability" class="view hidden">
+        <div class="view-header page-toolbar">
           <button class="btn btn-primary" onclick="exportSoAPDF()">&#128196; Export SoA</button>
         </div>
         <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">ISO 27001:2022 Annex A controls applicability and implementation status. Import the Annex A template first in the Requirements view.</p>
@@ -687,9 +675,9 @@
       </section>
 
       <!-- Mission Control View -->
-      <section id="view-mission-control" class="view">
+      <section id="view-mission-control" data-page-title="Mission Control" class="view">
         <div class="view-header">
-          <div><h2>Mission Control</h2><p class="experience-subtitle">A clear view of what needs your attention.</p></div>
+          <div><p class="experience-subtitle">A clear view of what needs your attention.</p></div>
         </div>
         <div class="experience-tabs" role="tablist" aria-label="Mission Control sections" data-experience-tabs="mission">
           <button type="button" id="mission-tab-overview" role="tab" aria-selected="true" aria-controls="mission-panel-overview" onclick="selectExperienceTab('mission','overview')">Overview</button>
@@ -713,9 +701,8 @@
       </section>
 
       <!-- Architecture View -->
-      <section id="view-architecture" class="view hidden">
-        <div class="view-header">
-          <h2>Architecture</h2>
+      <section id="view-architecture" data-page-title="Architecture" class="view hidden">
+        <div class="view-header page-toolbar">
           <button class="btn btn-primary" onclick="openArchModal()">+ Add Item</button>
         </div>
         <div class="arch-tabs" id="arch-tabs">
@@ -780,9 +767,9 @@
       </section>
 
       <!-- Document Control View -->
-      <section id="view-document-control" class="view hidden">
+      <section id="view-document-control" data-page-title="Document Control" class="view hidden">
         <div class="view-header">
-          <div><h2>Document Control</h2><p class="experience-subtitle">The right version, with clear ownership and review dates.</p></div>
+          <div><p class="experience-subtitle">The right version, with clear ownership and review dates.</p></div>
           <button class="btn btn-primary" onclick="openDocModal()">+ Upload Document</button>
         </div>
         <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">Manage policies, procedures, and documented information per ISO 7.5 requirements. Upload files and cross-link them to relevant modules.</p>
@@ -795,9 +782,8 @@
 
       <!-- Admin: System Overview -->
       <!-- Admin: User Management -->
-      <section id="view-admin-users" class="view hidden">
-        <div class="view-header">
-          <h2>User Management</h2>
+      <section id="view-admin-users" data-page-title="User Management" class="view hidden">
+        <div class="view-header page-toolbar">
           <button class="btn btn-primary" onclick="openUserModal()">+ Add User</button>
         </div>
         <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">Manage user accounts, roles, and permissions. Control access to different modules and features.</p>
@@ -823,9 +809,8 @@
       </section>
 
       <!-- Admin: Audit Log -->
-      <section id="view-admin-audit-log" class="view hidden">
-        <div class="view-header">
-          <h2>Audit Log</h2>
+      <section id="view-admin-audit-log" data-page-title="Audit Log" class="view hidden">
+        <div class="view-header page-toolbar">
           <button class="btn btn-secondary" onclick="exportAuditLog()">&#128229; Export Log</button>
         </div>
         <p style="margin-bottom:16px;color:var(--text-muted);font-size:13px">Track all system activity including user actions, data changes, and security events.</p>
@@ -836,9 +821,8 @@
       </section>
 
       <!-- Admin: System Settings -->
-      <section id="view-admin-settings" class="view hidden">
-        <div class="view-header">
-          <h2>System Settings</h2>
+      <section id="view-admin-settings" data-page-title="System Settings" class="view hidden">
+        <div class="view-header page-toolbar">
           <button class="btn btn-primary" onclick="saveSystemSettings()">Save Changes</button>
         </div>
         <p style="margin-bottom:20px;color:var(--text-muted);font-size:13px">Configure application settings, defaults, and preferences.</p>
@@ -884,10 +868,7 @@
       </section>
 
       <!-- Admin: Data Management -->
-      <section id="view-admin-data" class="view hidden">
-        <div class="view-header">
-          <h2>Data Management</h2>
-        </div>
+      <section id="view-admin-data" data-page-title="Data Management" class="view hidden">
         <p style="margin-bottom:20px;color:var(--text-muted);font-size:13px">Import, export, and manage your organization's data. Create backups and restore from previous states.</p>
 
         <div class="admin-data-grid">
@@ -970,9 +951,8 @@
       </section>
 
       <!-- Admin: Integrations -->
-      <section id="view-admin-integrations" class="view hidden">
-        <div class="view-header">
-          <h2>Integrations</h2>
+      <section id="view-admin-integrations" data-page-title="Integrations" class="view hidden">
+        <div class="view-header page-toolbar">
           <button class="btn btn-secondary" onclick="loadAdminIntegrations()">&#8635; Refresh</button>
         </div>
         <p style="margin-bottom:20px;color:var(--text-muted);font-size:13px">Manage API keys, webhooks, and connections to external services.</p>

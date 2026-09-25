@@ -81,10 +81,6 @@ async function loadMissionControl() {
   const d = await api('/api/kpis/auto');
   if (d.error) { console.warn('KPI auto load failed:', d.error); return; }
   renderMissionExperience(d);
-  const orgLabel = document.getElementById('experience-org');
-  if (orgLabel && mission.org_name) orgLabel.textContent = mission.org_name;
-  const contextLabel = document.getElementById('experience-context');
-  if (contextLabel && mission.org_name) contextLabel.textContent = mission.org_name;
 
   // Process KPIs (grouped by process)
   const kpis = await api('/api/kpis');

@@ -45,14 +45,13 @@ function initializeExperience() {
 }
 
 function updateExperienceChrome() {
-  const heading = document.querySelector(`#view-${currentView} .view-header h2`);
+  const view = document.getElementById(`view-${currentView}`);
   const page = document.getElementById('experience-page');
-  if (page) page.textContent = heading?.textContent || 'Workspace';
-  if (activeOrg?.name) {
-    for (const id of ['experience-org','experience-context']) {
-      const el = document.getElementById(id); if (el) el.textContent = activeOrg.name;
-    }
-  }
+  if (page) page.textContent = view?.dataset.pageTitle || 'Workspace';
+  const organization = document.getElementById('experience-organization');
+  const context = document.getElementById('experience-context');
+  if (context) context.textContent = activeOrg?.name || '';
+  if (organization) organization.hidden = !activeOrg?.name;
   document.querySelectorAll('[data-shortcut]').forEach(button => {
     button.hidden = !hasPermissionForView(button.dataset.shortcut);
     if (button.dataset.shortcut === currentView) button.setAttribute('aria-current', 'page');
