@@ -31,9 +31,9 @@
 let currentView = 'mission-control';
 let allTasks = [];
 let meta = { assignees: [], categories: [] };
-let filters = { active: 'true', assignee: '', category: '', priority: '', search: '' };
+let filters = { active: 'true', assignee: '', priority: '', search: '' };
 let actionFilters = { status: '', priority: '', assignee: '' };
-let yearlyFilters = { priority: '', overdue_only: false, search: '' };
+let yearlyFilters = { status: '' };
 let taskLogSearch = '';
 let yearlyYear = new Date().getFullYear();
 let lastInstanceContext = null; // { instance_id, task_id, scheduled_date }
@@ -467,6 +467,9 @@ document.querySelectorAll('.nav-module').forEach(moduleEl => {
   });
 });
 
+// Retain the permission boundary for existing task shortcuts and relationship links.
+VIEW_TO_MODULE.tasks = VIEW_TO_MODULE.yearly;
+
 // Reverse lookup: module → permission key
 const MODULE_TO_PERM = Object.fromEntries(
   Object.entries(PERM_TO_MODULE).map(([perm, mod]) => [mod, perm])
@@ -502,6 +505,7 @@ function showViewLoadingState(viewId) {
 
 async function switchView(view) {
   if (!hasPermissionForView(view)) return;
+  if (view === 'tasks') { yearlyTab = 'series'; view = 'yearly'; }
   currentView = view;
   updateExperienceChrome();
   closeExperienceDossier('risk', false);
@@ -536,7 +540,11 @@ async function switchView(view) {
   if (ctxBar) {
     if (OP_PLAN_VIEWS.includes(view)) {
       ctxBar.classList.remove('hidden');
-      loadOpPlanContextData().then(() => renderOpPlanContextBar());
+      const slot = document.getElementById(view === 'yearly' ? 'yearly-context-slot' : 'op-plan-context-home');
+      slot.appendChild(ctxBar);
+      await loadOpPlanContextData();
+      if (currentView !== view) return;
+      renderOpPlanContextBar();
     } else {
       ctxBar.classList.add('hidden');
     }

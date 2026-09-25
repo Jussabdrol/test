@@ -35,45 +35,27 @@ function renderOpPlanContextBar() {
   const bar = document.getElementById('op-plan-context-bar');
   if (!bar) return;
 
-  const allPill = `<button class="op-ctx-pill${opPlanContext.type==='all'?' active':''}" onclick="setOpPlanContext('all',null)">All Processes</button>`;
-
-  const procPills = opPlanProcesses.map(p =>
-    `<button class="op-ctx-pill${opPlanContext.type==='process'&&opPlanContext.id===p.id?' active':''}"
-      onclick="setOpPlanContext('process',${p.id})">${esc(p.name)}</button>`
-  ).join('');
-
-  const bundlePills = opPlanBundles.map(b => {
-    const active = opPlanContext.type === 'bundle' && opPlanContext.id === b.id;
-    return `<button class="op-ctx-bundle-pill${active?' active':''}" style="--bundle-color:${esc(b.color||'#6366f1')}"
-      onclick="setOpPlanContext('bundle',${b.id})"
-      title="Edit bundle" ondblclick="openBundleModal(${b.id})">&#128230; ${esc(b.name)}</button>`;
-  }).join('');
-
+  const selected = (type, id) => opPlanContext.type === type && opPlanContext.id === id ? 'selected' : '';
   bar.innerHTML = `
-    <div class="op-plan-ctx-bar">
-      <div class="op-ctx-pills">
-        ${allPill}
-        ${procPills}
-        ${opPlanBundles.length > 0 ? '<span class="op-ctx-sep"></span>' : ''}
-        ${bundlePills}
-        <button class="op-ctx-add-btn" onclick="openBundleModal()" title="Create bundle">&#43; Bundle</button>
-      </div>
+    <div class="planning-scope">
+      <label class="planning-field">Process scope
+        <select aria-label="Process scope" onchange="const [type,id]=this.value.split(':');setOpPlanContext(type,id?Number(id):null)">
+          <option value="all" ${selected('all',null)}>All processes</option>
+          <optgroup label="Processes">${opPlanProcesses.map(p => `<option value="process:${p.id}" ${selected('process',p.id)}>${esc(p.name)}</option>`).join('')}</optgroup>
+          ${opPlanBundles.length ? `<optgroup label="Process bundles">${opPlanBundles.map(b => `<option value="bundle:${b.id}" ${selected('bundle',b.id)}>${esc(b.name)}</option>`).join('')}</optgroup>` : ''}
+        </select>
+      </label>
+      ${opPlanContext.type === 'bundle' ? `<button type="button" class="btn btn-secondary btn-sm" onclick="openBundleModal(${opPlanContext.id})">Edit bundle</button>` : ''}
+      <button type="button" class="btn btn-secondary btn-sm" onclick="openBundleModal()">+ New bundle</button>
     </div>`;
 }
 
 async function setOpPlanContext(type, id) {
   opPlanContext = { type, id };
-  // For single-process context, mirror into task category filter (server-side)
-  if (type === 'process') {
-    const p = opPlanProcesses.find(p => p.id === id);
-    filters.category = p ? p.name : '';
-  } else {
-    filters.category = '';
-  }
   renderOpPlanContextBar();
   // Reload the current view with the new context applied
   if (currentView === 'tasks') loadTasks();
-  else if (currentView === 'yearly') loadYearlyPlan();
+  else if (currentView === 'yearly') applyPlanningFilters();
   else if (currentView === 'actions') loadActions();
   else if (currentView === 'task-log') loadTaskLog();
 }
@@ -159,6 +141,7 @@ async function saveBundleModal(e) {
   closeBundleModal();
   await loadOpPlanContextData();
   renderOpPlanContextBar();
+  refreshCurrentView();
 }
 
 async function deletePlanBundle(id) {
@@ -166,11 +149,11 @@ async function deletePlanBundle(id) {
   await api(`/api/plan-bundles/${id}`, { method: 'DELETE' });
   if (opPlanContext.type === 'bundle' && opPlanContext.id === id) {
     opPlanContext = { type: 'all', id: null };
-    filters.category = '';
   }
   closeBundleModal();
   await loadOpPlanContextData();
   renderOpPlanContextBar();
+  refreshCurrentView();
 }
 
 // ─── End context bar ──────────────────────────────────────────────────────────

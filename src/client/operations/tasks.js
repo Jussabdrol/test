@@ -1,86 +1,34 @@
 
 // --- Tasks View ---
+let seriesLoadRequest = 0;
 async function loadTasks() {
-  meta = await api('/api/meta');
-  await renderFilters();
-
-  const params = new URLSearchParams();
-  if (filters.active) params.set('active', filters.active);
-  if (filters.assignee) params.set('assignee', filters.assignee);
-  if (filters.category) params.set('category', filters.category);
-  if (filters.priority) params.set('priority', filters.priority);
-  // Bundle context: filter by the bundle's process names server-side
-  // (single-process context is already covered via filters.category; names
-  // containing commas fall back to the client-side filter in renderTaskTable)
-  if (opPlanContext.type === 'bundle') {
-    const ctxNames = getOpPlanContextNames();
-    if (ctxNames && ctxNames.length && ctxNames.every(n => !n.includes(','))) {
-      params.set('categories', ctxNames.join(','));
-    }
-  }
-
+  const request = ++seriesLoadRequest;
+  document.getElementById('task-table-body').innerHTML = '<div class="empty-state" role="status">Loading series…</div>';
+  document.getElementById('yearly-series-count').textContent = '';
   try {
-    allTasks = await api(`/api/tasks?${params}`);
+    const tasks = await api('/api/tasks');
+    if (request !== seriesLoadRequest) return;
+    allTasks = tasks;
+    renderTaskTable();
   } catch (err) {
+    if (request !== seriesLoadRequest) return;
+    allTasks = [];
     document.getElementById('task-table-body').innerHTML =
-      `<div class="empty-state" style="color:var(--danger)">Failed to load series: ${esc(err.message)}</div>`;
-    return;
+      `<div class="empty-state" style="color:var(--danger)">Failed to load series: ${esc(err.message)} <button class="btn btn-secondary btn-sm" onclick="loadTasks()">Retry</button></div>`;
   }
-  renderTaskTable();
-  updateOverdueBadge();
-}
-
-async function renderFilters() {
-  const bar = document.getElementById('filters-bar');
-  const roles = await api('/api/architecture?arch_type=role');
-  const processes = await api('/api/architecture?arch_type=process');
-  // Only show process dropdown when context is "All" — context bar handles it otherwise
-  const showProcessFilter = opPlanContext.type === 'all';
-
-  bar.innerHTML = `
-    <input type="search" placeholder="Search tasks..." value="${esc(filters.search)}"
-      style="min-width:180px" oninput="filters.search=this.value;renderTaskTable()">
-    <select onchange="filters.active=this.value;loadTasks()">
-      <option value="true" ${filters.active==='true'?'selected':''}>Active</option>
-      <option value="false" ${filters.active==='false'?'selected':''}>Inactive</option>
-      <option value="" ${filters.active===''?'selected':''}>All</option>
-    </select>
-    <select onchange="filters.priority=this.value;loadTasks()">
-      <option value="">All Priorities</option>
-      <option value="Low" ${filters.priority==='Low'?'selected':''}>Low</option>
-      <option value="Medium" ${filters.priority==='Medium'?'selected':''}>Medium</option>
-      <option value="High" ${filters.priority==='High'?'selected':''}>High</option>
-      <option value="Critical" ${filters.priority==='Critical'?'selected':''}>Critical</option>
-    </select>
-    <select onchange="filters.assignee=this.value;loadTasks()">
-      <option value="">All Roles</option>
-      ${roles.map(r => `<option value="${esc(r.name)}" ${filters.assignee===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}
-      ${meta.assignees.filter(a => !roles.find(r => r.name === a)).map(a => `<option value="${esc(a)}" ${filters.assignee===a?'selected':''}>${esc(a)}</option>`).join('')}
-    </select>
-    ${showProcessFilter ? `<select onchange="filters.category=this.value;loadTasks()">
-      <option value="">All Processes</option>
-      ${processes.map(p => `<option value="${esc(p.name)}" ${filters.category===p.name?'selected':''}>${esc(p.name)}</option>`).join('')}
-      ${meta.categories.filter(c => !processes.find(p => p.name === c)).map(c => `<option value="${esc(c)}" ${filters.category===c?'selected':''}>${esc(c)}</option>`).join('')}
-    </select>` : ''}
-  `;
 }
 
 function renderTaskTable() {
   const container = document.getElementById('task-table-body');
   const today = new Date().toISOString().split('T')[0];
-  // Client-side context filter (used for bundles; single-process is already server-filtered)
-  const ctxNames = getOpPlanContextNames();
-  let tasks = ctxNames ? allTasks.filter(t => ctxNames.includes(t.category)) : allTasks;
-  if (filters.search) {
-    const q = filters.search.toLowerCase();
-    tasks = tasks.filter(t => t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
-  }
+  const tasks = allTasks.filter(t => matchesPlanningFilters(t) &&
+    (filters.active === '' || Boolean(t.is_active) === (filters.active === 'true')));
+  document.getElementById('yearly-series-count').textContent = `${tasks.length} of ${allTasks.length} series · all years`;
   if (tasks.length === 0) {
-    container.innerHTML = allTasks.length === 0 && !filters.search
-      ? `<div class="empty-state">No recurring task series yet${opPlanContext.type !== 'all' ? ' in this process context' : ''}.<br>
-          Series define the recurring checks and controls your team executes.<br><br>
+    container.innerHTML = allTasks.length === 0
+      ? `<div class="empty-state">No recurring task series yet.<br>Series define the recurring checks and controls your team executes.<br><br>
           <button class="btn btn-primary" onclick="openTaskModal()">+ Create your first series</button></div>`
-      : '<div class="empty-state">No series match the current filters or process context.</div>';
+      : '<div class="empty-state">No series match these filters. <button class="btn btn-secondary btn-sm" onclick="resetPlanningFilters()">Reset filters</button></div>';
     return;
   }
   const recurrenceLabel = r => ({ daily:'Daily', weekly:'Weekly', biweekly:'Biweekly', monthly:'Monthly', quarterly:'Quarterly', yearly:'Yearly', custom:'Custom' }[r] || r);
@@ -127,17 +75,6 @@ function renderTaskTable() {
   }).join('');
   html += '</div>';
   container.innerHTML = html;
-}
-
-function updateOverdueBadge() {
-  const today = new Date().toISOString().split('T')[0];
-  const count = allTasks.filter(t => t.is_active && t.next_due < today).length;
-  const link = document.querySelector('.nav-link[data-view="tasks"]');
-  if (!link) return;
-  let badge = link.querySelector('.nav-overdue-badge');
-  if (count === 0) { if (badge) badge.remove(); return; }
-  if (!badge) { badge = document.createElement('span'); badge.className = 'nav-overdue-badge'; link.appendChild(badge); }
-  badge.textContent = count;
 }
 
 function toggleTaskLinks(taskId) {
@@ -421,7 +358,7 @@ async function openTaskModal(id) {
   form.reset();
   document.getElementById('task-id').value = '';
   document.getElementById('task-start').value = new Date().toISOString().split('T')[0];
-  document.getElementById('modal-title').textContent = 'New Task';
+  document.getElementById('modal-title').textContent = 'New Series';
   toggleRecurrenceFields();
 
   // Populate Role dropdown from Architecture roles
@@ -438,7 +375,7 @@ async function openTaskModal(id) {
 
   if (id) {
     const task = await api(`/api/tasks/${id}`);
-    document.getElementById('modal-title').textContent = 'Edit Task';
+    document.getElementById('modal-title').textContent = 'Edit Series';
     document.getElementById('task-id').value = task.id;
     document.getElementById('task-title').value = task.title;
     document.getElementById('task-desc').value = task.description;

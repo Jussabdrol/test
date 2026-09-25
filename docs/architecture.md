@@ -42,7 +42,7 @@ Paths below are relative to `src/server/routes/` and `src/client/` respectively.
 | Console presentation, navigation and read-only dossiers | Existing domain APIs | `experience.js`, `public/experience.css` |
 | Public website and platform support tickets | `website.js`, `support.js` | `website.js`, `support.js` |
 | Login, tenants, session | `auth.js`, `../middleware/security.js` | `core.js`, `account.js` |
-| Operational planning | `tasks.js`, `task-instances.js`, `actions.js`, `plan-bundles.js` | `operations/`, `dashboard.js` |
+| Operational planning | `tasks.js`, `task-instances.js`, `actions.js`, `plan-bundles.js` | `operations/` (Yearly Plan tabs share filters in `yearly-plan.js`), `dashboard.js` |
 | Audits and findings | `audits.js`, `checklist.js`, `non-conformities.js` | `audits/` |
 | Requirements | `requirements.js` | `requirements.js` |
 | Threats, risks, treatment, SoA | `threats.js`, `risks.js`, `treatments.js`, `soa.js` | Matching domain files |
